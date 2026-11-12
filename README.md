@@ -239,7 +239,8 @@ Quando um agente de IA tenta violar uma regra de memória ou permissão de hardw
 
 ## Estrutura do Repositório e Documentação
 
-* [`INSTALACAO_E_USO.md`](./INSTALACAO_E_USO.md) — **Guia Oficial de Instalação e Uso:** Instalação em 1 linha (`install.ps1` / `install.sh`), binários de release, manual da CLI `rtsc` e tutorial passo a passo.
+* [`INSTALACAO_E_USO.md`](./INSTALACAO_E_USO.md) — **Guia Oficial de Instalação e Uso:** Instalação em 1 linha (`install.ps1` / `install.sh`), binários de release, manual da CLI `rtsc` e solução de problemas.
+* [`INICIANDO_UM_PROJETO.md`](./INICIANDO_UM_PROJETO.md) — **Tutorial: Iniciando um Projeto com RustTS (`v1.0.0-rts`):** Estrutura de pastas, primeiro módulo `.rts`, conexão com host C99 (`main.c`) e compilação AVX2/FMA.
 * [`devlog.md`](./devlog.md) — **Devlog & Cronologia (`v0.1.0-rts` → `v1.0.0-rts`):** Histórico técnico completo de versões, auditorias, suíte `cargo test` (`13/13`) e benchmarks AVX2/SoA.
 * [`RustTS_guia.md`](./RustTS_guia.md) — **Constituição e Matriz de Regras da Linguagem:** Especificação completa de sintaxe, memória, capacidades, proibições e governança de evolução.
 * [`agenteRTS.md`](./agenteRTS.md) — **System Prompt do Agente Especialista:** Configuração de contexto para transformar LLMs em engenheiros de compiladores (`COMPILER-DEV`) e programadores nativos RustTS (`RTS-CODER`).
