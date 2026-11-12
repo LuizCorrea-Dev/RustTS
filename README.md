@@ -169,28 +169,45 @@ fn get_user_profile(
 
 ---
 
+## Instalação Rápida (`v1.0.0-rts`)
+
+**Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/LuizCorrea-Dev/RustTS/main/scripts/install.ps1 | iex
+```
+
+**Linux / macOS:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/LuizCorrea-Dev/RustTS/main/scripts/install.sh | bash
+```
+
+Consulte o **[Guia Completo de Instalação e Uso (`INSTALACAO_E_USO.md`)](./INSTALACAO_E_USO.md)** para download manual em [Releases](https://github.com/LuizCorrea-Dev/RustTS/releases/tag/v1.0.0), compilação a partir do código-fonte, exemplos de benchmark e tutorial passo a passo.
+
+---
+
 ## Interface de Linha de Comando (`rtsc`)
 
 O compilador `rtsc` centraliza a validação, compilação cruzada e integração com motores e agentes de IA:
 
 ```bash
-# 1. Compilar uma Engine ou Servidor Nativo (LLVM Backend com SIMD habilitado)
-rtsc build src/main.rts --target=native --opt=release
+# 1. Validar código com saída humana ou JSON estruturado (< 15ms)
+rtsc check examples/thermal_control.rts
+rtsc check examples/thermal_control.rts --json-diagnostics
 
-# 2. Validar código gerado por IA com saída estruturada em JSON (Tempo médio < 15ms)
-rtsc check src/physics.rts --json-diagnostics
+# 2. Gerar código C99 nativo (SoA + Strip-Mining L1d + AVX2/FMA3)
+rtsc build examples/ballistics_10k_benchmark.rts --target=native > ballistics_gen.c
 
-# 3. Transpilar módulo de Gameplay/GAS para Unreal Engine 5 (.h e .cpp automáticos)
-rtsc build src/combat_ability.rts --target=unreal-cpp --out-dir=./UnrealProject/Source/Combat/
+# 3. Transpilar módulo de Gameplay/GAS para Unreal Engine 5 (.h e .cpp UHT)
+rtsc build examples/combat_unreal.rts --target=unreal > combat_unreal_ue5.cpp
 
-# 4. Compilar para WebGPU/WebGL no navegador (Exceção Tier 2 - Canvas Puro)
-rtsc build src/renderer.rts --target=wasm32-webgpu --out-dir=./public/wasm/
+# 4. Gerar Plugin C-ABI + Wrapper C# Zero-Copy (NativeArray<T>) para Unity
+rtsc build examples/engine_physics.rts --target=unity > engine_physics_unity.txt
 
-# 5. Compilar API Backend e gerar automaticamente o SDK TypeScript para Next.js/React
-rtsc build src/server.rts --target=native-server --emit-ts-sdk=./frontend-nextjs/src/sdk/
+# 5. Gerar SDK TypeScript tipado (Next.js/React) a partir de servidor .rts
+rtsc build examples/telemetry_server.rts --emit-ts-sdk > telemetry_client_sdk.ts
 
-# 6. Exportar a gramática formal GBNF para restringir a geração de tokens de LLMs locais
-rtsc export-grammar --format=gbnf --out=rustts.gbnf
+# 6. Exportar a gramática formal GBNF para restringir geração de tokens em LLMs locais
+rtsc --export-gbnf > rustts.gbnf
 ```
 
 ---
@@ -222,19 +239,19 @@ Quando um agente de IA tenta violar uma regra de memória ou permissão de hardw
 
 ## Estrutura do Repositório e Documentação
 
+* [`INSTALACAO_E_USO.md`](./INSTALACAO_E_USO.md) — **Guia Oficial de Instalação e Uso:** Instalação em 1 linha (`install.ps1` / `install.sh`), binários de release, manual da CLI `rtsc` e tutorial passo a passo.
+* [`devlog.md`](./devlog.md) — **Devlog & Cronologia (`v0.1.0-rts` → `v1.0.0-rts`):** Histórico técnico completo de versões, auditorias, suíte `cargo test` (`13/13`) e benchmarks AVX2/SoA.
 * [`RustTS_guia.md`](./RustTS_guia.md) — **Constituição e Matriz de Regras da Linguagem:** Especificação completa de sintaxe, memória, capacidades, proibições e governança de evolução.
 * [`agenteRTS.md`](./agenteRTS.md) — **System Prompt do Agente Especialista:** Configuração de contexto para transformar LLMs em engenheiros de compiladores (`COMPILER-DEV`) e programadores nativos RustTS (`RTS-CODER`).
-* [`prompt.md`](./prompt.md) — **Roteiro de Inicialização (Bootstrapping):** Prompts modulares para iniciar a construção do compilador `rtsc` em Rust.
-
 ---
 
 ## Roadmap de Implementação (`rtsc`)
 
 - [x] **Fase 0:** Especificação formal da arquitetura, regras de escopo, sistema de Arenas e capacidades (`cap`).
-- [ ] **Fase 1 (Front-End Core):** Lexer (`logos`), Parser tolerante a falhas (`chumsky`), AST estrita e exportador de gramática `rustts.gbnf`.
-- [ ] **Fase 2 (Análise Semântica):** *Capability Checker* estático, validador de escopo de Arenas (`Static`, `Level`, `Frame`, `Request`) e emissor `--json-diagnostics`.
-- [ ] **Fase 3 (Backends de Transpilação Rápida):** Gerador C99/Rust nativo (SIMD/SoA), gerador Unreal Engine UHT (`.h`/`.cpp`) e gerador `--emit-ts-sdk`.
-- [ ] **Fase 4 (Backends Diretos):** Integração MLIR/LLVM para binários nativos, SPIR-V para shaders GPU e sandbox WASI com *Fuel Metering*.
+- [x] **Fase 1 (Front-End Core):** Lexer (`logos`), Parser recursivo, AST estrita e exportador de gramática GBNF (`rtsc --export-gbnf`).
+- [x] **Fase 2 (Análise Semântica):** *TypeChecker* (`RTS-E0301`), `match` exaustivo (`RTS-E0302`), *Capability Checker* (`RTS-E0402`–`E0405`), validador de escopo de Arenas (`Static`, `Level`, `Frame`, `Request`) e `--json-diagnostics`.
+- [x] **Fase 3 (Backends `v1.0.0-rts`):** Gerador C99 SIMD/SoA (`64B`, Strip-Mining L1d AVX2/FMA3), gerador Unreal Engine UHT (`.h`/`.cpp`), gerador Unity C-ABI + `NativeArray<T>` e gerador `--emit-ts-sdk`.
+- [ ] **Fase 4 (Próxima Fronteira):** Integração direta MLIR/LLVM, SPIR-V para shaders GPU e sandbox WASI com *Fuel Metering*.
 
 ---
 
