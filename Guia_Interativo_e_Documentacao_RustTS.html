@@ -1,0 +1,2840 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="artifact-type" content="dashboard">
+  <meta name="design-style" content="aurora">
+  <title>RustTS (.rts) — Documentação Completa, Guia da Linguagem e Cheat Sheet</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      color-scheme: dark;
+
+      /* 1. Aurora Style Tokens */
+      --background: #0c1214;
+      --surface-container-low: #111a1e;
+      --surface-container: #152024;
+      --surface-container-high: #1c2a30;
+
+      --on-surface: #edf3f5;
+      --on-surface-variant: #94a8b0;
+
+      --outline: #38515c;
+      --outline-variant: #213138;
+
+      --primary: #63c7d6;
+      --on-primary: #081214;
+      --primary-container: #163840;
+      --on-primary-container: #c7f0f7;
+      --secondary: #5d7882;
+      --tertiary: #87d69b;
+      --error: #f27474;
+      --on-error: #1a0606;
+
+      --data-1: #63c7d6;
+      --data-2: #87d69b;
+      --data-3: #e8b954;
+      --data-4: #f08c70;
+      --data-context: #415861;
+
+      --font-headline: 'Instrument Sans', sans-serif;
+      --font-body: 'Plus Jakarta Sans', sans-serif;
+      --font-label: 'Geist Mono', monospace;
+
+      --rounded: 0.5rem;
+      --rounded-lg: 0.75rem;
+      --rounded-full: 9999px;
+
+      --hairline: 1px solid var(--outline-variant);
+      --hairline-strong: 1px solid var(--outline);
+      --panel-gradient: linear-gradient(180deg, #162226 0%, #111a1e 100%);
+      --heading-tracking: -0.025em;
+      --label-tracking: 0.06em;
+      --sage-tint: color-mix(in srgb, var(--tertiary) 13%, transparent);
+      --sage-border: color-mix(in srgb, var(--tertiary) 35%, transparent);
+      --cyan-tint: color-mix(in srgb, var(--primary) 13%, transparent);
+      --cyan-border: color-mix(in srgb, var(--primary) 35%, transparent);
+      --amber-tint: color-mix(in srgb, var(--data-3) 13%, transparent);
+      --amber-border: color-mix(in srgb, var(--data-3) 35%, transparent);
+      --error-tint: color-mix(in srgb, var(--error) 14%, transparent);
+      --error-border: color-mix(in srgb, var(--error) 38%, transparent);
+
+      /* 3. Shared Foundation Tokens */
+      --positive: #87d69b;
+      --warning: #e8b954;
+      --focus: var(--primary);
+
+      /* Dashboard / Tool Type Scale */
+      --display-size: clamp(1.75rem, 1.4rem + 1.2vw, 2.25rem);
+      --headline-size: clamp(1.25rem, 1.1rem + 0.5vw, 1.5rem);
+      --subhead-size: clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem);
+      --body-size: clamp(0.9375rem, 0.9rem + 0.15vw, 1rem);
+      --label-size: 0.75rem;
+      --code-size: 0.84rem;
+
+      /* Spacing Scale (4pt base) */
+      --space-xs: 0.25rem;
+      --space-sm: 0.5rem;
+      --space-md: 1rem;
+      --space-lg: 1.5rem;
+      --space-xl: 2.5rem;
+      --space-2xl: 4rem;
+      --space-3xl: 6rem;
+
+      /* Motion */
+      --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+      --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+      --dur-micro: 120ms;
+      --dur-short: 220ms;
+      --dur-long: 420ms;
+
+      /* Syntax highlight tokens */
+      --syn-kw: #63c7d6;
+      --syn-type: #87d69b;
+      --syn-attr: #e8b954;
+      --syn-str: #f08c70;
+      --syn-comment: #6f8791;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body {
+      overflow-x: clip;
+      margin: 0;
+      padding: 0;
+      background-color: var(--background);
+      color: var(--on-surface);
+      font-family: var(--font-body);
+      font-size: var(--body-size);
+      line-height: 1.55;
+      scroll-behavior: smooth;
+    }
+    header { position: static !important; }
+
+    button, input, select, textarea {
+      font-family: inherit;
+      color: inherit;
+    }
+
+    :focus-visible {
+      outline: 2px solid var(--focus);
+      outline-offset: 2px;
+    }
+
+    .app-container {
+      max-width: 1360px;
+      margin: 0 auto;
+      padding: var(--space-lg);
+      display: grid;
+      gap: var(--space-lg);
+    }
+
+    .app-container * { min-width: 0; }
+
+    /* Top Header */
+    .doc-header {
+      background: var(--panel-gradient);
+      border: var(--hairline);
+      border-radius: var(--rounded-lg);
+      padding: var(--space-lg);
+      display: grid;
+      gap: var(--space-lg);
+    }
+
+    .header-top {
+      display: grid;
+      grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+      gap: var(--space-lg);
+      align-items: end;
+    }
+
+    .doc-title {
+      font-family: var(--font-headline);
+      font-size: var(--display-size);
+      font-weight: 600;
+      letter-spacing: var(--heading-tracking);
+      line-height: 1.1;
+      margin: 0 0 var(--space-sm) 0;
+      color: var(--on-surface);
+    }
+
+    .doc-subtitle {
+      margin: 0;
+      color: var(--on-surface-variant);
+      max-width: 68ch;
+      font-size: var(--body-size);
+    }
+
+    .global-search-wrap {
+      display: grid;
+      gap: var(--space-xs);
+    }
+
+    .field-label {
+      font-family: var(--font-label);
+      font-size: var(--label-size);
+      font-weight: 500;
+      letter-spacing: var(--label-tracking);
+      text-transform: uppercase;
+      color: var(--on-surface-variant);
+      display: block;
+    }
+
+    .search-row {
+      display: flex;
+      gap: var(--space-sm);
+      align-items: stretch;
+    }
+
+    .input-well, .select-well {
+      width: 100%;
+      background-color: var(--background);
+      border: var(--hairline);
+      border-radius: var(--rounded);
+      padding: var(--space-sm) var(--space-md);
+      color: var(--on-surface);
+      font-size: var(--body-size);
+      min-height: 44px;
+      transition: background-color var(--dur-micro) var(--ease-out), box-shadow var(--dur-micro) var(--ease-out);
+    }
+
+    .select-well {
+      padding-right: var(--space-xl);
+      cursor: pointer;
+    }
+
+    .input-well:hover, .select-well:hover {
+      background-color: var(--surface-container-low);
+    }
+
+    .input-well:focus, .select-well:focus {
+      outline: none;
+      box-shadow: 0 0 0 2px var(--primary);
+    }
+
+    /* Metric Tiles (KPI Hierarchy) */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: var(--space-md);
+    }
+
+    .kpi-tile {
+      background-color: var(--background);
+      border: var(--hairline);
+      border-radius: var(--rounded);
+      padding: var(--space-md);
+      display: grid;
+      gap: var(--space-xs);
+    }
+
+    .data-label {
+      font-family: var(--font-label);
+      font-size: var(--label-size);
+      font-weight: 500;
+      letter-spacing: var(--label-tracking);
+      text-transform: uppercase;
+      color: var(--on-surface-variant);
+    }
+
+    .metric-value {
+      font-family: var(--font-headline);
+      font-size: var(--headline-size);
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: var(--heading-tracking);
+      color: var(--on-surface);
+      line-height: 1.15;
+    }
+
+    .metric-delta {
+      font-family: var(--font-label);
+      font-size: var(--label-size);
+      color: var(--tertiary);
+    }
+
+    /* Mobile / Compact Jump Bar */
+    .mobile-jump-bar {
+      display: none;
+      background: var(--surface-container-low);
+      border: var(--hairline);
+      border-radius: var(--rounded-lg);
+      padding: var(--space-sm);
+      gap: var(--space-xs);
+      flex-wrap: wrap;
+    }
+
+    .jump-chip {
+      background: var(--surface-container);
+      border: var(--hairline);
+      border-radius: var(--rounded);
+      padding: var(--space-xs) var(--space-sm);
+      font-family: var(--font-label);
+      font-size: var(--label-size);
+      color: var(--on-surface-variant);
+      text-decoration: none;
+      min-height: 44px;
+      display: inline-flex;
+      align-items: center;
+      cursor: pointer;
+      transition: background-color var(--dur-micro) var(--ease-out), color var(--dur-micro) var(--ease-out);
+    }
+
+    .jump-chip:hover {
+      background: var(--surface-container-high);
+      color: var(--primary);
+    }
+
+    /* Main Workspace Grid */
+    .workspace-grid {
+      display: grid;
+      grid-template-columns: 270px minmax(0, 1fr);
+      gap: var(--space-lg);
+      align-items: start;
+    }
+
+    aside.pillar-nav {
+      position: sticky;
+      top: var(--space-lg);
+      background: var(--panel-gradient);
+      border: var(--hairline);
+      border-radius: var(--rounded-lg);
+      padding: var(--space-md);
+      display: grid;
+      gap: var(--space-md);
+    }
+
+    .nav-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      gap: var(--space-xs);
+    }
+
+    .nav-link {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-sm);
+      padding: var(--space-sm) var(--space-md);
+      min-height: 44px;
+      border-radius: var(--rounded);
+      text-decoration: none;
+      color: var(--on-surface-variant);
+      font-size: 0.875rem;
+      font-weight: 500;
+      border: 1px solid transparent;
+      transition: background-color var(--dur-micro) var(--ease-out), color var(--dur-micro) var(--ease-out);
+    }
+
+    .nav-link:hover {
+      background-color: var(--surface-container-high);
+      color: var(--on-surface);
+    }
+
+    .nav-link.active {
+      background-color: var(--cyan-tint);
+      color: var(--primary);
+      border-color: var(--cyan-border);
+    }
+
+    .nav-num {
+      font-family: var(--font-label);
+      font-size: var(--label-size);
+      color: var(--on-surface-variant);
+    }
+
+    .nav-link.active .nav-num {
+      color: var(--primary);
+    }
+
+    /* Pinned Cheat Sheet Drawer inside Sidebar */
+    .pinned-box {
+      border-top: var(--hairline);
+      padding-top: var(--space-md);
+      display: grid;
+      gap: var(--space-sm);
+    }
+
+    .pinned-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .pinned-list {
+      display: grid;
+      gap: var(--space-xs);
+      max-height: 220px;
+      overflow-y: auto;
+    }
+
+    .pinned-item {
+      background-color: var(--background);
+      border: var(--hairline);
+      border-radius: var(--rounded);
+      padding: var(--space-xs) var(--space-sm);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-xs);
+      font-family: var(--font-label);
+      font-size: var(--label-size);
+    }
+
+    .pinned-item-btn {
+      background: transparent;
+      border: none;
+      color: var(--primary);
+      text-align: left;
+      cursor: pointer;
+      padding: var(--space-xs) 0;
+      font-family: var(--font-label);
+      font-size: var(--label-size);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      flex: 1;
+    }
+
+    .pinned-remove-btn {
+      background: transparent;
+      border: none;
+      color: var(--on-surface-variant);
+      cursor: pointer;
+      padding: var(--space-xs);
+      min-width: 28px;
+      min-height: 28px;
+      border-radius: var(--rounded);
+    }
+
+    .pinned-remove-btn:hover {
+      background-color: var(--surface-container-high);
+      color: var(--error);
+    }
+
+    /* Main Content Column */
+    .main-stack {
+      display: grid;
+      gap: var(--space-xl);
+    }
+
+    .pillar-section {
+      background: var(--panel-gradient);
+      border: var(--hairline);
+      border-radius: var(--rounded-lg);
+      padding: var(--space-lg);
+      display: grid;
+      gap: var(--space-lg);
+      scroll-margin-top: var(--space-lg);
+    }
+
+    .section-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: var(--space-md);
+      flex-wrap: wrap;
+      border-bottom: var(--hairline);
+      padding-bottom: var(--space-md);
+    }
+
+    .section-title {
+      font-family: var(--font-headline);
+      font-size: var(--headline-size);
+      font-weight: 600;
+      letter-spacing: var(--heading-tracking);
+      line-height: 1.15;
+      margin: 0 0 var(--space-xs) 0;
+      color: var(--on-surface);
+    }
+
+    .section-desc {
+      margin: 0;
+      color: var(--on-surface-variant);
+      max-width: 65ch;
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: var(--space-sm);
+      min-height: 44px;
+      padding: var(--space-sm) var(--space-md);
+      border-radius: var(--rounded);
+      font-family: var(--font-headline);
+      font-size: 0.875rem;
+      font-weight: 600;
+      cursor: pointer;
+      border: var(--hairline-strong);
+      background: transparent;
+      color: var(--on-surface);
+      transition: background-color var(--dur-micro) var(--ease-out), color var(--dur-micro) var(--ease-out), box-shadow var(--dur-micro) var(--ease-out);
+    }
+
+    .btn:hover:not(:disabled) {
+      background-color: var(--surface-container-high);
+    }
+
+    .btn:active:not(:disabled) {
+      transform: translateY(1px);
+    }
+
+    .btn:disabled {
+      opacity: 0.48;
+      cursor: not-allowed;
+    }
+
+    .btn-primary {
+      background-color: var(--primary);
+      color: var(--on-primary);
+      border-color: var(--primary);
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      background-color: var(--on-primary-container);
+      color: var(--on-primary);
+    }
+
+    .btn-sm {
+      min-height: 36px;
+      padding: var(--space-xs) var(--space-sm);
+      font-family: var(--font-label);
+      font-size: var(--label-size);
+    }
+
+    .btn-pin.pinned {
+      background-color: var(--cyan-tint);
+      color: var(--primary);
+      border-color: var(--cyan-border);
+    }
+
+    /* Filter Chips & Tabs */
+    .filter-bar {
+      display: flex;
+      gap: var(--space-md);
+      align-items: end;
+      flex-wrap: wrap;
+    }
+
+    .filter-group {
+      display: grid;
+      gap: var(--space-xs);
+      flex: 1 1 240px;
+    }
+
+    .chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--space-sm);
+    }
+
+    .filter-chip {
+      min-height: 44px;
+      padding: var(--space-xs) var(--space-md);
+      border-radius: var(--rounded);
+      border: var(--hairline);
+      background-color: var(--background);
+      color: var(--on-surface-variant);
+      font-family: var(--font-label);
+      font-size: var(--label-size);
+      cursor: pointer;
+      transition: background-color var(--dur-micro) var(--ease-out), color var(--dur-micro) var(--ease-out);
+    }
+
+    .filter-chip:hover {
+      background-color: var(--surface-container-high);
+      color: var(--on-surface);
+    }
+
+    .filter-chip.active {
+      background-color: var(--cyan-tint);
+      color: var(--primary);
+      border-color: var(--cyan-border);
+    }
+
+    /* Code Wells & Syntax Cards */
+    .card-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
+      gap: var(--space-md);
+    }
+
+    .asymmetric-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+      gap: var(--space-md);
+    }
+
+    .cheat-card {
+      background-color: var(--surface-container-low);
+      border: var(--hairline);
+      border-radius: var(--rounded);
+      padding: var(--space-md);
+      display: grid;
+      gap: var(--space-sm);
+      align-content: start;
+    }
+
+    .cheat-card-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: var(--space-sm);
+    }
+
+    .cheat-card-title {
+      font-family: var(--font-headline);
+      font-size: var(--subhead-size);
+      font-weight: 600;
+      margin: 0;
+      color: var(--on-surface);
+    }
+
+    .code-well {
+      background-color: var(--background);
+      border: var(--hairline);
+      border-radius: var(--rounded);
+      padding: var(--space-md);
+      font-family: var(--font-label);
+      font-size: var(--code-size);
+      line-height: 1.55;
+      color: var(--on-surface);
+      overflow-x: auto;
+      white-space: pre;
+      margin: 0;
+      tab-size: 4;
+    }
+
+    .code-inline {
+      font-family: var(--font-label);
+      font-size: 0.85em;
+      background-color: var(--background);
+      border: var(--hairline);
+      border-radius: var(--space-xs);
+      padding: 1px 6px;
+      color: var(--primary);
+    }
+
+    .syn-kw { color: var(--syn-kw); font-weight: 600; }
+    .syn-ty { color: var(--syn-type); }
+    .syn-at { color: var(--syn-attr); }
+    .syn-st { color: var(--syn-str); }
+    .syn-cm { color: var(--syn-comment); font-style: italic; }
+
+    /* Status Badges & Chips */
+    .status-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-xs);
+      border-radius: var(--rounded);
+      padding: 2px var(--space-sm);
+      font-family: var(--font-label);
+      font-size: var(--label-size);
+      font-weight: 500;
+      white-space: nowrap;
+    }
+
+    .status-sage {
+      background-color: var(--sage-tint);
+      color: var(--tertiary);
+      border: 1px solid var(--sage-border);
+    }
+
+    .status-cyan {
+      background-color: var(--cyan-tint);
+      color: var(--primary);
+      border: 1px solid var(--cyan-border);
+    }
+
+    .status-amber {
+      background-color: var(--amber-tint);
+      color: var(--data-3);
+      border: 1px solid var(--amber-border);
+    }
+
+    .status-error {
+      background-color: var(--error-tint);
+      color: var(--error);
+      border: 1px solid var(--error-border);
+    }
+
+    /* Tables (Aurora: no vertical rules, hairline between rows, Geist Mono uppercase headers) */
+    .table-scroll {
+      overflow-x: auto;
+      border: var(--hairline);
+      border-radius: var(--rounded);
+      background-color: var(--background);
+    }
+
+    table.aurora-table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 0.875rem;
+    }
+
+    table.aurora-table thead th {
+      font-family: var(--font-label);
+      font-size: var(--label-size);
+      font-weight: 500;
+      letter-spacing: var(--label-tracking);
+      text-transform: uppercase;
+      color: var(--on-surface-variant);
+      padding: var(--space-sm) var(--space-md);
+      border-bottom: var(--hairline-strong);
+      background-color: var(--surface-container-low);
+      white-space: nowrap;
+    }
+
+    table.aurora-table tbody td {
+      padding: var(--space-sm) var(--space-md);
+      border-bottom: var(--hairline);
+      vertical-align: top;
+      color: var(--on-surface);
+    }
+
+    table.aurora-table tbody tr {
+      cursor: pointer;
+      transition: background-color var(--dur-micro) var(--ease-out);
+    }
+
+    table.aurora-table tbody tr:hover {
+      background-color: var(--surface-container);
+    }
+
+    table.aurora-table tbody tr.selected-row {
+      background-color: var(--cyan-tint);
+    }
+
+    table.aurora-table tbody tr:last-child td {
+      border-bottom: none;
+    }
+
+    .num-cell {
+      text-align: right;
+      font-family: var(--font-label);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    /* Detail Inspection Drawer / Panel */
+    .inspector-box {
+      background-color: var(--background);
+      border: var(--hairline-strong);
+      border-radius: var(--rounded);
+      padding: var(--space-md);
+      display: grid;
+      gap: var(--space-sm);
+    }
+
+    /* Arena Rank Ladder & Simulator */
+    .arena-ladder {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: var(--space-md);
+    }
+
+    .rank-card {
+      background-color: var(--background);
+      border: var(--hairline);
+      border-radius: var(--rounded);
+      padding: var(--space-md);
+      display: grid;
+      gap: var(--space-sm);
+      align-content: start;
+    }
+
+    .rank-card.rank-3 { border-top: 3px solid var(--primary); }
+    .rank-card.rank-2 { border-top: 3px solid var(--tertiary); }
+    .rank-card.rank-1 { border-top: 3px solid var(--data-3); }
+
+    .arena-sim-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.2fr);
+      gap: var(--space-md);
+      align-items: end;
+    }
+
+    /* Attribute Explorer */
+    .attr-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.45fr);
+      gap: var(--space-md);
+      align-items: start;
+    }
+
+    .attr-list {
+      display: grid;
+      gap: var(--space-xs);
+    }
+
+    .attr-btn {
+      width: 100%;
+      text-align: left;
+      background-color: var(--background);
+      border: var(--hairline);
+      border-radius: var(--rounded);
+      padding: var(--space-sm) var(--space-md);
+      min-height: 44px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: var(--space-sm);
+      cursor: pointer;
+      transition: background-color var(--dur-micro) var(--ease-out), border-color var(--dur-micro) var(--ease-out);
+    }
+
+    .attr-btn:hover {
+      background-color: var(--surface-container-high);
+    }
+
+    .attr-btn.active {
+      background-color: var(--cyan-tint);
+      border-color: var(--cyan-border);
+      color: var(--primary);
+    }
+
+    /* Playground */
+    .playground-shell {
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+      gap: var(--space-md);
+      align-items: stretch;
+    }
+
+    .editor-pane, .output-pane {
+      background-color: var(--background);
+      border: var(--hairline);
+      border-radius: var(--rounded);
+      padding: var(--space-md);
+      display: grid;
+      gap: var(--space-sm);
+      align-content: start;
+    }
+
+    .code-editor-textarea {
+      width: 100%;
+      min-height: 360px;
+      background-color: var(--surface-container-low);
+      border: var(--hairline);
+      border-radius: var(--rounded);
+      padding: var(--space-md);
+      font-family: var(--font-label);
+      font-size: var(--code-size);
+      line-height: 1.55;
+      color: var(--on-surface);
+      resize: vertical;
+      tab-size: 4;
+    }
+
+    .code-editor-textarea:focus {
+      outline: none;
+      box-shadow: 0 0 0 2px var(--primary);
+    }
+
+    .diag-card {
+      background-color: var(--surface-container-low);
+      border: var(--hairline);
+      border-left: 3px solid var(--error);
+      border-radius: var(--rounded);
+      padding: var(--space-md);
+      display: grid;
+      gap: var(--space-xs);
+    }
+
+    .diag-card.diag-ok {
+      border-left-color: var(--tertiary);
+    }
+
+    .empty-state {
+      background-color: var(--background);
+      border: var(--hairline);
+      border-radius: var(--rounded);
+      padding: var(--space-lg);
+      text-align: center;
+      color: var(--on-surface-variant);
+      display: grid;
+      gap: var(--space-sm);
+      justify-items: center;
+    }
+
+    .footer-note {
+      border-top: var(--hairline);
+      padding: var(--space-lg) 0;
+      color: var(--on-surface-variant);
+      font-size: 0.85rem;
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: var(--space-md);
+    }
+
+    .hidden { display: none !important; }
+
+    /* Responsive Breakpoints */
+    @media (max-width: 1024px) {
+      .workspace-grid {
+        grid-template-columns: 1fr;
+      }
+      aside.pillar-nav {
+        position: static;
+      }
+      .playground-shell, .attr-layout, .asymmetric-grid, .header-top {
+        grid-template-columns: 1fr;
+      }
+      .arena-ladder, .arena-sim-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .app-container {
+        padding: var(--space-sm);
+      }
+      aside.pillar-nav {
+        display: none;
+      }
+      .mobile-jump-bar {
+        display: flex;
+      }
+      .kpi-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .pillar-section, .doc-header {
+        padding: var(--space-md);
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-container">
+    <header class="doc-header">
+      <div class="header-top">
+        <div>
+          <h1 class="doc-title">RustTS (.rts) — Guia da Linguagem &amp; Cheat Sheet</h1>
+          <p class="doc-subtitle">
+            Referência técnica interativa da sintaxe canônica única, sistema de tipos algébricos, contratos estáticos de capacidade (<code class="code-inline">cap</code>), hierarquia de arenas e verificador simulado <code class="code-inline">rtsc v1.0.0-rts</code>.
+          </p>
+        </div>
+        <div class="global-search-wrap">
+          <label class="field-label" for="global-search-input">Busca rápida na referência (.rts / cap / RTS-E)</label>
+          <div class="search-row">
+            <input
+              id="global-search-input"
+              class="input-well"
+              type="search"
+              placeholder="Ex.: FrameArena, fix32, RTS-E0501, @component"
+              oninput="handleGlobalSearch(this.value)"
+            >
+            <button type="button" class="btn" onclick="clearGlobalSearch()">Limpar</button>
+          </div>
+          <div id="global-search-results" class="hidden" aria-live="polite"></div>
+        </div>
+      </div>
+
+      <div class="kpi-grid">
+        <div class="kpi-tile">
+          <span class="data-label">Diagnósticos Estáticos</span>
+          <span class="metric-value">10 Códigos</span>
+          <span class="metric-delta">RTS-E0101 até RTS-E0900</span>
+        </div>
+        <div class="kpi-tile">
+          <span class="data-label">Backends de Compilação</span>
+          <span class="metric-value">4 Alvos</span>
+          <span class="metric-delta">C99 AVX2 · Unreal · Unity · TS</span>
+        </div>
+        <div class="kpi-tile">
+          <span class="data-label">Hierarquia de Arenas</span>
+          <span class="metric-value">3 Ranks O(1)</span>
+          <span class="metric-delta">Static &gt; Level &gt; Frame/Request</span>
+        </div>
+        <div class="kpi-tile">
+          <span class="data-label">Latência de Validação</span>
+          <span class="metric-value">&lt; 15 ms</span>
+          <span class="metric-delta">Auto-correção via JSON AST</span>
+        </div>
+      </div>
+    </header>
+
+    <nav class="mobile-jump-bar" aria-label="Navegação rápida entre pilares">
+      <a class="jump-chip" href="#pilar-sintaxe">01 Sintaxe</a>
+      <a class="jump-chip" href="#pilar-tipos">02 Tipos</a>
+      <a class="jump-chip" href="#pilar-capacidades">03 Capacidades</a>
+      <a class="jump-chip" href="#pilar-arenas">04 Arenas</a>
+      <a class="jump-chip" href="#pilar-fluxo">05 Fluxo</a>
+      <a class="jump-chip" href="#pilar-atributos">06 Atributos</a>
+      <a class="jump-chip" href="#pilar-diagnosticos">07 RTS-E</a>
+      <a class="jump-chip" href="#pilar-playground">08 Playground</a>
+    </nav>
+
+    <div class="workspace-grid">
+      <aside class="pillar-nav" aria-label="Pilares Semânticos da RustTS">
+        <div>
+          <span class="data-label">Pilares Semânticos</span>
+        </div>
+        <ul class="nav-list" id="sidebar-nav-list">
+          <li><a class="nav-link active" href="#pilar-sintaxe" onclick="setActiveNav('pilar-sintaxe')"><span>Sintaxe Canônica &amp; CLI</span><span class="nav-num">01</span></a></li>
+          <li><a class="nav-link" href="#pilar-tipos" onclick="setActiveNav('pilar-tipos')"><span>Tipos &amp; Álgebra</span><span class="nav-num">02</span></a></li>
+          <li><a class="nav-link" href="#pilar-capacidades" onclick="setActiveNav('pilar-capacidades')"><span>Matriz de Capacidades</span><span class="nav-num">03</span></a></li>
+          <li><a class="nav-link" href="#pilar-arenas" onclick="setActiveNav('pilar-arenas')"><span>Arenas &amp; Tier-0</span><span class="nav-num">04</span></a></li>
+          <li><a class="nav-link" href="#pilar-fluxo" onclick="setActiveNav('pilar-fluxo')"><span>Controle de Fluxo</span><span class="nav-num">05</span></a></li>
+          <li><a class="nav-link" href="#pilar-atributos" onclick="setActiveNav('pilar-atributos')"><span>Atributos Canônicos</span><span class="nav-num">06</span></a></li>
+          <li><a class="nav-link" href="#pilar-diagnosticos" onclick="setActiveNav('pilar-diagnosticos')"><span>Diagnósticos RTS-E</span><span class="nav-num">07</span></a></li>
+          <li><a class="nav-link" href="#pilar-playground" onclick="setActiveNav('pilar-playground')"><span>Playground rtsc check</span><span class="nav-num">08</span></a></li>
+        </ul>
+
+        <div class="pinned-box">
+          <div class="pinned-header">
+            <span class="data-label">Fixados no Cheat Sheet</span>
+            <span id="pinned-count-chip" class="status-chip status-cyan">0</span>
+          </div>
+          <div id="pinned-items-list" class="pinned-list"></div>
+          <button type="button" id="clear-pins-btn" class="btn btn-sm hidden" onclick="clearAllPins(this)">Limpar fixados</button>
+        </div>
+      </aside>
+
+      <main class="main-stack">
+        <!-- PILAR 01: SINTAXE CANÔNICA & CLI -->
+        <section id="pilar-sintaxe" class="pillar-section">
+          <div class="section-head">
+            <div>
+              <h2 class="section-title">01 · Pilares Arquiteturais, Sintaxe Canônica &amp; CLI</h2>
+              <p class="section-desc">
+                A gramática <code class="code-inline">.rts</code> combina o subconjunto determinístico de Rust e TypeScript sob a regra da <strong>Forma Canônica Única</strong>: existe apenas uma maneira válida de declarar estruturas, iterar e tratar erros, eliminando ambiguidade semântica para humanos e LLMs.
+              </p>
+            </div>
+            <span class="status-chip status-sage">Zero-Novelty · LL(k)</span>
+          </div>
+
+          <div class="asymmetric-grid">
+            <div class="cheat-card">
+              <div class="cheat-card-head">
+                <h3 class="cheat-card-title">Estrutura Mínima de Módulo (.rts)</h3>
+                <div class="chip-row">
+                  <button type="button" class="btn btn-sm btn-pin" data-pin-id="mod-struct" data-pin-label="Módulo &amp; Assinatura .rts" data-pin-target="pilar-sintaxe" onclick="togglePin(this)">Fixar</button>
+                  <button type="button" class="btn btn-sm" onclick="copyCodeBlock('code-mod-struct', this)">Copiar</button>
+                </div>
+              </div>
+              <pre id="code-mod-struct" class="code-well"><span class="syn-kw">module</span> drone.thermal_control;
+<span class="syn-kw">import</span> core.hardware;
+
+<span class="syn-kw">struct</span> <span class="syn-ty">SensorConfig</span> {
+    target_temp_celsius: <span class="syn-ty">f32</span>,
+    max_pwm_duty: <span class="syn-ty">u8</span>,
+}
+
+<span class="syn-kw">enum</span> <span class="syn-ty">HardwareFault</span> {
+    I2CTimeout(<span class="syn-ty">u8</span>),
+    SensorDisconnected,
+    OverheatCritical(<span class="syn-ty">f32</span>),
+}
+
+<span class="syn-kw">pub fn</span> regulate(
+    cfg: <span class="syn-ty">SensorConfig</span>,
+    i2c: <span class="syn-kw">cap</span> <span class="syn-ty">I2CBus</span>&lt;0x48&gt;,
+    pwm: <span class="syn-kw">cap</span> <span class="syn-ty">PWMPin</span>&lt;4&gt;
+) -&gt; <span class="syn-ty">Result</span>&lt;<span class="syn-ty">f32</span>, <span class="syn-ty">HardwareFault</span>&gt; {
+    <span class="syn-kw">let</span> raw: <span class="syn-ty">u16</span> = i2c.read_register_u16(0x00)?;
+    <span class="syn-kw">let mut</span> duty: <span class="syn-ty">u8</span> = 25;
+    <span class="syn-kw">let</span> temp: <span class="syn-ty">f32</span> = (raw <span class="syn-kw">as</span> <span class="syn-ty">f32</span>) * 0.0625;
+    <span class="syn-kw">if</span> temp &gt;= cfg.target_temp_celsius {
+        duty = cfg.max_pwm_duty;
+    }
+    pwm.set_duty(duty);
+    <span class="syn-kw">return</span> <span class="syn-ty">Ok</span>(temp);
+}</pre>
+            </div>
+
+            <div class="cheat-card">
+              <div class="cheat-card-head">
+                <h3 class="cheat-card-title">Comandos &amp; Alvos da CLI (rtsc)</h3>
+                <button type="button" class="btn btn-sm" onclick="copyCodeBlock('code-cli-cmds', this)">Copiar</button>
+              </div>
+              <pre id="code-cli-cmds" class="code-well"><span class="syn-cm">// 1. Validação estática (&lt; 15ms) para humano ou agente IA</span>
+rtsc check src/drone.rts --json-diagnostics
+
+<span class="syn-cm">// 2. Compilação C99 SoA alinhado em 64B (AVX2 / FMA3)</span>
+rtsc build src/physics.rts --target native
+
+<span class="syn-cm">// 3. Transpilação Unreal Engine 5 (UHT .h / .cpp)</span>
+rtsc build src/combat.rts --target unreal
+
+<span class="syn-cm">// 4. Plugin nativo Unity C-ABI + NativeArray&lt;T&gt;</span>
+rtsc build src/sim.rts --target unity
+
+<span class="syn-cm">// 5. Backend servidor + cliente TypeScript tipado</span>
+rtsc build src/api.rts --target ts-sdk --emit-ts-sdk
+
+<span class="syn-cm">// 6. Exportar gramática GBNF para decodificação travada</span>
+rtsc --export-gbnf &gt; rustts.gbnf</pre>
+              <div class="inspector-box">
+                <span class="data-label">Restrições Estritas da Gramática</span>
+                <p style="margin:0; font-size:0.875rem; color:var(--on-surface-variant);">
+                  Proibido: <code class="code-inline">null</code>, <code class="code-inline">undefined</code>, ponteiros brutos (<code class="code-inline">*T</code>), <code class="code-inline">try/catch/throw</code>, herança de classes OOP, sobrecarga de operadores e macros procedurais opacas.
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- PILAR 02: TABELA INTERATIVA DE TIPOS -->
+        <section id="pilar-tipos" class="pillar-section">
+          <div class="section-head">
+            <div>
+              <h2 class="section-title">02 · Sistema de Tipos Primitivos, Matemáticos e Algébricos</h2>
+              <p class="section-desc">
+                Tipagem estática forte sem coerção implícita. Clique em qualquer linha para inspecionar o rebaixamento exato para C99, Unreal C++, Unity C# e TypeScript SDK.
+              </p>
+            </div>
+            <button type="button" class="btn btn-sm btn-pin" data-pin-id="tabela-tipos" data-pin-label="Tabela de Tipos .rts" data-pin-target="pilar-tipos" onclick="togglePin(this)">Fixar</button>
+          </div>
+
+          <div class="filter-bar">
+            <div class="filter-group">
+              <label class="field-label" for="type-search-input">Filtrar tipos por nome ou destino</label>
+              <input id="type-search-input" class="input-well" type="search" placeholder="Ex.: fix32, vec3, Handle, int64_t" oninput="filterTypesTable()">
+            </div>
+            <div class="filter-group" style="flex: 2 1 380px;">
+              <span class="field-label">Categoria do Tipo</span>
+              <div class="chip-row" id="type-category-chips">
+                <button type="button" class="filter-chip active" onclick="setTypeCategory('all', this)">Todos (24)</button>
+                <button type="button" class="filter-chip" onclick="setTypeCategory('int', this)">Inteiros</button>
+                <button type="button" class="filter-chip" onclick="setTypeCategory('float', this)">Float &amp; Fix32</button>
+                <button type="button" class="filter-chip" onclick="setTypeCategory('math', this)">Matemáticos SIMD</button>
+                <button type="button" class="filter-chip" onclick="setTypeCategory('algebraic', this)">Algébricos &amp; Handle</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="table-scroll">
+            <table class="aurora-table">
+              <thead>
+                <tr>
+                  <th>Tipo .rts</th>
+                  <th>Categoria</th>
+                  <th>Semântica / Largura</th>
+                  <th>C99 (Native SoA)</th>
+                  <th>Unreal C++</th>
+                  <th>Unity C# / TS SDK</th>
+                </tr>
+              </thead>
+              <tbody id="types-table-body"></tbody>
+            </table>
+          </div>
+
+          <div id="type-detail-inspector" class="inspector-box" aria-live="polite">
+            <span class="data-label">Inspetor de Tipo Selecionado</span>
+            <p style="margin:0; color:var(--on-surface-variant);">Selecione uma linha na tabela acima para ver exemplos de declaração e garantias de ABI.</p>
+          </div>
+        </section>
+
+        <!-- PILAR 03: MATRIZ DE CAPACIDADES CAP -->
+        <section id="pilar-capacidades" class="pillar-section">
+          <div class="section-head">
+            <div>
+              <h2 class="section-title">03 · Matriz de Capacidades (<code class="code-inline">cap</code>) — Autoridade Ambiental Zero</h2>
+              <p class="section-desc">
+                Nenhuma função acessa hardware, rede, banco SQL, colunas ECS ou arenas sem receber o token linear <code class="code-inline">cap</code> explicitamente em seus parâmetros. Tentar fabricar tokens fora de <code class="code-inline">main</code> dispara <code class="code-inline">RTS-E0404</code>.
+              </p>
+            </div>
+            <button type="button" class="btn btn-sm btn-pin" data-pin-id="matriz-cap" data-pin-label="Matriz de Capacidades cap" data-pin-target="pilar-capacidades" onclick="togglePin(this)">Fixar</button>
+          </div>
+
+          <div class="filter-bar">
+            <div class="filter-group">
+              <label class="field-label" for="cap-search-input">Buscar capacidade, método ou parâmetro</label>
+              <input id="cap-search-input" class="input-well" type="search" placeholder="Ex.: I2CBus, MutColumn, SqlRead, set_duty" oninput="filterCapabilities()">
+            </div>
+            <div class="filter-group" style="flex: 2 1 420px;">
+              <span class="field-label">Domínio de Segurança</span>
+              <div class="chip-row" id="cap-domain-chips">
+                <button type="button" class="filter-chip active" onclick="setCapDomain('all', this)">Todos</button>
+                <button type="button" class="filter-chip" onclick="setCapDomain('hardware', this)">Hardware &amp; Tempo</button>
+                <button type="button" class="filter-chip" onclick="setCapDomain('arena', this)">Arenas Escopadas</button>
+                <button type="button" class="filter-chip" onclick="setCapDomain('ecs', this)">ECS SoA</button>
+                <button type="button" class="filter-chip" onclick="setCapDomain('network', this)">Rede, SQL &amp; GPU</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="capabilities-grid" class="card-grid"></div>
+        </section>
+
+        <!-- PILAR 04: HIERARQUIA DE ARENAS & TIER-0 -->
+        <section id="pilar-arenas" class="pillar-section">
+          <div class="section-head">
+            <div>
+              <h2 class="section-title">04 · Hierarquia de Arenas ($O(1)$) &amp; Fronteira Tier-0</h2>
+              <p class="section-desc">
+                Em vez de Garbage Collector ou anotação manual de lifetimes (<code class="code-inline">'a</code>), o verificador impõe uma relação matemática de ordem parcial entre escopos de memória: dados de um Rank menor nunca escapam para um Rank maior (<code class="code-inline">RTS-E0501</code>).
+              </p>
+            </div>
+            <button type="button" class="btn btn-sm btn-pin" data-pin-id="arenas-rank" data-pin-label="Hierarquia de Arenas Rank 1–3" data-pin-target="pilar-arenas" onclick="togglePin(this)">Fixar</button>
+          </div>
+
+          <div class="arena-ladder">
+            <div class="rank-card rank-3">
+              <div class="cheat-card-head">
+                <span class="data-label">Rank 3 · Global</span>
+                <span class="status-chip status-cyan">Vida Total</span>
+              </div>
+              <h3 class="cheat-card-title">StaticArena</h3>
+              <p style="margin:0; font-size:0.875rem; color:var(--on-surface-variant);">
+                Permanece alocada durante todo o ciclo de vida do processo ou firmware. Pode receber dados de qualquer arena de Rank &ge; 3 (apenas estáticos).
+              </p>
+            </div>
+
+            <div class="rank-card rank-2">
+              <div class="cheat-card-head">
+                <span class="data-label">Rank 2 · Persistente</span>
+                <span class="status-chip status-sage">Entre Quadros</span>
+              </div>
+              <h3 class="cheat-card-title">LevelArena · SessionArena · MutColumn&lt;T&gt;</h3>
+              <p style="margin:0; font-size:0.875rem; color:var(--on-surface-variant);">
+                Persiste entre quadros de simulação ou durante a sessão de usuário. Aceita cópias de Rank 2 ou 3, mas bloqueia handles oriundos do Rank 1.
+              </p>
+            </div>
+
+            <div class="rank-card rank-1">
+              <div class="cheat-card-head">
+                <span class="data-label">Rank 1 · Efêmera</span>
+                <span class="status-chip status-amber">Reset O(1)</span>
+              </div>
+              <h3 class="cheat-card-title">FrameArena&lt;T&gt; · RequestArena · TaskArena</h3>
+              <p style="margin:0; font-size:0.875rem; color:var(--on-surface-variant);">
+                Zerada em tempo constante <code class="code-inline">O(1)</code> a cada 16,6 ms (fim do frame) ou ao encerrar a requisição HTTP. Inclui visões <code class="code-inline">ReadFrameArena&lt;T&gt;</code>.
+              </p>
+            </div>
+          </div>
+
+          <div class="inspector-box">
+            <span class="data-label">Simulador de Regra de Escape entre Arenas (RTS-E0501)</span>
+            <div class="arena-sim-grid">
+              <div>
+                <label class="field-label" for="arena-origin-select">Arena de Origem (Dado / Handle)</label>
+                <select id="arena-origin-select" class="select-well" onchange="evaluateArenaEscape()">
+                  <option value="1|FrameArena<CollisionEvent>">FrameArena&lt;CollisionEvent&gt; (Rank 1)</option>
+                  <option value="1|ReadFrameArena<CollisionEvent>">ReadFrameArena&lt;CollisionEvent&gt; (Rank 1)</option>
+                  <option value="1|RequestArena">RequestArena (Rank 1)</option>
+                  <option value="2|LevelArena">LevelArena (Rank 2)</option>
+                  <option value="2|MutColumn<Transform>">MutColumn&lt;Transform&gt; (Rank 2)</option>
+                  <option value="3|StaticArena">StaticArena (Rank 3)</option>
+                </select>
+              </div>
+              <div>
+                <label class="field-label" for="arena-dest-select">Arena de Destino (.store / .push / =)</label>
+                <select id="arena-dest-select" class="select-well" onchange="evaluateArenaEscape()">
+                  <option value="2|LevelArena" selected>LevelArena (Rank 2)</option>
+                  <option value="3|StaticArena">StaticArena (Rank 3)</option>
+                  <option value="2|SessionArena">SessionArena (Rank 2)</option>
+                  <option value="1|FrameArena<CollisionEvent>">FrameArena&lt;CollisionEvent&gt; (Rank 1)</option>
+                </select>
+              </div>
+              <div id="arena-sim-result" aria-live="polite"></div>
+            </div>
+          </div>
+
+          <div class="cheat-card">
+            <div class="cheat-card-head">
+              <h3 class="cheat-card-title">Fronteira Tier-0: Domínio Web Tradicional Banido (RTS-E0900)</h3>
+              <span class="status-chip status-error">Bloqueado em Compilação</span>
+            </div>
+            <p style="margin:0; font-size:0.875rem; color:var(--on-surface-variant);">
+              A RustTS rejeita estruturas ou chamadas que modelem DOM tradicional: <code class="code-inline">DOM</code>, <code class="code-inline">DOMNode</code>, <code class="code-inline">Document</code>, <code class="code-inline">HtmlElement</code>, <code class="code-inline">CssStyle</code>, <code class="code-inline">VirtualDom</code>, <code class="code-inline">ReactComponent</code> e <code class="code-inline">WindowDom</code>. Interfaces web devem consumir a API via <code class="code-inline">--emit-ts-sdk</code>.
+            </p>
+          </div>
+        </section>
+
+        <!-- PILAR 05: CONTROLE DE FLUXO & OPERADORES -->
+        <section id="pilar-fluxo" class="pillar-section">
+          <div class="section-head">
+            <div>
+              <h2 class="section-title">05 · Controle de Fluxo &amp; Operadores Canônicos</h2>
+              <p class="section-desc">
+                Sem variações sintáticas concorrentes: laços limitados a <code class="code-inline">for .. in a..b</code> e <code class="code-inline">while</code>, ramificação algébrica exaustiva via <code class="code-inline">match</code> e propagação explícita com <code class="code-inline">?</code>.
+              </p>
+            </div>
+            <button type="button" class="btn btn-sm btn-pin" data-pin-id="controle-fluxo" data-pin-label="Controle de Fluxo &amp; Match" data-pin-target="pilar-fluxo" onclick="togglePin(this)">Fixar</button>
+          </div>
+
+          <div class="card-grid">
+            <div class="cheat-card">
+              <div class="cheat-card-head">
+                <h3 class="cheat-card-title">Pattern Matching Exaustivo</h3>
+                <span class="status-chip status-cyan">RTS-E0302</span>
+              </div>
+              <pre class="code-well"><span class="syn-kw">match</span> fault {
+    <span class="syn-ty">HardwareFault</span>::I2CTimeout(addr) =&gt; {
+        <span class="syn-kw">return</span> addr;
+    },
+    <span class="syn-ty">HardwareFault</span>::SensorDisconnected =&gt; {
+        <span class="syn-kw">return</span> 1;
+    },
+    _ =&gt; {
+        <span class="syn-kw">return</span> 255;
+    },
+}</pre>
+              <p style="margin:0; font-size:0.85rem; color:var(--on-surface-variant);">
+                Aplica-se também a <code class="code-inline">Result&lt;T, E&gt;</code> (<code class="code-inline">Ok(v)</code> / <code class="code-inline">Err(e)</code>) e <code class="code-inline">Option&lt;T&gt;</code> (<code class="code-inline">Some(v)</code> / <code class="code-inline">None</code>). Omissão de braço falha antes da emissão de código.
+              </p>
+            </div>
+
+            <div class="cheat-card">
+              <div class="cheat-card-head">
+                <h3 class="cheat-card-title">Iteração Determinística (For &amp; While)</h3>
+                <span class="status-chip status-sage">SoA / Strip-Mining</span>
+              </div>
+              <pre class="code-well"><span class="syn-kw">let</span> count: <span class="syn-ty">usize</span> = transforms.len();
+<span class="syn-kw">for</span> i <span class="syn-kw">in</span> 0..count {
+    transforms[i].pos = transforms[i].pos
+        + (velocities[i].vel * dt.fixed_delta);
+}
+
+<span class="syn-kw">let mut</span> retries: <span class="syn-ty">u8</span> = 0;
+<span class="syn-kw">while</span> retries &lt; 3 {
+    retries = retries + 1;
+}</pre>
+              <p style="margin:0; font-size:0.85rem; color:var(--on-surface-variant);">
+                O backend C99 reconhece laços <code class="code-inline">for i in 0..count</code> sobre colunas <code class="code-inline">MutColumn&lt;T&gt;</code> e emite vetores AVX2/FMA3 com <code class="code-inline">RTS_RESTRICT</code>.
+              </p>
+            </div>
+
+            <div class="cheat-card">
+              <div class="cheat-card-head">
+                <h3 class="cheat-card-title">Propagação de Erro (<code class="code-inline">?</code>) &amp; Cast (<code class="code-inline">as</code>)</h3>
+                <span class="status-chip status-sage">Zero Exceptions</span>
+              </div>
+              <pre class="code-well"><span class="syn-kw">let</span> raw: <span class="syn-ty">u16</span> = i2c.read_register_u16(0x00)?;
+
+<span class="syn-cm">// Conversão numérica sempre explícita (sem coerção oculta)</span>
+<span class="syn-kw">let</span> temp_c: <span class="syn-ty">f32</span> = (raw <span class="syn-kw">as</span> <span class="syn-ty">f32</span>) * 0.0625;
+
+<span class="syn-cm">// Condicional canônica</span>
+<span class="syn-kw">if</span> temp_c &gt;= 105.0 &amp;&amp; !override_flag {
+    <span class="syn-kw">return</span> <span class="syn-ty">Err</span>(<span class="syn-ty">HardwareFault</span>::OverheatCritical(temp_c));
+}</pre>
+            </div>
+          </div>
+        </section>
+
+        <!-- PILAR 06: ATRIBUTOS CANÔNICOS -->
+        <section id="pilar-atributos" class="pillar-section">
+          <div class="section-head">
+            <div>
+              <h2 class="section-title">06 · Atributos Canônicos &amp; Diretivas de Compilação</h2>
+              <p class="section-desc">
+                A RustTS possui um conjunto fechado de 11 atributos declarativos (<code class="code-inline">@...</code>) que instruem o compilador sobre layout de memória SoA, paralelismo ECS, transpilação Unreal/Unity, rotas HTTP e políticas de segurança para agentes de IA.
+              </p>
+            </div>
+            <button type="button" class="btn btn-sm btn-pin" data-pin-id="atributos-canonicos" data-pin-label="11 Atributos Canônicos @" data-pin-target="pilar-atributos" onclick="togglePin(this)">Fixar</button>
+          </div>
+
+          <div class="attr-layout">
+            <div class="attr-list" id="attr-selector-list"></div>
+            <div id="attr-detail-panel" class="inspector-box" aria-live="polite"></div>
+          </div>
+        </section>
+
+        <!-- PILAR 07: DIAGNÓSTICOS ESTÁTICOS RTS-E -->
+        <section id="pilar-diagnosticos" class="pillar-section">
+          <div class="section-head">
+            <div>
+              <h2 class="section-title">07 · Códigos de Diagnóstico Estático (<code class="code-inline">RTS-E</code>) &amp; Protocolo JSON</h2>
+              <p class="section-desc">
+                Projetados para fechar o loop de auto-correção com LLMs em menos de 15 ms. Em funções <code class="code-inline">@sealed_sig</code> (padrão), o compilador proíbe sugerir adição de <code class="code-inline">cap</code> para impedir escalação de privilégio.
+              </p>
+            </div>
+            <button type="button" class="btn btn-sm btn-pin" data-pin-id="diagnosticos-rtse" data-pin-label="Tabela de Diagnósticos RTS-E" data-pin-target="pilar-diagnosticos" onclick="togglePin(this)">Fixar</button>
+          </div>
+
+          <div class="filter-bar">
+            <div class="filter-group">
+              <label class="field-label" for="diag-search-input">Buscar código ou categoria</label>
+              <input id="diag-search-input" class="input-well" type="search" placeholder="Ex.: RTS-E0403, Aliasing, Match" oninput="filterDiagnostics()">
+            </div>
+            <div class="filter-group" style="flex: 2 1 380px;">
+              <span class="field-label">Domínio de Verificação</span>
+              <div class="chip-row" id="diag-domain-chips">
+                <button type="button" class="filter-chip active" onclick="setDiagDomain('all', this)">Todos (10)</button>
+                <button type="button" class="filter-chip" onclick="setDiagDomain('syntax', this)">Sintaxe</button>
+                <button type="button" class="filter-chip" onclick="setDiagDomain('types', this)">Tipos &amp; Match</button>
+                <button type="button" class="filter-chip" onclick="setDiagDomain('caps', this)">Capacidades &amp; Forja</button>
+                <button type="button" class="filter-chip" onclick="setDiagDomain('memory', this)">Memória &amp; Tier-0</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="table-scroll">
+            <table class="aurora-table">
+              <thead>
+                <tr>
+                  <th>Código</th>
+                  <th>Categoria (AST)</th>
+                  <th>Regra Matemática / Semântica</th>
+                  <th>Política de Correção</th>
+                </tr>
+              </thead>
+              <tbody id="diag-table-body"></tbody>
+            </table>
+          </div>
+
+          <div id="diag-json-preview" class="inspector-box" aria-live="polite"></div>
+        </section>
+
+        <!-- PILAR 08: PLAYGROUND SIMULADO RTSC CHECK -->
+        <section id="pilar-playground" class="pillar-section">
+          <div class="section-head">
+            <div>
+              <h2 class="section-title">08 · Playground Simulado <code class="code-inline">rtsc check --json-diagnostics</code></h2>
+              <p class="section-desc">
+                Carregue cenários reais da suíte <code class="code-inline">rtsc</code> ou edite o código <code class="code-inline">.rts</code> abaixo para testar as validações de capacidades, forja de tokens, escape de arenas, aliasing ECS, exaustividade de <code class="code-inline">match</code> e prévia de código rebaixado.
+              </p>
+            </div>
+            <div id="pg-status-badge" class="status-chip status-sage">Aguardando verificação</div>
+          </div>
+
+          <div class="filter-group">
+            <span class="field-label">Exemplos Práticos (.rts)</span>
+            <div class="chip-row" id="playground-presets-row"></div>
+          </div>
+
+          <div class="playground-shell">
+            <div class="editor-pane">
+              <div class="cheat-card-head">
+                <label class="field-label" for="pg-code-editor">Editor de Código-Fonte (.rts)</label>
+                <span id="pg-line-meta" class="data-label">0 linhas</span>
+              </div>
+              <textarea
+                id="pg-code-editor"
+                class="code-editor-textarea"
+                spellcheck="false"
+                oninput="onPlaygroundCodeInput(this.value)"
+              ></textarea>
+              <div class="chip-row">
+                <button type="button" class="btn btn-primary" onclick="runSimulatedRtsc()">Executar rtsc check</button>
+                <button type="button" class="btn" onclick="resetCurrentPreset()">Restaurar exemplo</button>
+                <button type="button" class="btn" onclick="exportPlaygroundFile()">Exportar .rts</button>
+              </div>
+              <div id="pg-export-msg" class="data-label" aria-live="polite"></div>
+            </div>
+
+            <div class="output-pane">
+              <div class="cheat-card-head">
+                <span class="data-label">Saída do Analisador Estático</span>
+                <div class="chip-row">
+                  <button type="button" id="tab-btn-human" class="filter-chip active" onclick="setPlaygroundOutputMode('human')">Diagnóstico</button>
+                  <button type="button" id="tab-btn-json" class="filter-chip" onclick="setPlaygroundOutputMode('json')">JSON AST</button>
+                  <button type="button" id="tab-btn-codegen" class="filter-chip" onclick="setPlaygroundOutputMode('codegen')">Codegen</button>
+                </div>
+              </div>
+              <div id="pg-output-container" aria-live="polite"></div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <footer class="footer-note">
+      <span>Referência técnica baseada na especificação arquitetural e código-fonte do compilador <strong>RustTS (rtsc v1.0.0-rts)</strong>: lexer logos, parser LL(k), verificador semântico de capacidades, arenas e backends C99 AVX2/FMA3, Unreal UHT, Unity C-ABI, TypeScript SDK e GBNF.</span>
+      <span>Todos os exemplos podem ser validados localmente no playground simulado.</span>
+    </footer>
+  </div>
+
+  <api-shim></api-shim>
+  <script>
+    // =========================================================================
+    // DADOS ESTRUTURADOS DA LINGUAGEM RUSTTS (.rts) — v1.0.0-rts
+    // =========================================================================
+    const TYPES_DATA = [
+      { name: `i8`, cat: `int`, catLabel: `Inteiro`, sem: `8 bits com sinal (-128..127)`, c99: `int8_t`, ue5: `int8`, unityTs: `sbyte / number`, example: `let delta: i8 = -12;` },
+      { name: `i16`, cat: `int`, catLabel: `Inteiro`, sem: `16 bits com sinal`, c99: `int16_t`, ue5: `int16`, unityTs: `short / number`, example: `let pitch: i16 = -450;` },
+      { name: `i32`, cat: `int`, catLabel: `Inteiro`, sem: `32 bits com sinal`, c99: `int32_t`, ue5: `int32`, unityTs: `int / number`, example: `let score: i32 = 1024;` },
+      { name: `i64`, cat: `int`, catLabel: `Inteiro`, sem: `64 bits com sinal (string decimal no TS SDK)`, c99: `int64_t`, ue5: `int64`, unityTs: `long / string`, example: `let timestamp_ns: i64 = 1700000000;` },
+      { name: `u8`, cat: `int`, catLabel: `Inteiro`, sem: `8 bits sem sinal (0..255)`, c99: `uint8_t`, ue5: `uint8`, unityTs: `byte / number`, example: `let pwm_duty: u8 = 100;` },
+      { name: `u16`, cat: `int`, catLabel: `Inteiro`, sem: `16 bits sem sinal (registradores I2C/SPI)`, c99: `uint16_t`, ue5: `uint16`, unityTs: `ushort / number`, example: `let raw_adc: u16 = i2c.read_register_u16(0x00)?;` },
+      { name: `u32`, cat: `int`, catLabel: `Inteiro`, sem: `32 bits sem sinal (tipo padrão de literal inteiro)`, c99: `uint32_t`, ue5: `uint32`, unityTs: `uint / number`, example: `let entity_id: u32 = 42;` },
+      { name: `u64`, cat: `int`, catLabel: `Inteiro`, sem: `64 bits sem sinal (string decimal no TS SDK > 2^53-1)`, c99: `uint64_t`, ue5: `uint64`, unityTs: `ulong / string`, example: `let req_id: u64 = 9007199254740993;` },
+      { name: `usize`, cat: `int`, catLabel: `Inteiro`, sem: `Tamanho indexável por ponteiro/arquitetura`, c99: `size_t`, ue5: `SIZE_T`, unityTs: `nuint / string`, example: `let count: usize = transforms.len();` },
+      { name: `f32`, cat: `float`, catLabel: `Ponto Flutuante`, sem: `IEEE 754 precisão simples (padrão de literal float & SIMD)`, c99: `float`, ue5: `float`, unityTs: `float / number`, example: `let temp_c: f32 = (raw as f32) * 0.0625;` },
+      { name: `f64`, cat: `float`, catLabel: `Ponto Flutuante`, sem: `IEEE 754 precisão dupla`, c99: `double`, ue5: `double`, unityTs: `double / number`, example: `let lat: f64 = -23.550520;` },
+      { name: `fix32`, cat: `float`, catLabel: `Ponto Fixo`, sem: `Ponto fixo determinístico de 32 bits (lockstep/networking)`, c99: `int32_t`, ue5: `int32`, unityTs: `int / number`, example: `let step_pos: fix32 = 100;` },
+      { name: `bool`, cat: `int`, catLabel: `Booleano`, sem: `Valor lógico estrito (true / false)`, c99: `bool`, ue5: `bool`, unityTs: `bool / boolean`, example: `let armed: bool = true;` },
+      { name: `str`, cat: `int`, catLabel: `Texto`, sem: `Referência imutável de string UTF-8`, c99: `const char*`, ue5: `FString`, unityTs: `string / string`, example: `let tag: str = "drone-alpha";` },
+      { name: `vec2`, cat: `math`, catLabel: `Matemático SIMD`, sem: `Vetor 2D f32 alinhado (.x, .y)`, c99: `rts_vec2_t`, ue5: `FVector2D`, unityTs: `Vector2 / {x,y}`, example: `let uv: vec2 = pos_xy * 0.5;` },
+      { name: `vec3`, cat: `math`, catLabel: `Matemático SIMD`, sem: `Vetor 3D f32 AVX2-ready (.x, .y, .z)`, c99: `rts_vec3_t`, ue5: `FVector`, unityTs: `Vector3 / [f32;3]`, example: `transforms[i].pos = transforms[i].pos + (velocities[i].vel * dt.fixed_delta);` },
+      { name: `vec4`, cat: `math`, catLabel: `Matemático SIMD`, sem: `Vetor 4D f32 alinhado em 16B (.x, .y, .z, .w)`, c99: `rts_vec4_t`, ue5: `FVector4`, unityTs: `Vector4 / [f32;4]`, example: `let color_rgba: vec4 = rgba_val;` },
+      { name: `quat`, cat: `math`, catLabel: `Matemático SIMD`, sem: `Quatérnio unitário de rotação (.x, .y, .z, .w)`, c99: `rts_quat_t`, ue5: `FQuat`, unityTs: `Quaternion / [f32;4]`, example: `let rot: quat = body.orientation;` },
+      { name: `mat3`, cat: `math`, catLabel: `Matemático SIMD`, sem: `Matriz 3x3 em f32 contínuo (9 floats)`, c99: `float[9]`, ue5: `FMatrix3x3`, unityTs: `float3x3`, example: `let inertia: mat3 = body.tensor;` },
+      { name: `mat4`, cat: `math`, catLabel: `Matemático SIMD`, sem: `Matriz 4x4 homogênea (16 floats)`, c99: `float[16]`, ue5: `FMatrix`, unityTs: `float4x4`, example: `let mvp: mat4 = cam.view_proj;` },
+      { name: `Option<T>`, cat: `algebraic`, catLabel: `Algébrico`, sem: `Substituto seguro para null (Some(v) | None)`, c99: `rts_option_t`, ue5: `TOptional<T>`, unityTs: `T | null (TS)`, example: `match maybe_id { Some(v) => { return v; }, None => { return 0; } }` },
+      { name: `Result<T, E>`, cat: `algebraic`, catLabel: `Algébrico`, sem: `Substituto para try/catch (Ok(v) | Err(e) + ?)`, c99: `rts_result_T_E_t`, ue5: `TExpected`, unityTs: `RtsResult<T, E>`, example: `pub fn read() -> Result<f32, HardwareFault> { ... }` },
+      { name: `Handle<T>`, cat: `algebraic`, catLabel: `Handle Seguro`, sem: `Índice 32-bit + contador geracional 32-bit (sem 'a)`, c99: `rts_handle_t`, ue5: `FRtsHandle`, unityTs: `ulong (u64)`, example: `let h: Handle<Entity> = Handle::null();` },
+      { name: `Json<T>`, cat: `algebraic`, catLabel: `Contrato API`, sem: `Envelope tipado para rotas @route e SDK TypeScript`, c99: `T_t`, ue5: `FJsonPayload`, unityTs: `T (DTO tipado)`, example: `pub fn get_user(id: u64) -> Result<Json<UserDTO>, ApiErr>` }
+    ];
+
+    const CAPABILITIES_DATA = [
+      { token: `cap I2CBus<0x48>`, domain: `hardware`, domainLabel: `Hardware & I/O`, methods: `read_register_u16, read_register_u8, write_register_u16, write_register_u8`, c99: `rts_i2c_bus_t* RTS_RESTRICT`, rule: `Acesso exclusivo ao endereço I2C declarado. Forja via ::new() bloqueada (RTS-E0404).` },
+      { token: `cap I2CRead<Addr>`, domain: `hardware`, domainLabel: `Hardware & I/O`, methods: `read_u16, read_register_u16, read_register_u8`, c99: `const rts_i2c_bus_t* RTS_RESTRICT`, rule: `Permissão estritamente de leitura no barramento I2C.` },
+      { token: `cap PWMPin<4>`, domain: `hardware`, domainLabel: `Hardware & I/O`, methods: `set_duty, set_frequency`, c99: `rts_pwm_pin_t* RTS_RESTRICT`, rule: `Modulação por largura de pulso restrita ao pino especificado.` },
+      { token: `cap GPIOPin<Pin>`, domain: `hardware`, domainLabel: `Hardware & I/O`, methods: `GPIOPin::set_high, read_pin`, c99: `rts_gpio_pin_t* RTS_RESTRICT`, rule: `Controle digital de pino GPIO; requer declaração explícita na assinatura.` },
+      { token: `cap SPIBus / DMAChannel / Interrupt`, domain: `hardware`, domainLabel: `Hardware & I/O`, methods: `SPIBus::transfer, dma_copy, irq_ack`, c99: `void* /* cap */`, rule: `Tokens não-forjáveis para periféricos de alta vazão e interrupções.` },
+      { token: `cap MonotonicClock / TimeStep`, domain: `hardware`, domainLabel: `Tempo Determinístico`, methods: `SystemClock::now, dt.fixed_delta`, c99: `const TimeStep_t* RTS_RESTRICT`, rule: `Relógio monotônico imutável e passo fixo de simulação (f32).` },
+      { token: `cap MutColumn<T>`, domain: `ecs`, domainLabel: `ECS SoA`, methods: `transforms[i].field = ..., .len()`, c99: `T_soa_column_t* RTS_RESTRICT`, rule: `Escrita exclusiva em coluna Structure-of-Arrays (Rank 2). Proíbe aliasing com outro MutColumn<T> ou ReadColumn<T> (RTS-E0405).` },
+      { token: `cap ReadColumn<T>`, domain: `ecs`, domainLabel: `ECS SoA`, methods: `velocities[i].field, .len(), .handle_at(i)`, c99: `const T_soa_column_t* RTS_RESTRICT`, rule: `Leitura paralela SIMD segura (Rank 2). Mutações falham com RTS-E0402.` },
+      { token: `cap FrameArena<T>`, domain: `arena`, domainLabel: `Arena Rank 1`, methods: `.push(), .alloc(), .alloc_handle(), .push_handle()`, c99: `rts_arena_t* RTS_RESTRICT`, rule: `Alocação O(1) zerada a cada 16,6 ms. Dados não podem vazar para LevelArena/StaticArena (RTS-E0501).` },
+      { token: `cap ReadFrameArena<T>`, domain: `arena`, domainLabel: `Arena Rank 1`, methods: `events[i], .len()`, c99: `const rts_arena_t* RTS_RESTRICT`, rule: `Consumo somente leitura do estágio anterior. Proibido coexistir com FrameArena<T> no mesmo estágio (RTS-E0405).` },
+      { token: `cap RequestArena / TaskArena`, domain: `arena`, domainLabel: `Arena Rank 1`, methods: `.alloc(), .push(), .alloc_handle()`, c99: `rts_arena_t* RTS_RESTRICT`, rule: `Arena efêmera por requisição HTTP (@route) ou tarefa assíncrona isolada.` },
+      { token: `cap LevelArena / SessionArena`, domain: `arena`, domainLabel: `Arena Rank 2`, methods: `.store(), .insert(), .save_handle()`, c99: `rts_arena_t* RTS_RESTRICT`, rule: `Arena persistente entre quadros ou durante a sessão. Rejeita valores de Rank 1.` },
+      { token: `cap StaticArena`, domain: `arena`, domainLabel: `Arena Rank 3`, methods: `.store(), .insert()`, c99: `rts_arena_t* RTS_RESTRICT`, rule: `Maior longevidade possível (Rank 3). Rejeita dados de Rank 1 e Rank 2.` },
+      { token: `cap NetSocket / TcpSocket / UdpTick`, domain: `network`, domainLabel: `Rede`, methods: `send, recv, broadcast, connect`, c99: `void* /* cap Net */`, rule: `Comunicação de rede explícita; exigida transitivamente por toda cadeia de chamadas (RTS-E0403).` },
+      { token: `cap HttpRoute`, domain: `network`, domainLabel: `Rede`, methods: `Http::get`, c99: `void* /* cap Http */`, rule: `Requisições HTTP de saída controladas por contrato.` },
+      { token: `cap SqlRead<Table>`, domain: `network`, domainLabel: `Banco de Dados`, methods: `query, select, find_by_id, fetch_one`, c99: `const rts_sql_conn_t*`, rule: `Somente leitura SQL. Invocar delete_by_id ou update gera RTS-E0402.` },
+      { token: `cap SqlWrite<Table>`, domain: `network`, domainLabel: `Banco de Dados`, methods: `insert, update, delete_by_id, execute_write (+ leitura)`, c99: `rts_sql_conn_t*`, rule: `Satisfaz também leituras (SqlRead), mas exige declaração explícita de escrita.` },
+      { token: `cap GpuQueue / WebGpuDevice`, domain: `network`, domainLabel: `GPU Compute`, methods: `dispatch, submit_kernel`, c99: `rts_gpu_queue_t*`, rule: `Submissão controlada de kernels @gpu_kernel para filas SPIR-V / WGSL.` }
+    ];
+
+    const ATTRIBUTES_DATA = [
+      {
+        id: `component`,
+        name: `@component`,
+        target: `C99 SoA / AVX2`,
+        summary: `Transforma uma struct AoS em Structure of Arrays (SoA) alinhado em 64 bytes para vetorização SIMD.`,
+        code: `@component\nstruct Transform {\n    pos: vec3,\n    scale: f32,\n}`,
+        output: `// C99 emitido pelo rtsc:\ntypedef struct {\n    float* RTS_ALIGNED(64) pos_x;\n    float* RTS_ALIGNED(64) pos_y;\n    float* RTS_ALIGNED(64) pos_z;\n    float* RTS_ALIGNED(64) scale;\n    size_t count;\n} Transform_soa_column_t;`
+      },
+      {
+        id: `system`,
+        name: `@system(stage = "FixedUpdate")`,
+        target: `Engine ECS`,
+        summary: `Sistema ECS determinístico single-thread com cursor direto em arenas e validação estrita de aliasing.`,
+        code: `@system(stage = "FixedUpdate")\npub fn resolve_collisions(\n    events: cap ReadFrameArena<CollisionEvent>,\n    transforms: cap MutColumn<Transform>\n) { ... }`,
+        output: `// Registrado no estágio FixedUpdate\n// Garantia: nenhum outro MutColumn<Transform> permitido na assinatura.`
+      },
+      {
+        id: `parallel_system`,
+        name: `@parallel_system(stage = "FixedUpdate")`,
+        target: `AVX2 + Multi-Core`,
+        summary: `Sistema ECS multi-core com Atomic Tile Batching e Strip-Mining L1d sobre colunas disjuntas.`,
+        code: `@parallel_system(stage = "FixedUpdate")\npub fn integrate_physics(\n    dt: cap TimeStep,\n    transforms: cap MutColumn<Transform>,\n    velocities: cap ReadColumn<Velocity>\n) {\n    for i in 0..transforms.len() {\n        transforms[i].pos = transforms[i].pos + (velocities[i].vel * dt.fixed_delta);\n    }\n}`,
+        output: `/* Mode: @parallel_system (Atomic Tile Batch) */\n// Loop vetorizado AVX2/FMA3 com ponteiros restrict em Transform_soa_column_t`
+      },
+      {
+        id: `unreal_actor`,
+        name: `@unreal_actor(replicate = true, category = "Combat")`,
+        target: `Unreal Engine 5 UHT`,
+        summary: `Emite automaticamente o par .h/.cpp de um AActor compatível com Unreal Header Tool e replicação de rede.`,
+        code: `@unreal_actor(replicate = true, category = "Combat")\nstruct WeaponProjectile {\n    @uproperty(edit_anywhere, replicated)\n    damage: f32,\n}`,
+        output: `UCLASS(Blueprintable)\nclass AWeaponProjectile : public AActor {\n    GENERATED_BODY()\npublic:\n    UPROPERTY(EditAnywhere, Replicated, Category="Combat")\n    float damage;\n};`
+      },
+      {
+        id: `unreal_impl`,
+        name: `@unreal_impl(WeaponProjectile)`,
+        target: `Unreal Engine 5 UHT`,
+        summary: `Associa funções .rts como métodos UFUNCTION pertencentes a um ator ou componente da Unreal.`,
+        code: `@unreal_impl(WeaponProjectile)\npub fn apply_damage(amount: f32) -> f32 {\n    return amount * 1.5;\n}`,
+        output: `UFUNCTION(BlueprintCallable, Category="Combat")\nfloat AWeaponProjectile::apply_damage(float amount) {\n    return (amount * 1.5f);\n}`
+      },
+      {
+        id: `uproperty`,
+        name: `@uproperty(edit_anywhere, blueprint_read_only, replicated)`,
+        target: `Unreal Engine 5 UHT`,
+        summary: `Configura metadados de reflexão UPROPERTY nos campos de uma struct @unreal_actor.`,
+        code: `@uproperty(edit_anywhere, blueprint_read_only)\nmuzzle_velocity: f32,`,
+        output: `UPROPERTY(EditAnywhere, BlueprintReadOnly)\nfloat muzzle_velocity;`
+      },
+      {
+        id: `gpu_kernel`,
+        name: `@gpu_kernel`,
+        target: `SPIR-V / DXIL / WGSL`,
+        summary: `Unifica lógica CPU-GPU para execução paralela em compute shaders sem ponteiros dinâmicos.`,
+        code: `@gpu_kernel\npub fn ray_step(gpu: cap GpuQueue, origin: vec3) -> vec3 {\n    return origin;\n}`,
+        output: `// Kernel marcado para emissão GPU determinística (sem alocação heap).`
+      },
+      {
+        id: `shader_shared`,
+        name: `@shader_shared`,
+        target: `Alinhamento CPU/GPU`,
+        summary: `Impõe layout std140/std430 determinístico entre memória da CPU e uniform/storage buffers da GPU.`,
+        code: `@shader_shared\nstruct FrameUniforms {\n    view_proj: mat4,\n    camera_pos: vec4,\n}`,
+        output: `// Layout alinhado em 16 bytes compatível entre host C99 e shader.`
+      },
+      {
+        id: `route`,
+        name: `@route("GET", "/api/v1/users/:id")`,
+        target: `Server + --emit-ts-sdk`,
+        summary: `Define endpoint HTTP isolado em RequestArena O(1) e gera cliente TypeScript assíncrono tipado.`,
+        code: `@route("GET", "/api/v1/users/:id")\npub fn get_user_profile(\n    id: u64,\n    db: cap SqlRead<UsersTable>,\n    arena: cap RequestArena\n) -> Result<Json<UserDTO>, ApiError>`,
+        output: `// client.ts gerado via --emit-ts-sdk:\npublic async get_user_profile(id: string): Promise<RtsResult<UserDTO, ApiError>>`
+      },
+      {
+        id: `sealed_sig`,
+        name: `@sealed_sig (Padrão Implícito)`,
+        target: `Segurança IA-Dev`,
+        summary: `Fronteira de segurança padrão em toda função: proíbe que sugestões JSON do compilador peçam escalação de cap.`,
+        code: `@sealed_sig\npub fn read_only_audit(db: cap SqlRead<UsersTable>) {\n    // Se a IA tentar db.delete_by_id(1), o JSON manda REMOVER a chamada.\n}`,
+        output: `{\n  "action": "remove_unauthorized_call",\n  "security_policy": "SealedSignatureBoundary: AI agent is forbidden from mutating function signature to escalate privileges."\n}`
+      },
+      {
+        id: `open_sig`,
+        name: `@open_sig`,
+        target: `Prototipação Assistida`,
+        summary: `Desbloqueado explicitamente pelo arquiteto para permitir que o diagnóstico sugira adição do token cap faltante.`,
+        code: `@open_sig\npub fn prototype_controller(i2c: cap I2CBus<0x48>) {\n    // Durante prototipação, o JSON pode sugerir adicionar pwm: cap PWMPin<4>.\n}`,
+        output: `{\n  "action": "add_parameter_capability",\n  "contract_mode": "@open_sig (explicitly unlocked by architect)"\n}`
+      }
+    ];
+
+    const DIAGNOSTICS_DATA = [
+      {
+        code: `RTS-E0101`,
+        category: `SyntaxError`,
+        domain: `syntax`,
+        rule: `Rejeita caracteres ou tokens fora do alfabeto canônico LL(k) usando cálculo O(log N) de linha e coluna.`,
+        fixPolicy: `Corrigir token inválido no código-fonte.`,
+        sampleJson: `{\n  "status": "error",\n  "compiler_version": "1.0.0-rts",\n  "diagnostics": [{\n    "error_code": "RTS-E0101",\n    "category": "SyntaxError",\n    "ast_node": "LexerToken",\n    "message": "Unexpected token '@' outside attribute position.",\n    "deterministic_fixes": []\n  }]\n}`
+      },
+      {
+        code: `RTS-E0201`,
+        category: `SyntaxError`,
+        domain: `syntax`,
+        rule: `Garante aderência estrita à gramática canônica única (One Canonical Way) — sem açúcar sintático alternativo.`,
+        fixPolicy: `Reescrever instrução seguindo a gramática LL canônica (.gbnf).`,
+        sampleJson: `{\n  "status": "error",\n  "compiler_version": "1.0.0-rts",\n  "diagnostics": [{\n    "error_code": "RTS-E0201",\n    "category": "SyntaxError",\n    "ast_node": "ParserNode",\n    "message": "Expected ':' before type annotation in 'let' binding.",\n    "deterministic_fixes": []\n  }]\n}`
+      },
+      {
+        code: `RTS-E0301`,
+        category: `TypeMismatch`,
+        domain: `types`,
+        rule: `Valida compatibilidade estática em let, =, operações binárias, argumentos, campos de StructInit, Handle<T> e return.`,
+        fixPolicy: `Usar conversão explícita 'as' ou alinhar tipos compatíveis.`,
+        sampleJson: `{\n  "status": "error",\n  "compiler_version": "1.0.0-rts",\n  "diagnostics": [{\n    "error_code": "RTS-E0301",\n    "category": "TypeMismatch",\n    "ast_node": "BinaryExpr(f32 Add str)",\n    "message": "Invalid binary operation in 'broken_types': cannot apply operator 'Add' between 'f32' and 'str'.",\n    "deterministic_fixes": []\n  }]\n}`
+      },
+      {
+        code: `RTS-E0302`,
+        category: `NonExhaustiveMatch`,
+        domain: `types`,
+        rule: `Exige cobertura total de todas as variantes em match sobre enum, Result<T, E> e Option<T> (ou braço curinga _).`,
+        fixPolicy: `Adicionar braços faltantes (ex: Err(e), None ou variante ausente).`,
+        sampleJson: `{\n  "status": "error",\n  "compiler_version": "1.0.0-rts",\n  "diagnostics": [{\n    "error_code": "RTS-E0302",\n    "category": "NonExhaustiveMatch",\n    "ast_node": "MatchStmt(HardwareFault)",\n    "message": "Non-exhaustive match: missing variant 'HardwareFault::OverheatCritical'.",\n    "deterministic_fixes": []\n  }]\n}`
+      },
+      {
+        code: `RTS-E0402`,
+        category: `CapabilityViolation`,
+        domain: `caps`,
+        rule: `Bloqueia chamadas de I/O, rede, hardware, SQL ou mutação sem o token cap correspondente na assinatura.`,
+        fixPolicy: `@sealed_sig: remove_unauthorized_call | @open_sig: add_parameter_capability.`,
+        sampleJson: `{\n  "status": "error",\n  "compiler_version": "1.0.0-rts",\n  "diagnostics": [{\n    "error_code": "RTS-E0402",\n    "category": "CapabilityViolation",\n    "ast_node": "MethodCall(db.delete_by_id)",\n    "message": "Function 'get_user_profile' attempted a write operation ('delete_by_id') on resource 'UsersTable', but only possesses read capability 'cap SqlRead<UsersTable>'.",\n    "deterministic_fixes": [{\n      "action": "remove_unauthorized_call",\n      "line_to_remove": 18,\n      "security_policy": "SealedSignatureBoundary: AI agent is forbidden from mutating function signature to escalate privileges."\n    }]\n  }]\n}`
+      },
+      {
+        code: `RTS-E0403`,
+        category: `TransitiveCapabilityViolation`,
+        domain: `caps`,
+        rule: `Fecho transitivo no Call Graph: exige que Caps(f_callee) seja subconjunto de Caps(f_caller), inclusive em expressões unárias.`,
+        fixPolicy: `@sealed_sig impede escalação automática no caller; remover chamada indireta.`,
+        sampleJson: `{\n  "status": "error",\n  "compiler_version": "1.0.0-rts",\n  "diagnostics": [{\n    "error_code": "RTS-E0403",\n    "category": "TransitiveCapabilityViolation",\n    "ast_node": "CallExpr(helper_send_telemetry)",\n    "message": "Transitive capability violation: calling 'helper_send_telemetry' requires 'cap NetSocket' (chain: tick -> helper_send_telemetry -> NetworkSocket::send).",\n    "deterministic_fixes": [{\n      "action": "remove_unauthorized_call",\n      "line_to_remove": 14,\n      "security_policy": "SealedSignatureBoundary"\n    }]\n  }]\n}`
+      },
+      {
+        code: `RTS-E0404`,
+        category: `CapabilityForgeryAttempt`,
+        domain: `caps`,
+        rule: `Impede instanciação artificial de tokens cap via StructInit, fábricas (::new(), ::forge(), ::open_ambient()) ou let local fora de main.`,
+        fixPolicy: `Remover forja e receber token cap via parâmetro de entrypoint.`,
+        sampleJson: `{\n  "status": "error",\n  "compiler_version": "1.0.0-rts",\n  "diagnostics": [{\n    "error_code": "RTS-E0404",\n    "category": "CapabilityForgeryAttempt",\n    "ast_node": "CallExpr(I2CBus::new)",\n    "message": "Function 'spoof_sensor' attempted to forge capability token via 'I2CBus::new'. Capabilities are unforgeable linear tokens.",\n    "deterministic_fixes": [{\n      "action": "remove_unauthorized_call",\n      "line_to_remove": 9,\n      "security_policy": "SealedSignatureBoundary"\n    }]\n  }]\n}`
+      },
+      {
+        code: `RTS-E0405`,
+        category: `AliasingViolation`,
+        domain: `memory`,
+        rule: `Proíbe aliasing entre colunas ECS (MutColumn<T> duplicado ou MutColumn<T> + ReadColumn<T>) ou FrameArena<T> + ReadFrameArena<T>.`,
+        fixPolicy: `Separar sistemas produtor e consumidor em estágios sequenciais.`,
+        sampleJson: `{\n  "status": "error",\n  "compiler_version": "1.0.0-rts",\n  "diagnostics": [{\n    "error_code": "RTS-E0405",\n    "category": "AliasingViolation",\n    "ast_node": "FnParam(pos_b: cap MutColumn<Transform>)",\n    "message": "Conflicting ECS column capabilities for component 'Transform'. Parallel SIMD scheduling requires exclusive MutColumn access.",\n    "deterministic_fixes": []\n  }]\n}`
+      },
+      {
+        code: `RTS-E0501`,
+        category: `ArenaLifetimeEscape`,
+        domain: `memory`,
+        rule: `Impõe Rank(Static)=3 > Rank(Level/Session)=2 > Rank(Frame/Request)=1, inclusive em indexação events[k].`,
+        fixPolicy: `remove_arena_lifetime_escape: manter dados efêmeros na arena de origem.`,
+        sampleJson: `{\n  "status": "error",\n  "compiler_version": "1.0.0-rts",\n  "diagnostics": [{\n    "error_code": "RTS-E0501",\n    "category": "ArenaLifetimeEscape",\n    "ast_node": "MethodCall(level_cache.store)",\n    "message": "Cannot store handle from ephemeral 'events' (Frame/RequestArena Rank 1) into persistent 'level_cache' (Level/SessionArena Rank 2). Rank 1 < Rank 2.",\n    "deterministic_fixes": [{\n      "action": "remove_arena_lifetime_escape",\n      "line_to_remove": 8,\n      "expected_arena_rank": "Level/SessionArena (Rank 2)"\n    }]\n  }]\n}`
+      },
+      {
+        code: `RTS-E0900`,
+        category: `TierZeroForbiddenDomain`,
+        domain: `memory`,
+        rule: `Bloqueia qualquer tentativa de modelar DOM, HTML ou CSS tradicional dentro da linguagem (.rts).`,
+        fixPolicy: `Delegar UI para TypeScript/Next.js usando --emit-ts-sdk.`,
+        sampleJson: `{\n  "status": "error",\n  "compiler_version": "1.0.0-rts",\n  "diagnostics": [{\n    "error_code": "RTS-E0900",\n    "category": "TierZeroForbiddenDomain",\n    "ast_node": "StructDecl(DOMNode)",\n    "message": "Struct 'DOMNode' attempts to model Tier-0 forbidden Traditional Web DOM/HTML/CSS state. Use '--emit-ts-sdk'.",\n    "deterministic_fixes": []\n  }]\n}`
+      }
+    ];
+
+    const PLAYGROUND_PRESETS = [
+      {
+        id: `thermal_valid`,
+        label: `1. Controle Térmico (Válido)`,
+        code: `module drone.thermal_control;
+import core.hardware;
+
+struct SensorConfig {
+    target_temp_celsius: f32,
+    max_pwm_duty: u8,
+}
+
+enum HardwareFault {
+    I2CTimeout(u8),
+    SensorDisconnected,
+    OverheatCritical(f32),
+}
+
+pub fn regulate_motor_cooling(
+    config: SensorConfig,
+    i2c: cap I2CBus<0x48>,
+    pwm: cap PWMPin<4>,
+    clock: cap MonotonicClock
+) -> Result<f32, HardwareFault> {
+    let raw_data: u16 = i2c.read_register_u16(0x00)?;
+
+    if raw_data == 0xFFFF {
+        return Err(HardwareFault::SensorDisconnected);
+    }
+
+    let current_temp: f32 = (raw_data as f32) * 0.0625;
+    if current_temp >= 105.0 {
+        pwm.set_duty(100);
+        return Err(HardwareFault::OverheatCritical(current_temp));
+    }
+
+    pwm.set_duty(25);
+    return Ok(current_temp);
+}`
+      },
+      {
+        id: `ecs_soa_valid`,
+        label: `2. Physics ECS SoA (Válido)`,
+        code: `module engine.physics;
+
+@component
+struct Transform {
+    pos: vec3,
+}
+
+@component
+struct Velocity {
+    vel: vec3,
+}
+
+@parallel_system(stage = "FixedUpdate")
+pub fn integrate_physics(
+    dt: cap TimeStep,
+    transforms: cap MutColumn<Transform>,
+    velocities: cap ReadColumn<Velocity>
+) {
+    let count: usize = transforms.len();
+    for i in 0..count {
+        transforms[i].pos = transforms[i].pos + (velocities[i].vel * dt.fixed_delta);
+    }
+}`
+      },
+      {
+        id: `e0402_privilege`,
+        label: `3. Violação cap (RTS-E0402)`,
+        code: `module server.users;
+
+@route("GET", "/api/v1/users/:id")
+@sealed_sig
+pub fn get_user_profile(
+    id: u64,
+    db: cap SqlRead<UsersTable>,
+    arena: cap RequestArena
+) -> bool {
+    // ERRO: db possui apenas SqlRead<UsersTable>, mas tenta escrita!
+    db.delete_by_id(id);
+    return true;
+}`
+      },
+      {
+        id: `e0404_forgery`,
+        label: `4. Forja de Token (RTS-E0404)`,
+        code: `module drone.rogue_driver;
+
+pub fn spoof_hardware() -> u16 {
+    // ERRO: Tentativa de fabricar token cap fora de main()
+    let bus: cap I2CBus<0x48> = I2CBus::new();
+    return 0;
+}`
+      },
+      {
+        id: `e0501_arena`,
+        label: `5. Escape de Arena (RTS-E0501)`,
+        code: `module engine.consumer_escape;
+
+pub fn leak_collision_event(
+    level_cache: cap LevelArena,
+    events: cap ReadFrameArena<CollisionEvent>
+) {
+    let ev: CollisionEvent = events[0];
+    // ERRO: Rank 1 (ReadFrameArena) não pode escapar para Rank 2 (LevelArena)
+    level_cache.store(ev);
+}`
+      },
+      {
+        id: `combo_errors`,
+        label: `6. Match + Aliasing + Tier-0`,
+        code: `module engine.broken_pipeline;
+
+struct ReactComponent {
+    tag: str,
+}
+
+enum HardwareFault {
+    I2CTimeout(u8),
+    SensorDisconnected,
+    OverheatCritical(f32),
+}
+
+@parallel_system(stage = "Update")
+pub fn bad_system(
+    t1: cap MutColumn<Transform>,
+    t2: cap ReadColumn<Transform>,
+    fault: HardwareFault
+) -> u8 {
+    match fault {
+        HardwareFault::I2CTimeout(addr) => {
+            return addr;
+        },
+        HardwareFault::SensorDisconnected => {
+            return 1;
+        },
+    }
+}`
+      }
+    ];
+
+    // =========================================================================
+    // ESTADO DA APLICAÇÃO & PERSISTÊNCIA VIA notebookAppApi
+    // =========================================================================
+    let appState = {
+      typeCategory: `all`,
+      selectedTypeName: `f32`,
+      capDomain: `all`,
+      selectedAttrId: `component`,
+      diagDomain: `all`,
+      selectedDiagCode: `RTS-E0402`,
+      activePresetId: `thermal_valid`,
+      playgroundCode: PLAYGROUND_PRESETS[0].code,
+      playgroundMode: `human`,
+      pinnedItems: []
+    };
+
+    let lastSimReport = null;
+
+    async function persistState() {
+      try {
+        if (window.notebookAppApi && typeof window.notebookAppApi.setAppState === `function`) {
+          await window.notebookAppApi.setAppState(appState);
+        }
+      } catch (err) {
+        // Falha silenciosa em ambiente sem shim ativo
+      }
+    }
+
+    function escapeHtml(str) {
+      return String(str)
+        .replace(/&/g, `&amp;`)
+        .replace(/</g, `&lt;`)
+        .replace(/>/g, `&gt;`)
+        .replace(/"/g, `&quot;`);
+    }
+
+    // =========================================================================
+    // NAVEGAÇÃO & FIXADOS (CHEAT SHEET PINS)
+    // =========================================================================
+    function setActiveNav(id) {
+      const links = document.querySelectorAll(`.nav-link`);
+      links.forEach(function (lnk) {
+        const href = lnk.getAttribute(`href`);
+        if (href === `#` + id) {
+          lnk.classList.add(`active`);
+        } else {
+          lnk.classList.remove(`active`);
+        }
+      });
+    }
+
+    function togglePin(btn) {
+      if (!btn) return;
+      const pinId = btn.getAttribute(`data-pin-id`);
+      const label = btn.getAttribute(`data-pin-label`) || pinId;
+      const targetSection = btn.getAttribute(`data-pin-target`) || `pilar-sintaxe`;
+      const idx = appState.pinnedItems.findIndex(function (p) { return p.id === pinId; });
+      if (idx >= 0) {
+        appState.pinnedItems.splice(idx, 1);
+      } else {
+        appState.pinnedItems.push({ id: pinId, label: label, target: targetSection });
+      }
+      renderPinnedSidebar();
+      syncPinButtons();
+      persistState();
+    }
+
+    function removePin(pinId) {
+      appState.pinnedItems = appState.pinnedItems.filter(function (p) { return p.id !== pinId; });
+      renderPinnedSidebar();
+      syncPinButtons();
+      persistState();
+    }
+
+    function clearAllPins(btn) {
+      if (btn.dataset.armed !== `true`) {
+        btn.dataset.armed = `true`;
+        btn.textContent = `Confirmar limpeza`;
+        return;
+      }
+      btn.dataset.armed = `false`;
+      btn.textContent = `Limpar fixados`;
+      appState.pinnedItems = [];
+      renderPinnedSidebar();
+      syncPinButtons();
+      persistState();
+    }
+
+    function jumpToSection(sectionId) {
+      const el = document.getElementById(sectionId);
+      if (el) {
+        el.scrollIntoView({ behavior: `smooth` });
+        setActiveNav(sectionId);
+      }
+    }
+
+    function renderPinnedSidebar() {
+      const listEl = document.getElementById(`pinned-items-list`);
+      const countEl = document.getElementById(`pinned-count-chip`);
+      const clearBtn = document.getElementById(`clear-pins-btn`);
+      if (!listEl || !countEl || !clearBtn) return;
+
+      countEl.textContent = String(appState.pinnedItems.length);
+      if (appState.pinnedItems.length === 0) {
+        listEl.innerHTML = `<p style="margin:0; font-size:0.8rem; color:var(--on-surface-variant);">Nenhum bloco fixado. Use o botão <strong>Fixar</strong> nas seções para montar seu guia rápido.</p>`;
+        clearBtn.classList.add(`hidden`);
+        return;
+      }
+
+      clearBtn.classList.remove(`hidden`);
+      listEl.innerHTML = appState.pinnedItems.map(function (item) {
+        return `<div class="pinned-item">
+          <button type="button" class="pinned-item-btn" onclick="jumpToSection('${escapeHtml(item.target)}')">${escapeHtml(item.label)}</button>
+          <button type="button" class="pinned-remove-btn" aria-label="Remover ${escapeHtml(item.label)}" onclick="removePin('${escapeHtml(item.id)}')">&times;</button>
+        </div>`;
+      }).join(``);
+    }
+
+    function syncPinButtons() {
+      const btns = document.querySelectorAll(`.btn-pin`);
+      btns.forEach(function (btn) {
+        const id = btn.getAttribute(`data-pin-id`);
+        const isPinned = appState.pinnedItems.some(function (p) { return p.id === id; });
+        if (isPinned) {
+          btn.classList.add(`pinned`);
+          btn.textContent = `Fixado`;
+        } else {
+          btn.classList.remove(`pinned`);
+          btn.textContent = `Fixar`;
+        }
+      });
+    }
+
+    function copyCodeBlock(preId, btn) {
+      const pre = document.getElementById(preId);
+      if (!pre || !btn) return;
+      const text = pre.innerText || pre.textContent || ``;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () {
+          btn.textContent = `Copiado`;
+          setTimeout(function () { btn.textContent = `Copiar`; }, 1400);
+        }).catch(function () {
+          btn.textContent = `Selecionado`;
+        });
+      } else {
+        btn.textContent = `Pronto`;
+      }
+    }
+
+    // =========================================================================
+    // BUSCA GLOBAL
+    // =========================================================================
+    function handleGlobalSearch(query) {
+      const box = document.getElementById(`global-search-results`);
+      if (!box) return;
+      const q = query.trim().toLowerCase();
+      if (!q) {
+        box.classList.add(`hidden`);
+        box.innerHTML = ``;
+        return;
+      }
+
+      const hits = [];
+      TYPES_DATA.forEach(function (t) {
+        if (t.name.toLowerCase().includes(q) || t.c99.toLowerCase().includes(q) || t.sem.toLowerCase().includes(q)) {
+          hits.push({ label: `Tipo: ` + t.name, detail: t.c99 + ` · ` + t.sem, target: `pilar-tipos` });
+        }
+      });
+      CAPABILITIES_DATA.forEach(function (c) {
+        if (c.token.toLowerCase().includes(q) || c.methods.toLowerCase().includes(q)) {
+          hits.push({ label: c.token, detail: c.domainLabel, target: `pilar-capacidades` });
+        }
+      });
+      ATTRIBUTES_DATA.forEach(function (a) {
+        if (a.name.toLowerCase().includes(q) || a.summary.toLowerCase().includes(q)) {
+          hits.push({ label: `Atributo: ` + a.name, detail: a.target, target: `pilar-atributos` });
+        }
+      });
+      DIAGNOSTICS_DATA.forEach(function (d) {
+        if (d.code.toLowerCase().includes(q) || d.category.toLowerCase().includes(q) || d.rule.toLowerCase().includes(q)) {
+          hits.push({ label: d.code + ` (` + d.category + `)`, detail: d.rule, target: `pilar-diagnosticos` });
+        }
+      });
+
+      box.classList.remove(`hidden`);
+      if (hits.length === 0) {
+        box.innerHTML = `<div class="inspector-box" style="margin-top:var(--space-xs);"><span class="data-label">Sem resultados para "${escapeHtml(query)}"</span></div>`;
+        return;
+      }
+
+      const sliced = hits.slice(0, 6);
+      box.innerHTML = `<div class="inspector-box" style="margin-top:var(--space-xs); gap:var(--space-xs);">
+        <span class="data-label">${hits.length} ocorrência(s) encontradas</span>
+        ${sliced.map(function (h) {
+          return `<button type="button" class="attr-btn" onclick="jumpToSection('${h.target}')">
+            <span style="font-family:var(--font-label); font-size:0.8rem; color:var(--primary);">${escapeHtml(h.label)}</span>
+            <span style="font-size:0.78rem; color:var(--on-surface-variant); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(h.detail)}</span>
+          </button>`;
+        }).join(``)}
+      </div>`;
+    }
+
+    function clearGlobalSearch() {
+      const inp = document.getElementById(`global-search-input`);
+      const box = document.getElementById(`global-search-results`);
+      if (inp) inp.value = ``;
+      if (box) {
+        box.classList.add(`hidden`);
+        box.innerHTML = ``;
+      }
+    }
+
+    // =========================================================================
+    // PILAR 02: TABELA INTERATIVA DE TIPOS
+    // =========================================================================
+    function setTypeCategory(cat, btn) {
+      appState.typeCategory = cat;
+      const chips = document.querySelectorAll(`#type-category-chips .filter-chip`);
+      chips.forEach(function (c) { c.classList.remove(`active`); });
+      if (btn) btn.classList.add(`active`);
+      filterTypesTable();
+      persistState();
+    }
+
+    function selectTypeRow(typeName) {
+      appState.selectedTypeName = typeName;
+      filterTypesTable();
+      renderTypeDetail(typeName);
+      persistState();
+    }
+
+    function renderTypeDetail(typeName) {
+      const box = document.getElementById(`type-detail-inspector`);
+      if (!box) return;
+      const item = TYPES_DATA.find(function (t) { return t.name === typeName; }) || TYPES_DATA[0];
+      box.innerHTML = `<div class="cheat-card-head">
+          <span class="data-label">Inspetor do Tipo: ${escapeHtml(item.name)}</span>
+          <span class="status-chip status-cyan">${escapeHtml(item.catLabel)}</span>
+        </div>
+        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:var(--space-sm); font-size:0.875rem;">
+          <div><span class="data-label">C99 (Native SoA)</span><div><code class="code-inline">${escapeHtml(item.c99)}</code></div></div>
+          <div><span class="data-label">Unreal C++ (UHT)</span><div><code class="code-inline">${escapeHtml(item.ue5)}</code></div></div>
+          <div><span class="data-label">Unity C# / TS SDK</span><div><code class="code-inline">${escapeHtml(item.unityTs)}</code></div></div>
+        </div>
+        <pre class="code-well" style="margin-top:var(--space-xs);">${escapeHtml(item.example)}</pre>`;
+    }
+
+    function filterTypesTable() {
+      const tbody = document.getElementById(`types-table-body`);
+      const searchInp = document.getElementById(`type-search-input`);
+      if (!tbody) return;
+      const q = (searchInp ? searchInp.value : ``).trim().toLowerCase();
+
+      const filtered = TYPES_DATA.filter(function (t) {
+        const catOk = appState.typeCategory === `all` || t.cat === appState.typeCategory;
+        const textOk = !q || t.name.toLowerCase().includes(q) || t.sem.toLowerCase().includes(q) || t.c99.toLowerCase().includes(q) || t.ue5.toLowerCase().includes(q);
+        return catOk && textOk;
+      });
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--on-surface-variant); padding:var(--space-lg);">Nenhum tipo encontrado para esse filtro.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = filtered.map(function (t) {
+        const isSel = t.name === appState.selectedTypeName ? `selected-row` : ``;
+        return `<tr class="${isSel}" onclick="selectTypeRow('${escapeHtml(t.name)}')">
+          <td><code class="code-inline">${escapeHtml(t.name)}</code></td>
+          <td><span class="status-chip status-sage">${escapeHtml(t.catLabel)}</span></td>
+          <td>${escapeHtml(t.sem)}</td>
+          <td><span style="font-family:var(--font-label); font-size:0.82rem;">${escapeHtml(t.c99)}</span></td>
+          <td><span style="font-family:var(--font-label); font-size:0.82rem;">${escapeHtml(t.ue5)}</span></td>
+          <td><span style="font-family:var(--font-label); font-size:0.82rem;">${escapeHtml(t.unityTs)}</span></td>
+        </tr>`;
+      }).join(``);
+    }
+
+    // =========================================================================
+    // PILAR 03: MATRIZ DE CAPACIDADES CAP
+    // =========================================================================
+    function setCapDomain(domain, btn) {
+      appState.capDomain = domain;
+      const chips = document.querySelectorAll(`#cap-domain-chips .filter-chip`);
+      chips.forEach(function (c) { c.classList.remove(`active`); });
+      if (btn) btn.classList.add(`active`);
+      filterCapabilities();
+      persistState();
+    }
+
+    function filterCapabilities() {
+      const grid = document.getElementById(`capabilities-grid`);
+      const inp = document.getElementById(`cap-search-input`);
+      if (!grid) return;
+      const q = (inp ? inp.value : ``).trim().toLowerCase();
+
+      const filtered = CAPABILITIES_DATA.filter(function (c) {
+        const domOk = appState.capDomain === `all` || c.domain === appState.capDomain;
+        const txtOk = !q || c.token.toLowerCase().includes(q) || c.methods.toLowerCase().includes(q) || c.rule.toLowerCase().includes(q);
+        return domOk && txtOk;
+      });
+
+      if (filtered.length === 0) {
+        grid.innerHTML = `<div class="empty-state" style="grid-column: 1 / -1;">
+          <p style="margin:0;">Nenhuma capacidade encontrada para o termo pesquisado.</p>
+          <button type="button" class="btn btn-sm" onclick="resetCapFilters()">Limpar filtros</button>
+        </div>`;
+        return;
+      }
+
+      grid.innerHTML = filtered.map(function (c) {
+        return `<article class="cheat-card">
+          <div class="cheat-card-head">
+            <code class="code-inline" style="font-size:0.88rem;">${escapeHtml(c.token)}</code>
+            <span class="status-chip status-cyan">${escapeHtml(c.domainLabel)}</span>
+          </div>
+          <p style="margin:0; font-size:0.875rem; color:var(--on-surface-variant);">${escapeHtml(c.rule)}</p>
+          <div style="display:grid; gap:var(--space-xs); border-top:var(--hairline); padding-top:var(--space-sm);">
+            <div><span class="data-label">Métodos permitidos</span><div style="font-family:var(--font-label); font-size:0.78rem; color:var(--on-surface);">${escapeHtml(c.methods)}</div></div>
+            <div><span class="data-label">Assinatura C99</span><div style="font-family:var(--font-label); font-size:0.78rem; color:var(--tertiary);">${escapeHtml(c.c99)}</div></div>
+          </div>
+        </article>`;
+      }).join(``);
+    }
+
+    function resetCapFilters() {
+      const inp = document.getElementById(`cap-search-input`);
+      if (inp) inp.value = ``;
+      const firstChip = document.querySelector(`#cap-domain-chips .filter-chip`);
+      setCapDomain(`all`, firstChip);
+    }
+
+    // =========================================================================
+    // PILAR 04: SIMULADOR DE ESCAPE DE ARENA (RTS-E0501)
+    // =========================================================================
+    function evaluateArenaEscape() {
+      const origEl = document.getElementById(`arena-origin-select`);
+      const destEl = document.getElementById(`arena-dest-select`);
+      const outEl = document.getElementById(`arena-sim-result`);
+      if (!origEl || !destEl || !outEl) return;
+
+      const origParts = origEl.value.split(`|`);
+      const destParts = destEl.value.split(`|`);
+      const origRank = Number(origParts[0]);
+      const origName = origParts[1];
+      const destRank = Number(destParts[0]);
+      const destName = destParts[1];
+
+      if (origRank < destRank) {
+        outEl.innerHTML = `<div class="diag-card" style="padding:var(--space-sm) var(--space-md);">
+          <div class="cheat-card-head">
+            <span class="status-chip status-error">RTS-E0501 · ArenaLifetimeEscape</span>
+            <span class="data-label">Rank ${origRank} &lt; Rank ${destRank}</span>
+          </div>
+          <p style="margin:0; font-size:0.84rem; color:var(--on-surface-variant);">
+            Bloqueado: <strong>${escapeHtml(origName)}</strong> é efêmera (Rank ${origRank}) e não pode ser gravada em <strong>${escapeHtml(destName)}</strong> (Rank ${destRank}). Causaria <em>Use-After-Reset</em>.
+          </p>
+        </div>`;
+      } else {
+        outEl.innerHTML = `<div class="diag-card diag-ok" style="padding:var(--space-sm) var(--space-md);">
+          <div class="cheat-card-head">
+            <span class="status-chip status-sage">Permitido · Sem Escape</span>
+            <span class="data-label">Rank ${origRank} &ge; Rank ${destRank}</span>
+          </div>
+          <p style="margin:0; font-size:0.84rem; color:var(--on-surface-variant);">
+            Seguro: <strong>${escapeHtml(origName)}</strong> (Rank ${origRank}) vive pelo menos tanto quanto <strong>${escapeHtml(destName)}</strong> (Rank ${destRank}).
+          </p>
+        </div>`;
+      }
+    }
+
+    // =========================================================================
+    // PILAR 06: EXPLORADOR DE ATRIBUTOS CANÔNICOS
+    // =========================================================================
+    function selectAttribute(attrId) {
+      appState.selectedAttrId = attrId;
+      renderAttributes();
+      persistState();
+    }
+
+    function renderAttributes() {
+      const listEl = document.getElementById(`attr-selector-list`);
+      const detailEl = document.getElementById(`attr-detail-panel`);
+      if (!listEl || !detailEl) return;
+
+      listEl.innerHTML = ATTRIBUTES_DATA.map(function (a) {
+        const activeCls = a.id === appState.selectedAttrId ? `active` : ``;
+        return `<button type="button" class="attr-btn ${activeCls}" onclick="selectAttribute('${a.id}')">
+          <span style="font-family:var(--font-label); font-size:0.82rem;">${escapeHtml(a.name)}</span>
+          <span class="data-label">${escapeHtml(a.target)}</span>
+        </button>`;
+      }).join(``);
+
+      const sel = ATTRIBUTES_DATA.find(function (a) { return a.id === appState.selectedAttrId; }) || ATTRIBUTES_DATA[0];
+      detailEl.innerHTML = `<div class="cheat-card-head">
+          <h3 class="cheat-card-title">${escapeHtml(sel.name)}</h3>
+          <span class="status-chip status-amber">${escapeHtml(sel.target)}</span>
+        </div>
+        <p style="margin:0; font-size:0.9rem; color:var(--on-surface-variant);">${escapeHtml(sel.summary)}</p>
+        <span class="data-label">Sintaxe em .rts</span>
+        <pre class="code-well">${escapeHtml(sel.code)}</pre>
+        <span class="data-label">Código Gerado / Política do Compilador</span>
+        <pre class="code-well">${escapeHtml(sel.output)}</pre>`;
+    }
+
+    // =========================================================================
+    // PILAR 07: DIAGNÓSTICOS ESTÁTICOS RTS-E
+    // =========================================================================
+    function setDiagDomain(domain, btn) {
+      appState.diagDomain = domain;
+      const chips = document.querySelectorAll(`#diag-domain-chips .filter-chip`);
+      chips.forEach(function (c) { c.classList.remove(`active`); });
+      if (btn) btn.classList.add(`active`);
+      filterDiagnostics();
+      persistState();
+    }
+
+    function selectDiagRow(code) {
+      appState.selectedDiagCode = code;
+      filterDiagnostics();
+      renderDiagJsonPreview(code);
+      persistState();
+    }
+
+    function renderDiagJsonPreview(code) {
+      const box = document.getElementById(`diag-json-preview`);
+      if (!box) return;
+      const d = DIAGNOSTICS_DATA.find(function (item) { return item.code === code; }) || DIAGNOSTICS_DATA[4];
+      box.innerHTML = `<div class="cheat-card-head">
+          <span class="data-label">Payload JSON AST (--json-diagnostics) — ${escapeHtml(d.code)}</span>
+          <span class="status-chip status-error">${escapeHtml(d.category)}</span>
+        </div>
+        <pre class="code-well">${escapeHtml(d.sampleJson)}</pre>`;
+    }
+
+    function filterDiagnostics() {
+      const tbody = document.getElementById(`diag-table-body`);
+      const inp = document.getElementById(`diag-search-input`);
+      if (!tbody) return;
+      const q = (inp ? inp.value : ``).trim().toLowerCase();
+
+      const filtered = DIAGNOSTICS_DATA.filter(function (d) {
+        const domOk = appState.diagDomain === `all` || d.domain === appState.diagDomain;
+        const txtOk = !q || d.code.toLowerCase().includes(q) || d.category.toLowerCase().includes(q) || d.rule.toLowerCase().includes(q);
+        return domOk && txtOk;
+      });
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--on-surface-variant); padding:var(--space-lg);">Nenhum código de diagnóstico corresponde ao filtro.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = filtered.map(function (d) {
+        const selCls = d.code === appState.selectedDiagCode ? `selected-row` : ``;
+        return `<tr class="${selCls}" onclick="selectDiagRow('${escapeHtml(d.code)}')">
+          <td><code class="code-inline" style="color:var(--error);">${escapeHtml(d.code)}</code></td>
+          <td><span style="font-family:var(--font-label); font-size:0.82rem;">${escapeHtml(d.category)}</span></td>
+          <td>${escapeHtml(d.rule)}</td>
+          <td style="font-size:0.84rem; color:var(--on-surface-variant);">${escapeHtml(d.fixPolicy)}</td>
+        </tr>`;
+      }).join(``);
+    }
+
+    // =========================================================================
+    // PILAR 08: PLAYGROUND SIMULADO (ANALISADOR ESTÁTICO CLIENT-SIDE)
+    // =========================================================================
+    function renderPlaygroundPresets() {
+      const row = document.getElementById(`playground-presets-row`);
+      if (!row) return;
+      row.innerHTML = PLAYGROUND_PRESETS.map(function (p) {
+        const activeCls = p.id === appState.activePresetId ? `active` : ``;
+        return `<button type="button" class="filter-chip ${activeCls}" onclick="loadPreset('${p.id}')">${escapeHtml(p.label)}</button>`;
+      }).join(``);
+    }
+
+    function loadPreset(presetId) {
+      const preset = PLAYGROUND_PRESETS.find(function (p) { return p.id === presetId; });
+      if (!preset) return;
+      appState.activePresetId = preset.id;
+      appState.playgroundCode = preset.code;
+      const editor = document.getElementById(`pg-code-editor`);
+      if (editor) editor.value = preset.code;
+      updateLineCount(preset.code);
+      renderPlaygroundPresets();
+      runSimulatedRtsc();
+      persistState();
+    }
+
+    function resetCurrentPreset() {
+      loadPreset(appState.activePresetId);
+    }
+
+    function onPlaygroundCodeInput(val) {
+      appState.playgroundCode = val;
+      updateLineCount(val);
+      persistState();
+    }
+
+    function updateLineCount(text) {
+      const meta = document.getElementById(`pg-line-meta`);
+      if (!meta) return;
+      const lines = text ? text.split(`\n`).length : 0;
+      meta.textContent = lines + (lines === 1 ? ` linha` : ` linhas`);
+    }
+
+    function setPlaygroundOutputMode(mode) {
+      appState.playgroundMode = mode;
+      const btnHuman = document.getElementById(`tab-btn-human`);
+      const btnJson = document.getElementById(`tab-btn-json`);
+      const btnCodegen = document.getElementById(`tab-btn-codegen`);
+      [btnHuman, btnJson, btnCodegen].forEach(function (b) {
+        if (b) b.classList.remove(`active`);
+      });
+      if (mode === `human` && btnHuman) btnHuman.classList.add(`active`);
+      if (mode === `json` && btnJson) btnJson.classList.add(`active`);
+      if (mode === `codegen` && btnCodegen) btnCodegen.classList.add(`active`);
+      renderPlaygroundOutput();
+      persistState();
+    }
+
+    function exportPlaygroundFile() {
+      const msgEl = document.getElementById(`pg-export-msg`);
+      const code = appState.playgroundCode || ``;
+      const filename = appState.activePresetId + `.rts`;
+      try {
+        if (window.notebookAppApi && typeof window.notebookAppApi.triggerFileDownload === `function`) {
+          window.notebookAppApi.triggerFileDownload({
+            content: code,
+            contentType: `text/plain`,
+            encoding: `UTF-8`,
+            filename: filename
+          });
+          if (msgEl) msgEl.textContent = `Arquivo ` + filename + ` exportado.`;
+        } else {
+          if (msgEl) msgEl.textContent = `Download simulado pronto para ` + filename + `.`;
+        }
+      } catch (e) {
+        if (msgEl) msgEl.textContent = `Não foi possível exportar o arquivo.`;
+      }
+    }
+
+    function analyzeRtsSource(source) {
+      const lines = source.split(`\n`);
+      const diagnostics = [];
+
+      // 1. Checagem básica de módulo e chaves balanceadas (RTS-E0201)
+      let braceBalance = 0;
+      let hasModule = false;
+      lines.forEach(function (rawLine, idx) {
+        const lineNum = idx + 1;
+        const trimmed = rawLine.trim();
+        if (trimmed.startsWith(`module `)) hasModule = true;
+        if (!trimmed.startsWith(`//`)) {
+          for (let c = 0; c < rawLine.length; c++) {
+            if (rawLine[c] === `{`) braceBalance++;
+            if (rawLine[c] === `}`) braceBalance--;
+          }
+        }
+      });
+
+      if (!hasModule) {
+        diagnostics.push({
+          error_code: `RTS-E0201`,
+          category: `SyntaxError`,
+          file: `playground.rts`,
+          span: { line_start: 1, col_start: 1, line_end: 1, col_end: 1 },
+          ast_node: `ModuleHeader`,
+          message: `Declaração 'module <caminho>;' obrigatória no topo do arquivo .rts.`,
+          deterministic_fixes: []
+        });
+      }
+      if (braceBalance !== 0) {
+        diagnostics.push({
+          error_code: `RTS-E0201`,
+          category: `SyntaxError`,
+          file: `playground.rts`,
+          span: { line_start: lines.length, col_start: 1, line_end: lines.length, col_end: 1 },
+          ast_node: `ParserBlock`,
+          message: `Chaves '{' e '}' desbalanceadas no módulo.`,
+          deterministic_fixes: []
+        });
+      }
+
+      // 2. Fronteira Tier-0 Banida (RTS-E0900)
+      const tierZeroNames = [`DOM`, `DOMNode`, `Document`, `HtmlElement`, `CssStyle`, `VirtualDom`, `ReactComponent`, `WindowDom`];
+      lines.forEach(function (rawLine, idx) {
+        const lineNum = idx + 1;
+        if (rawLine.trim().startsWith(`//`)) return;
+        tierZeroNames.forEach(function (tz) {
+          const re = new RegExp(`\\b` + tz + `\\b`);
+          if (re.test(rawLine)) {
+            diagnostics.push({
+              error_code: `RTS-E0900`,
+              category: `TierZeroForbiddenDomain`,
+              file: `playground.rts`,
+              span: { line_start: lineNum, col_start: 1, line_end: lineNum, col_end: rawLine.length },
+              ast_node: `StructDecl(` + tz + `)`,
+              message: `Identificador '` + tz + `' tenta modelar DOM/HTML/CSS tradicional (Tier-0 banido). Use '--emit-ts-sdk' e delegue UI ao TypeScript.`,
+              deterministic_fixes: []
+            });
+          }
+        });
+      });
+
+      // 3. Enums declarados para verificação de match exaustivo (RTS-E0302)
+      const enumsMap = {};
+      const enumRegex = /enum\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{([\s\S]*?)\}/g;
+      let enumMatch;
+      while ((enumMatch = enumRegex.exec(source)) !== null) {
+        const eName = enumMatch[1];
+        const body = enumMatch[2];
+        const variants = body.split(`,`).map(function (v) {
+          return v.trim().split(`(`)[0].trim();
+        }).filter(function (v) { return v.length > 0 && !v.startsWith(`//`); });
+        enumsMap[eName] = variants;
+      }
+
+      // 4. Análise por bloco de função (simplificada e determinística)
+      const isOpenSigGlobal = /@open_sig/.test(source);
+      const fnRegex = /(?:@[a-zA-Z_][a-zA-Z0-9_]*(?:\([^)]*\))?\s*)*(?:pub\s+)?fn\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(([\s\S]*?)\)\s*(?:->\s*[^{]+)?\{/g;
+      let fnMatch;
+      while ((fnMatch = fnRegex.exec(source)) !== null) {
+        const fnHeader = fnMatch[0];
+        const fnName = fnMatch[1];
+        const fnParamsRaw = fnMatch[2];
+        const fnStartLine = source.slice(0, fnMatch.index).split(`\n`).length;
+        const isOpenSig = /@open_sig/.test(fnHeader) || isOpenSigGlobal;
+
+        // Extrai corpo da função por contagem de chaves
+        let depth = 1;
+        let pos = fnMatch.index + fnMatch[0].length;
+        while (pos < source.length && depth > 0) {
+          if (source[pos] === `{`) depth++;
+          else if (source[pos] === `}`) depth--;
+          pos++;
+        }
+        const fnBody = source.slice(fnMatch.index + fnMatch[0].length, Math.max(fnMatch.index + fnMatch[0].length, pos - 1));
+        const bodyStartLine = fnStartLine + fnHeader.split(`\n`).length - 1;
+
+        // Coleta capacidades declaradas nos parâmetros
+        const capParams = {};
+        const mutCols = {};
+        const readCols = {};
+        const frameArenas = {};
+        const readFrameArenas = {};
+        const paramLines = fnParamsRaw.split(`,`);
+        paramLines.forEach(function (pStr) {
+          const mCap = pStr.match(/([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*cap\s+([A-Za-z0-9_]+)(?:<([^>]+)>)?/);
+          if (mCap) {
+            const pName = mCap[1];
+            const capKind = mCap[2];
+            const capArg = mCap[3] ? mCap[3].trim() : null;
+            capParams[pName] = { kind: capKind, arg: capArg };
+
+            if (capKind === `MutColumn` && capArg) {
+              if (mutCols[capArg] || readCols[capArg]) {
+                diagnostics.push({
+                  error_code: `RTS-E0405`,
+                  category: `AliasingViolation`,
+                  file: `playground.rts`,
+                  span: { line_start: fnStartLine, col_start: 1, line_end: fnStartLine, col_end: 40 },
+                  ast_node: `FnParam(` + pName + `: cap MutColumn<` + capArg + `>)`,
+                  message: `Função '` + fnName + `' declara capacidades conflitantes para o componente '` + capArg + `'. Agendamento SIMD exige MutColumn exclusivo.`,
+                  deterministic_fixes: []
+                });
+              }
+              mutCols[capArg] = pName;
+            }
+            if (capKind === `ReadColumn` && capArg) {
+              if (mutCols[capArg]) {
+                diagnostics.push({
+                  error_code: `RTS-E0405`,
+                  category: `AliasingViolation`,
+                  file: `playground.rts`,
+                  span: { line_start: fnStartLine, col_start: 1, line_end: fnStartLine, col_end: 40 },
+                  ast_node: `FnParam(` + pName + `: cap ReadColumn<` + capArg + `>)`,
+                  message: `Função '` + fnName + `' mistura 'MutColumn<` + capArg + `>' e 'ReadColumn<` + capArg + `>' no mesmo estágio (AliasingViolation).`,
+                  deterministic_fixes: []
+                });
+              }
+              readCols[capArg] = pName;
+            }
+            if (capKind === `FrameArena` && capArg) {
+              if (readFrameArenas[capArg]) {
+                diagnostics.push({
+                  error_code: `RTS-E0405`,
+                  category: `AliasingViolation`,
+                  file: `playground.rts`,
+                  span: { line_start: fnStartLine, col_start: 1, line_end: fnStartLine, col_end: 40 },
+                  ast_node: `FnParam(` + pName + `: cap FrameArena<` + capArg + `>)`,
+                  message: `Conflito entre FrameArena<` + capArg + `> e ReadFrameArena<` + capArg + `> no mesmo estágio.`,
+                  deterministic_fixes: []
+                });
+              }
+              frameArenas[capArg] = pName;
+            }
+            if (capKind === `ReadFrameArena` && capArg) {
+              if (frameArenas[capArg]) {
+                diagnostics.push({
+                  error_code: `RTS-E0405`,
+                  category: `AliasingViolation`,
+                  file: `playground.rts`,
+                  span: { line_start: fnStartLine, col_start: 1, line_end: fnStartLine, col_end: 40 },
+                  ast_node: `FnParam(` + pName + `: cap ReadFrameArena<` + capArg + `>)`,
+                  message: `Conflito entre FrameArena<` + capArg + `> e ReadFrameArena<` + capArg + `> no mesmo estágio.`,
+                  deterministic_fixes: []
+                });
+              }
+              readFrameArenas[capArg] = pName;
+            }
+          }
+        });
+
+        // Rastreia variáveis locais vindas de Frame/RequestArena (Rank 1)
+        const rank1Vars = {};
+        Object.keys(capParams).forEach(function (k) {
+          const kind = capParams[k].kind;
+          if ([`FrameArena`, `ReadFrameArena`, `RequestArena`, `ReadRequestArena`, `TaskArena`].includes(kind)) {
+            rank1Vars[k] = kind;
+          }
+        });
+
+        const bodyLines = fnBody.split(`\n`);
+        bodyLines.forEach(function (bLine, bIdx) {
+          const absLine = bodyStartLine + bIdx;
+          const tLine = bLine.trim();
+          if (!tLine || tLine.startsWith(`//`)) return;
+
+          // RTS-E0404: Forja de capacidade fora de main
+          if (fnName !== `main`) {
+            if (/:\s*cap\s+[A-Za-z0-9_]+/.test(tLine) || /(I2CBus|PWMPin|NetSocket|SqlRead|SqlWrite|LevelArena|FrameArena)::(new|forge|create|open_ambient)\s*\(/.test(tLine)) {
+              diagnostics.push({
+                error_code: `RTS-E0404`,
+                category: `CapabilityForgeryAttempt`,
+                file: `playground.rts`,
+                span: { line_start: absLine, col_start: 1, line_end: absLine, col_end: bLine.length },
+                ast_node: `CapabilityForgery(` + fnName + `)`,
+                message: `Função '` + fnName + `' tentou forjar token de capacidade linear fora do entrypoint 'main'. Tokens 'cap' só podem ser injetados via parâmetros.`,
+                deterministic_fixes: [{
+                  action: `remove_unauthorized_call`,
+                  line_to_remove: absLine,
+                  security_policy: `SealedSignatureBoundary: AI agent is forbidden from mutating function signature to escalate privileges.`
+                }]
+              });
+            }
+          }
+
+          // RTS-E0301: Erros comuns de tipo em let
+          if (/let\s+[a-zA-Z_][a-zA-Z0-9_]*\s*:\s*f32\s*=\s*(true|false|"[^"]*")/.test(tLine)) {
+            diagnostics.push({
+              error_code: `RTS-E0301`,
+              category: `TypeMismatch`,
+              file: `playground.rts`,
+              span: { line_start: absLine, col_start: 1, line_end: absLine, col_end: bLine.length },
+              ast_node: `LetStmt`,
+              message: `Incompatibilidade de tipos em '` + fnName + `': esperado 'f32', mas encontrado literal booleano ou string.`,
+              deterministic_fixes: []
+            });
+          }
+
+          // Rastreia let vindo de arena Rank 1 (ex: let ev = events[0];)
+          const mLetIndex = tLine.match(/let\s+(?:mut\s+)?([a-zA-Z_][a-zA-Z0-9_]*)(?:\s*:\s*[^=]+)?\s*=\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\[/);
+          if (mLetIndex && rank1Vars[mLetIndex[2]]) {
+            rank1Vars[mLetIndex[1]] = rank1Vars[mLetIndex[2]];
+          }
+          const mLetAlloc = tLine.match(/let\s+(?:mut\s+)?([a-zA-Z_][a-zA-Z0-9_]*)(?:\s*:\s*[^=]+)?\s*=\s*([a-zA-Z_][a-zA-Z0-9_]*)\.(alloc|push|alloc_handle|push_handle)\(/);
+          if (mLetAlloc && rank1Vars[mLetAlloc[2]]) {
+            rank1Vars[mLetAlloc[1]] = rank1Vars[mLetAlloc[2]];
+          }
+
+          // RTS-E0501: Escape de Arena Rank 1 -> Rank 2/3 (.store/.push/.insert)
+          const mStore = tLine.match(/([a-zA-Z_][a-zA-Z0-9_]*)\.(store|push|insert|save_handle)\(([^)]+)\)/);
+          if (mStore) {
+            const destIdent = mStore[1];
+            const argIdent = mStore[3].trim().split(`.`)[0].split(`[`)[0];
+            const destCap = capParams[destIdent];
+            if (destCap && [`LevelArena`, `SessionArena`, `StaticArena`].includes(destCap.kind) && rank1Vars[argIdent]) {
+              const destRank = destCap.kind === `StaticArena` ? 3 : 2;
+              diagnostics.push({
+                error_code: `RTS-E0501`,
+                category: `ArenaLifetimeEscape`,
+                file: `playground.rts`,
+                span: { line_start: absLine, col_start: 1, line_end: absLine, col_end: bLine.length },
+                ast_node: `MethodCall(` + destIdent + `.` + mStore[2] + `)`,
+                message: `Escape de tempo de vida em '` + fnName + `': proibido gravar dado efêmero de '` + rank1Vars[argIdent] + `' (Rank 1) em '` + destIdent + `' (` + destCap.kind + ` Rank ` + destRank + `).`,
+                deterministic_fixes: [{
+                  action: `remove_arena_lifetime_escape`,
+                  line_to_remove: absLine,
+                  expected_arena_rank: destCap.kind + ` (Rank ` + destRank + `)`
+                }]
+              });
+            }
+          }
+
+          // RTS-E0402: Chamadas de método que exigem cap
+          const methodChecks = [
+            { methods: [`delete_by_id`, `insert`, `update`, `execute_write`], req: `SqlWrite`, label: `SqlWrite<Table>` },
+            { methods: [`query`, `select`, `find_by_id`, `fetch_one`], req: `SqlRead`, label: `SqlRead<Table>` },
+            { methods: [`read_register_u16`, `read_register_u8`, `write_register_u16`], req: `I2CBus`, label: `I2CBus<0x48>` },
+            { methods: [`set_duty`, `set_frequency`], req: `PWMPin`, label: `PWMPin<4>` },
+            { methods: [`send`, `recv`, `broadcast`, `connect`], req: `NetSocket`, label: `NetSocket` }
+          ];
+          const mMethod = tLine.match(/([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/);
+          if (mMethod) {
+            const recv = mMethod[1];
+            const meth = mMethod[2];
+            methodChecks.forEach(function (chk) {
+              if (chk.methods.includes(meth)) {
+                const held = capParams[recv];
+                const ok = held && (
+                  held.kind === chk.req ||
+                  (chk.req === `SqlRead` && held.kind === `SqlWrite`) ||
+                  (chk.req === `I2CBus` && held.kind === `I2CRead` && meth.startsWith(`read_`))
+                );
+                if (!ok) {
+                  const fix = isOpenSig
+                    ? { action: `add_parameter_capability`, replacement_signature: recv + `: cap ` + chk.label, contract_mode: `@open_sig (explicitly unlocked by architect)` }
+                    : { action: `remove_unauthorized_call`, line_to_remove: absLine, security_policy: `SealedSignatureBoundary: AI agent is forbidden from mutating function signature to escalate privileges.` };
+                  diagnostics.push({
+                    error_code: `RTS-E0402`,
+                    category: `CapabilityViolation`,
+                    file: `playground.rts`,
+                    span: { line_start: absLine, col_start: 1, line_end: absLine, col_end: bLine.length },
+                    ast_node: `MethodCall(` + recv + `.` + meth + `)`,
+                    message: held
+                      ? `Função '` + fnName + `' tentou operação '` + meth + `' exigindo 'cap ` + chk.label + `', mas '` + recv + `' possui apenas 'cap ` + held.kind + `'.`
+                      : `Função '` + fnName + `' invocou método privilegiado '` + recv + `.` + meth + `()' sem declarar 'cap ` + chk.label + `' na assinatura.`,
+                    deterministic_fixes: [fix]
+                  });
+                }
+              }
+            });
+          }
+        });
+
+        // RTS-E0302: Match exaustivo sobre enums conhecidos
+        const matchRegex = /match\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\{([\s\S]*?)\n\s*\}/g;
+        let mMatch;
+        while ((mMatch = matchRegex.exec(fnBody)) !== null) {
+          const mBody = mMatch[2];
+          if (!/_\s*=>/.test(mBody)) {
+            Object.keys(enumsMap).forEach(function (eName) {
+              if (mBody.indexOf(eName + `::`) >= 0) {
+                const missing = enumsMap[eName].filter(function (v) {
+                  return mBody.indexOf(eName + `::` + v) < 0;
+                });
+                if (missing.length > 0) {
+                  const matchLine = bodyStartLine + fnBody.slice(0, mMatch.index).split(`\n`).length - 1;
+                  diagnostics.push({
+                    error_code: `RTS-E0302`,
+                    category: `NonExhaustiveMatch`,
+                    file: `playground.rts`,
+                    span: { line_start: matchLine, col_start: 1, line_end: matchLine, col_end: 20 },
+                    ast_node: `MatchStmt(` + eName + `)`,
+                    message: `Match não-exaustivo em '` + fnName + `': variante(s) ausente(s) ` + missing.map(function (m) { return eName + `::` + m; }).join(`, `) + ` (ou braço curinga '_').`,
+                    deterministic_fixes: []
+                  });
+                }
+              }
+            });
+          }
+        }
+      }
+
+      return {
+        status: diagnostics.length === 0 ? `ok` : `error`,
+        compiler_version: `1.0.0-rts`,
+        elapsed_ms: (2.8 + (lines.length * 0.09)).toFixed(1),
+        diagnostics: diagnostics
+      };
+    }
+
+    function runSimulatedRtsc() {
+      const editor = document.getElementById(`pg-code-editor`);
+      const src = editor ? editor.value : appState.playgroundCode;
+      appState.playgroundCode = src;
+      lastSimReport = analyzeRtsSource(src);
+
+      const badge = document.getElementById(`pg-status-badge`);
+      if (badge) {
+        if (lastSimReport.status === `ok`) {
+          badge.className = `status-chip status-sage`;
+          badge.textContent = `status: ok (${lastSimReport.elapsed_ms} ms)`;
+        } else {
+          badge.className = `status-chip status-error`;
+          badge.textContent = `${lastSimReport.diagnostics.length} erro(s) (${lastSimReport.elapsed_ms} ms)`;
+        }
+      }
+      renderPlaygroundOutput();
+      persistState();
+    }
+
+    function renderPlaygroundOutput() {
+      const container = document.getElementById(`pg-output-container`);
+      if (!container || !lastSimReport) return;
+
+      if (appState.playgroundMode === `json`) {
+        const jsonPayload = {
+          status: lastSimReport.status,
+          compiler_version: lastSimReport.compiler_version,
+          diagnostics: lastSimReport.diagnostics
+        };
+        container.innerHTML = `<pre class="code-well" style="max-height:420px; overflow:auto;">${escapeHtml(JSON.stringify(jsonPayload, null, 2))}</pre>`;
+        return;
+      }
+
+      if (appState.playgroundMode === `codegen`) {
+        if (lastSimReport.status !== `ok`) {
+          container.innerHTML = `<div class="diag-card">
+            <span class="status-chip status-error">Emissão Bloqueada</span>
+            <p style="margin:0; font-size:0.875rem; color:var(--on-surface-variant);">
+              O backend C99/Unreal/Unity só emite código após <strong>status: "ok"</strong> na verificação semântica. Corrija os diagnósticos listados primeiro.
+            </p>
+          </div>`;
+          return;
+        }
+        const src = appState.playgroundCode || ``;
+        const preview = src.includes(`@component`) || src.includes(`MutColumn`)
+          ? `// C99 SoA / AVX2 Emitido (rtsc build --target native):\ntypedef struct {\n    float* RTS_ALIGNED(64) pos_x;\n    float* RTS_ALIGNED(64) pos_y;\n    float* RTS_ALIGNED(64) pos_z;\n    size_t count;\n} Transform_soa_column_t;\n\nvoid engine_physics_integrate_physics(\n    const TimeStep_t* RTS_RESTRICT dt,\n    Transform_soa_column_t* RTS_RESTRICT transforms,\n    const Velocity_soa_column_t* RTS_RESTRICT velocities\n) {\n    /* Strip-Mining AVX2 / FMA3 determinístico */\n}`
+          : `// C99 Determinístico Emitido (rtsc build --target native):\nrts_hw_u16_result_t _rts_try_raw_data = rts_i2c_read_register_u16(i2c, (uint8_t)(0u));\nif (!_rts_try_raw_data.is_ok) { return _rts_err; }\nuint16_t raw_data = _rts_try_raw_data.val.ok;\nrts_pwm_set_duty(pwm, (uint8_t)(25u));`;
+        container.innerHTML = `<div class="diag-card diag-ok">
+            <span class="status-chip status-sage">Target Native C99 (SoA / C-ABI)</span>
+            <p style="margin:0; font-size:0.84rem; color:var(--on-surface-variant);">Contrato validado. Ponteiros qualificados com <code class="code-inline">RTS_RESTRICT</code> e zero alocação dinâmica.</p>
+          </div>
+          <pre class="code-well" style="margin-top:var(--space-sm);">${escapeHtml(preview)}</pre>`;
+        return;
+      }
+
+      // Modo Humano
+      if (lastSimReport.status === `ok`) {
+        container.innerHTML = `<div class="diag-card diag-ok">
+          <div class="cheat-card-head">
+            <span class="status-chip status-sage">OK · Verificação Concluída</span>
+            <span class="data-label">${escapeHtml(lastSimReport.elapsed_ms)} ms</span>
+          </div>
+          <p style="margin:0; font-size:0.875rem; color:var(--on-surface-variant);">
+            Nenhuma violação de tipo, exaustividade, capacidade <code class="code-inline">cap</code>, aliasing ECS ou escape de arena detectada. Pronto para emissão em C99, Unreal C++, Unity C# ou TS SDK.
+          </p>
+        </div>`;
+        return;
+      }
+
+      container.innerHTML = `<div style="display:grid; gap:var(--space-sm); max-height:420px; overflow-y:auto;">
+        ${lastSimReport.diagnostics.map(function (d) {
+          const fixHtml = d.deterministic_fixes && d.deterministic_fixes.length > 0
+            ? `<div style="font-family:var(--font-label); font-size:0.75rem; color:var(--data-3); border-top:var(--hairline); padding-top:var(--space-xs); margin-top:var(--space-xs);">Sugestão (${escapeHtml(d.deterministic_fixes[0].action)}): ${escapeHtml(d.deterministic_fixes[0].security_policy || d.deterministic_fixes[0].replacement_signature || d.deterministic_fixes[0].expected_arena_rank || ``)}</div>`
+            : ``;
+          return `<div class="diag-card">
+            <div class="cheat-card-head">
+              <span class="status-chip status-error">${escapeHtml(d.error_code)} · ${escapeHtml(d.category)}</span>
+              <span class="data-label">Linha ${d.span.line_start} · ${escapeHtml(d.ast_node)}</span>
+            </div>
+            <p style="margin:0; font-size:0.86rem; color:var(--on-surface);">${escapeHtml(d.message)}</p>
+            ${fixHtml}
+          </div>`;
+        }).join(``)}
+      </div>`;
+    }
+
+    // =========================================================================
+    // INICIALIZAÇÃO DA APLICAÇÃO
+    // =========================================================================
+    async function initApp() {
+      try {
+        if (window.notebookAppApi && typeof window.notebookAppApi.getAppState === `function`) {
+          const saved = await window.notebookAppApi.getAppState();
+          if (saved && typeof saved === `object`) {
+            if (saved.typeCategory) appState.typeCategory = saved.typeCategory;
+            if (saved.selectedTypeName) appState.selectedTypeName = saved.selectedTypeName;
+            if (saved.capDomain) appState.capDomain = saved.capDomain;
+            if (saved.selectedAttrId) appState.selectedAttrId = saved.selectedAttrId;
+            if (saved.diagDomain) appState.diagDomain = saved.diagDomain;
+            if (saved.selectedDiagCode) appState.selectedDiagCode = saved.selectedDiagCode;
+            if (saved.activePresetId) appState.activePresetId = saved.activePresetId;
+            if (typeof saved.playgroundCode === `string` && saved.playgroundCode.length > 0) {
+              appState.playgroundCode = saved.playgroundCode;
+            }
+            if (saved.playgroundMode) appState.playgroundMode = saved.playgroundMode;
+            if (Array.isArray(saved.pinnedItems)) appState.pinnedItems = saved.pinnedItems;
+          }
+        }
+      } catch (err) {
+        // Prossegue com estado inicial padrão
+      }
+
+      filterTypesTable();
+      renderTypeDetail(appState.selectedTypeName);
+      filterCapabilities();
+      evaluateArenaEscape();
+      renderAttributes();
+      filterDiagnostics();
+      renderDiagJsonPreview(appState.selectedDiagCode);
+
+      renderPlaygroundPresets();
+      const editor = document.getElementById(`pg-code-editor`);
+      if (editor) editor.value = appState.playgroundCode;
+      updateLineCount(appState.playgroundCode);
+      setPlaygroundOutputMode(appState.playgroundMode);
+      runSimulatedRtsc();
+
+      renderPinnedSidebar();
+      syncPinButtons();
+
+      if (window.notebookAppApi && typeof window.notebookAppApi.notifyAppReady === `function`) {
+        window.notebookAppApi.notifyAppReady();
+      }
+    }
+
+    if (document.readyState === `loading`) {
+      document.addEventListener(`DOMContentLoaded`, initApp);
+    } else {
+      initApp();
+    }
+  </script>
+</body>
+</html>

@@ -241,6 +241,7 @@ Quando um agente de IA tenta violar uma regra de memória ou permissão de hardw
 
 * [`INSTALACAO_E_USO.md`](./INSTALACAO_E_USO.md) — **Guia Oficial de Instalação e Uso:** Instalação em 1 linha (`install.ps1` / `install.sh`), binários de release, manual da CLI `rtsc` e solução de problemas.
 * [`INICIANDO_UM_PROJETO.md`](./INICIANDO_UM_PROJETO.md) — **Tutorial: Iniciando um Projeto com RustTS (`v1.0.0-rts`):** Estrutura de pastas, primeiro módulo `.rts`, conexão com host C99 (`main.c`) e compilação AVX2/FMA.
+* [`Guia_Interativo_e_Documentacao_RustTS.html`](./Guia_Interativo_e_Documentacao_RustTS.html) — **Guia Interativo & Documentação HTML:** Dashboard interativo com documentação completa da linguagem e Cheat Sheet.
 * [`CONTRIBUTING.md`](./CONTRIBUTING.md) — **Guia de Contribuição:** Mapa do compilador (`src/`), padrões de código, suíte `cargo test` e checklist para Pull Requests.
 * [`devlog.md`](./devlog.md) — **Devlog & Cronologia (`v0.1.0-rts` → `v1.0.0-rts`):** Histórico técnico completo de versões, auditorias, suíte `cargo test` (`13/13`) e benchmarks AVX2/SoA.
 * [`RustTS_guia.md`](./RustTS_guia.md) — **Constituição e Matriz de Regras da Linguagem:** Especificação completa de sintaxe, memória, capacidades, proibições e governança de evolução.
