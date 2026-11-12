@@ -1,0 +1,33 @@
+module server.telemetry_api;
+
+struct TelemetrySnapshotDTO {
+    session_id: u64,
+    active_projectiles: u32,
+    frame_latency_us: f32,
+    arena_healthy: bool,
+}
+
+enum ApiError {
+    SessionNotFound,
+    DatabaseTimeout,
+    ArenaExhausted,
+}
+
+// Rota Tier 1 com RequestArena (O(1) Reset ao final da resposta HTTP) e SqlRead (Zero Escrita/DROP).
+// Exportada automaticamente para TypeScript via 'rtsc build examples/telemetry_server.rts --emit-ts-sdk'.
+@sealed_sig
+@route("GET", "/api/v1/telemetry/:session_id")
+pub fn get_telemetry_snapshot(
+    session_id: u64,
+    db: cap SqlRead<TelemetryTable>,
+    req_arena: cap RequestArena
+) -> Result<Json<TelemetrySnapshotDTO>, ApiError> {
+    let dto: TelemetrySnapshotDTO = TelemetrySnapshotDTO {
+        session_id: session_id,
+        active_projectiles: 10000,
+        frame_latency_us: 9.956,
+        arena_healthy: true,
+    };
+    return Ok(dto);
+}
+

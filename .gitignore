@@ -1,0 +1,19 @@
+# Rust / Cargo build artifacts
+/target/
+**/*.rs.bk
+
+# Compiled native binaries and objects
+*.exe
+*.dll
+*.so
+*.dylib
+*.pdb
+*.lib
+*.exp
+*.obj
+*.o
+
+# Generated editor / OS files
+.DS_Store
+Thumbs.db
+

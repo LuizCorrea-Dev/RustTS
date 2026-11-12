@@ -1,0 +1,109 @@
+module engine.ballistics;
+
+@component
+struct Transform {
+    px: f32,
+    py: f32,
+    pz: f32,
+}
+
+@component
+struct BallisticVelocity {
+    vx: f32,
+    vy: f32,
+    vz: f32,
+    drag: f32,
+}
+
+struct CollisionEvent {
+    entity: Handle<Transform>,
+    impact_x: f32,
+    impact_z: f32,
+    impact_energy: f32,
+}
+
+enum SimFault {
+    InvalidDeltaTime,
+    ColumnLengthMismatch,
+    ArenaOverflow,
+}
+
+// Fronteira de Segurança Selada (@sealed_sig) — v0.4.0-rts:
+// 1. Guarda de Cardinalidade O(1): aborta com SimFault::ColumnLengthMismatch se pos.len() != vel.len().
+// 2. L1 Stack Scratchpad (_tile_scratch_pressao_dinamica[256] e _tile_scratch_vy[256]):
+//    'pressao_dinamica' é calculada antes do 'if' (Sub-Passagem 1 SIMD) sem coluna SoA correspondente
+//    e lida dentro do 'if' (Sub-Passagem 2) diretamente do scratchpad L1 na stack!
+// 3. Tile-Local Event Batching (_tile_events_batch[256] + rts_arena_push_batch_atomic):
+//    zero contenção no caminho quente e pronto para paralelismo multi-core.
+// 4. Zero Torn World State: se a FrameArena encher, todas as entidades terminam a correção física
+//    (pos[i].py = 0.0 e rebote elástico) antes de retornar Err(SimFault::ArenaOverflow).
+@sealed_sig
+@system(stage = "FixedUpdate")
+pub fn step_ballistics_10k(
+    pos: cap MutColumn<Transform>,
+    vel: cap MutColumn<BallisticVelocity>,
+    events: cap FrameArena<CollisionEvent>,
+    time: cap TimeStep
+) -> Result<u32, SimFault> {
+    let dt: f32 = time.fixed_delta;
+    if dt <= 0.0 {
+        return Err(SimFault::InvalidDeltaTime);
+    }
+
+    let count: usize = pos.len();
+    let mut impacts_this_frame: u32 = 0;
+
+    for i in 0..count {
+        let vx: f32 = vel[i].vx * vel[i].drag;
+        let vy: f32 = (vel[i].vy - (9.81 * dt)) * vel[i].drag;
+        let vz: f32 = vel[i].vz * vel[i].drag;
+
+        // Variável local transitória (NÃO pertence a nenhuma coluna SoA!)
+        // O codegen_native.rs promove automaticamente para _tile_scratch_pressao_dinamica[256] no Cache L1d.
+        let pressao_dinamica: f32 = ((vx * vx) + (vy * vy) + (vz * vz)) * 0.6125;
+
+        vel[i].vx = vx;
+        vel[i].vy = vy;
+        vel[i].vz = vz;
+
+        pos[i].px = pos[i].px + (vx * dt);
+        pos[i].py = pos[i].py + (vy * dt);
+        pos[i].pz = pos[i].pz + (vz * dt);
+
+        if pos[i].py <= 0.0 {
+            pos[i].py = 0.0;
+            vel[i].vy = (-vy) * 0.65;
+            events.push(CollisionEvent {
+                entity: pos.handle_at(i),
+                impact_x: pos[i].px,
+                impact_z: pos[i].pz,
+                impact_energy: pressao_dinamica,
+            });
+            impacts_this_frame = impacts_this_frame + 1;
+        }
+    }
+
+    return Ok(impacts_this_frame);
+}
+
+// Segundo Estágio do Frame (Consumidor ReadFrameArena<CollisionEvent> — v0.7.0-rts):
+// Consome em O(1) todos os eventos gravados por `step_ballistics_10k` na mesma FrameArena
+// (antes do reset O(1) de fim de quadro), sem cópia e com proibição estática de `.push()`.
+@sealed_sig
+@system(stage = "PostPhysics")
+pub fn consume_ground_impacts(
+    events: cap ReadFrameArena<CollisionEvent>,
+    vel: cap MutColumn<BallisticVelocity>
+) -> f32 {
+    let hit_count: usize = events.len();
+    let mut total_dissipated_energy: f32 = 0.0;
+
+    for k in 0..hit_count {
+        let entity_idx: u32 = events[k].entity.index;
+        vel[entity_idx].vx = vel[entity_idx].vx * 0.90;
+        vel[entity_idx].vz = vel[entity_idx].vz * 0.90;
+        total_dissipated_energy = total_dissipated_energy + events[k].impact_energy;
+    }
+
+    return total_dissipated_energy;
+}

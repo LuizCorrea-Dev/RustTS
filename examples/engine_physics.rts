@@ -1,0 +1,46 @@
+module engine.physics;
+
+@component
+struct Transform {
+    position: vec3,
+    rotation: quat,
+    scale: vec3,
+}
+
+@component
+struct Velocity {
+    linear: vec3,
+    damping: f32,
+}
+
+struct CollisionEvent {
+    entity_a: Handle<Entity>,
+    entity_b: Handle<Entity>,
+    impact_point: vec3,
+}
+
+@system(stage = "FixedUpdate")
+pub fn integrate_kinematics(
+    transforms: cap MutColumn<Transform>,
+    velocities: cap ReadColumn<Velocity>,
+    events: cap FrameArena<CollisionEvent>,
+    time: cap TimeStep
+) {
+    let dt: f32 = time.fixed_delta;
+    let count: usize = transforms.len();
+
+    for i in 0..count {
+        let vel: vec3 = velocities[i].linear;
+        transforms[i].position = transforms[i].position + (vel * dt);
+
+        if transforms[i].position.y < 0.0 {
+            transforms[i].position.y = 0.0;
+            events.push(CollisionEvent {
+                entity_a: transforms.handle_at(i),
+                entity_b: Handle::null(),
+                impact_point: transforms[i].position,
+            });
+        }
+    }
+}
+

@@ -1,0 +1,20 @@
+module game.combat;
+
+@unreal_actor(replicate = true, category = "Combat")
+struct WeaponProjectile {
+    @uproperty(edit_anywhere, blueprint_read_only)
+    base_damage: f32,
+
+    @uproperty(replicated)
+    current_speed: f32,
+}
+
+@unreal_impl(WeaponProjectile)
+pub fn compute_impact_damage(
+    self: cap Read<WeaponProjectile>,
+    armor_rating: f32
+) -> f32 {
+    let mitigation: f32 = math::clamp(1.0 - (armor_rating * 0.01), 0.1, 1.0);
+    return self.base_damage * mitigation;
+}
+
