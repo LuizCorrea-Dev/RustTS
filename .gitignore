@@ -1,5 +1,6 @@
 # Rust / Cargo build artifacts
 /target/
+/build/
 **/*.rs.bk
 
 # Compiled native binaries and objects
