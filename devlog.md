@@ -439,3 +439,22 @@ Primeira etapa da Próxima Fronteira (`v2.0+`), adicionando geração direta de 
 ### Validação (`v1.8.0-rts`)
 - **`cargo test`:** **30/30** testes unitários aprovados (`test_v180_gpu_sema_blocks_forbidden_cap_invalid_shader_layout_and_recursion`, `test_v180_wgsl_compute_shader_codegen_storage_buffers_and_workgroup`, `test_v180_spirv_asm_and_binary_magic_word_codegen`).
 - **Instalação Global:** `cargo install --path .` concluído com `rtsc --version` reportando **`rtsc 1.8.0-rts`**.
+
+---
+
+## Etapa 21 — Fase 9 do Ciclo 2 (`v1.9.0-rts`): Sandbox WASI com *Fuel Metering* Determinístico & `RTS-E0701` (`90%` do Ciclo 2)
+
+### O que foi implementado
+1. **Verificador Estático de Contratos de Sandbox WASI (`RTS-E0701` em `src/sema.rs` e `src/diagnostics.rs`):**
+   - **`RTS-E0701 (WasiSandboxContractViolation)`:** Bloqueia funções públicas de sandbox (`pub fn`) marcadas com `@open_sig` (exigindo fronteira imutável `@sealed_sig`) e rejeita capacidades de hardware físico bruto (`I2CBus`, `PWMPin`, `GPIOPin`, `SPIBus`, `DMAChannel`) dentro de módulos `sandbox.*` / `wasi.*` / `plugin.*` ou rotas `@route`.
+2. **Instrumentação Automática de *Fuel Metering* (`--target=wasi` / `--target=wat` em `src/codegen_wasi.rs`):**
+   - Injeta a variável global `(global $__rts_fuel (mut i64) (i64.const <limit>))` e o cursor linear de Arena `(global $__rts_arena_cursor (mut i32) (i32.const 4096))`.
+   - Exporta `rts_set_fuel(limit: i64)`, `rts_get_fuel() -> i64` e `rts_arena_reset()`.
+   - Injeta checagem determinística de combustível (`$__rts_fuel -= cost`; `if ($__rts_fuel < 0) unreachable`) no prólogo de cada função e no *back-edge* de cada loop (`while` e `for .. in`), impedindo loops infinitos em $O(1)$.
+   - Emite apenas os imports WASI (`wasi_snapshot_preview1::fd_write`, `clock_time_get`) estritamente autorizados pelos tokens `cap` do módulo.
+3. **Empacotador Binário WebAssembly 1.0 (`--target=wasm` e `--fuel-limit <N>` em `src/codegen_wasi.rs` e `src/main.rs`):**
+   - Emite módulos binários `.wasm` válidos (cabeçalho mágico `\0asm` `[0x00, 0x61, 0x73, 0x6D]` + versão `1` `[0x01, 0x00, 0x00, 0x00]`) com seções LEB128 (Type, Function, Memory, Global, Export, Code) e bytecode de *Fuel Trap* nativo.
+
+### Validação (`v1.9.0-rts`)
+- **`cargo test`:** **33/33** testes unitários aprovados (`test_v190_wasi_sema_rts_e0701_blocks_open_sig_and_hardware_caps_in_sandbox`, `test_v190_wasi_wat_codegen_fuel_metering_on_fn_and_loops`, `test_v190_wasm_binary_magic_header_and_leb128_sections`).
+- **Instalação Global:** `cargo install --path .` concluído com `rtsc --version` reportando **`rtsc 1.9.0-rts`**.

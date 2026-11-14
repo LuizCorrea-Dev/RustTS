@@ -3,6 +3,7 @@ pub mod codegen_gpu;
 pub mod codegen_llvm;
 pub mod codegen_mlir;
 pub mod codegen_native;
+pub mod codegen_wasi;
 pub mod codegen_ts_sdk;
 pub mod codegen_unity;
 pub mod codegen_unreal;
@@ -1427,5 +1428,86 @@ pub fn simulate_particles(
         assert_eq!(magic, 0x0723_0203);
         assert_eq!(version, 0x0001_0500);
         assert_eq!(generator, 0x5254_5343);
+    }
+
+    #[test]
+    fn test_v190_wasi_sema_rts_e0701_blocks_open_sig_and_hardware_caps_in_sandbox() {
+        let src = r#"
+module sandbox.plugin;
+
+@open_sig
+pub fn untrusted_plugin_entry(
+    i2c: cap I2CBus<0x48>,
+    x: f32
+) -> f32 {
+    return x + 1.0;
+}
+"#;
+        let (_module_opt, report) = compile_and_check(src, "test_v190_wasi_sema.rts");
+        assert_eq!(report.status, "error");
+        let e0701_count = report
+            .diagnostics
+            .iter()
+            .filter(|d| d.error_code == "RTS-E0701")
+            .count();
+        assert!(
+            e0701_count >= 2,
+            "Expected at least 2 RTS-E0701 diagnostics (@open_sig + I2CBus in sandbox), got {:?}",
+            report.diagnostics
+        );
+    }
+
+    #[test]
+    fn test_v190_wasi_wat_codegen_fuel_metering_on_fn_and_loops() {
+        let src = r#"
+module sandbox.rules;
+
+@sealed_sig
+pub fn avaliar_regra_mod(
+    io: cap StdIO,
+    iteracoes: i32,
+    ganho: f32
+) -> f32 {
+    let acc: f32 = 0.0;
+    let i: i32 = 0;
+    while i < iteracoes {
+        acc = acc + ganho;
+        i = i + 1;
+    }
+    return acc;
+}
+"#;
+        let (module_opt, report) = compile_and_check(src, "test_v190_wat.rts");
+        assert_eq!(report.status, "ok", "{}", report.to_human_terminal());
+        let module = module_opt.expect("Valid module AST");
+        let wat = codegen_wasi::WasiCodegen::emit_wat(&module, 50_000);
+        assert!(wat.contains("(import \"wasi_snapshot_preview1\" \"fd_write\""));
+        assert!(!wat.contains("clock_time_get"));
+        assert!(wat.contains("(global $__rts_fuel (mut i64) (i64.const 50000))"));
+        assert!(wat.contains("(func $rts_set_fuel (export \"rts_set_fuel\")"));
+        assert!(wat.contains("(func $rts_get_fuel (export \"rts_get_fuel\")"));
+        assert!(wat.contains("(func $avaliar_regra_mod (export \"avaliar_regra_mod\")"));
+        assert!(wat.contains("(global.set $__rts_fuel (i64.sub (global.get $__rts_fuel)"));
+        assert!(wat.contains("(if (i64.lt_s (global.get $__rts_fuel) (i64.const 0))"));
+        assert!(wat.contains("(then (unreachable))"));
+    }
+
+    #[test]
+    fn test_v190_wasm_binary_magic_header_and_leb128_sections() {
+        let src = r#"
+module sandbox.sim;
+
+@sealed_sig
+pub fn step_agent(clock: cap MonotonicClock) -> i32 {
+    return 0;
+}
+"#;
+        let (module_opt, report) = compile_and_check(src, "test_v190_wasm.rts");
+        assert_eq!(report.status, "ok", "{}", report.to_human_terminal());
+        let module = module_opt.expect("Valid module AST");
+        let wasm = codegen_wasi::WasiCodegen::emit_wasm_binary(&module, 100_000);
+        assert!(wasm.len() >= 64);
+        assert_eq!(&wasm[0..4], &[0x00, 0x61, 0x73, 0x6D]); // "\0asm"
+        assert_eq!(&wasm[4..8], &[0x01, 0x00, 0x00, 0x00]); // version 1
     }
 }

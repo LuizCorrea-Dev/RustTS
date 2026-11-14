@@ -512,17 +512,88 @@ impl SemanticAnalyzer {
 
     pub fn analyze_module(mut self, module: &Module) -> CompilerDiagnosticsReport {
         let sym_table = SymbolTable::build_for_module(module);
+        let is_wasi_sandbox_mod = module.path.iter().any(|seg| {
+            matches!(
+                seg.as_str(),
+                "sandbox" | "wasi" | "plugin" | "mod_sandbox"
+            )
+        });
 
         for item in &module.items {
             match item {
                 Item::Struct(s) => self.check_struct(s),
                 Item::Enum(_e) => {}
-                Item::Function(f) => self.check_function(f, &sym_table),
+                Item::Function(f) => {
+                    if is_wasi_sandbox_mod {
+                        self.check_wasi_sandbox_constraints(f);
+                    }
+                    self.check_function(f, &sym_table);
+                }
                 Item::ExternFn(_) => {}
             }
         }
 
         CompilerDiagnosticsReport::from_diagnostics(self.diagnostics)
+    }
+
+    pub fn is_wasi_allowed_capability(cap: &CapabilitySpec) -> bool {
+        matches!(
+            cap.domain_name.as_str(),
+            "StdIO"
+                | "RequestArena"
+                | "FrameArena"
+                | "ReadRequestArena"
+                | "ReadFrameArena"
+                | "MonotonicClock"
+                | "TimeStep"
+                | "ReadColumn"
+                | "MutColumn"
+        ) || matches!(
+            cap.kind,
+            CapabilityKind::Clock
+                | CapabilityKind::ReadColumn
+                | CapabilityKind::MutColumn
+                | CapabilityKind::ScopedArena(ArenaScope::FrameOrRequest)
+                | CapabilityKind::ReadScopedArena(ArenaScope::FrameOrRequest)
+        )
+    }
+
+    pub fn check_wasi_sandbox_constraints(&mut self, func: &FnDecl) {
+        // 1. RTS-E0701: Funções exportadas pela sandbox (`pub fn`) devem manter fronteira `@sealed_sig` (proíbe `@open_sig`)
+        if func.is_pub && !func.is_sealed_contract() {
+            self.diagnostics.push(DiagnosticEntry {
+                error_code: "RTS-E0701".to_string(),
+                category: DiagnosticCategory::WasiSandboxContractViolation,
+                file: self.file_path.clone(),
+                span: func.span,
+                ast_node: format!("WasiSandboxExport({})", func.name),
+                message: format!(
+                    "WASI sandbox exported function 'pub fn {}' cannot be marked '@open_sig'. All WASI sandbox exports must enforce an immutable '@sealed_sig' capability boundary.",
+                    func.name
+                ),
+                deterministic_fixes: vec![],
+            });
+        }
+
+        // 2. RTS-E0701: Proíbe capacidades de barramento físico direto ou privilégio irrestrito dentro da sandbox WASI
+        for param in &func.params {
+            if let Some(cap) = &param.capability {
+                if !Self::is_wasi_allowed_capability(cap) {
+                    self.diagnostics.push(DiagnosticEntry {
+                        error_code: "RTS-E0701".to_string(),
+                        category: DiagnosticCategory::WasiSandboxContractViolation,
+                        file: self.file_path.clone(),
+                        span: param.span,
+                        ast_node: format!("WasiSandboxParam({}: cap {})", param.name, cap),
+                        message: format!(
+                            "WASI sandbox function '{}' requests forbidden physical/host capability 'cap {}'. Only virtualized WASI capabilities (StdIO, RequestArena, FrameArena, MonotonicClock, TimeStep) are permitted inside a fuel-metered sandbox.",
+                            func.name, cap
+                        ),
+                        deterministic_fixes: vec![],
+                    });
+                }
+            }
+        }
     }
 
     fn is_tier_zero_forbidden(name: &str) -> bool {
