@@ -1,7 +1,7 @@
 use crate::lexer::Span;
 use serde::{Deserialize, Serialize};
 
-pub const COMPILER_VERSION: &str = "1.7.0-rts";
+pub const COMPILER_VERSION: &str = "1.8.0-rts";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DiagnosticCategory {
@@ -15,6 +15,9 @@ pub enum DiagnosticCategory {
     NonExhaustiveMatch,
     TierZeroForbiddenDomain,
     AliasingViolation,
+    GpuForbiddenCapability,
+    GpuLayoutAlignmentViolation,
+    GpuRecursionOrDynamicEscape,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

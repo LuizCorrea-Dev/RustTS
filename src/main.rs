@@ -1,4 +1,5 @@
 use clap::{Parser as ClapParser, Subcommand};
+use rtsc_core::codegen_gpu::GpuCodegen;
 use rtsc_core::codegen_llvm::LlvmIrCodegen;
 use rtsc_core::codegen_mlir::MlirCodegen;
 use rtsc_core::codegen_native::NativeCodegen;
@@ -14,7 +15,7 @@ use std::process::{self, Command};
 #[derive(ClapParser)]
 #[command(
     name = "rtsc",
-    version = "1.7.0-rts",
+    version = "1.8.0-rts",
     about = "RustTS (.rts) Deterministic Systems & Engine Compiler for Humans and AI"
 )]
 struct Cli {
@@ -242,7 +243,7 @@ fn scaffold_project(target_dir: &Path) {
         .unwrap_or("meu_projeto_rts");
 
     let rts_toml = format!(
-        "[package]\nname = \"{}\"\nversion = \"0.1.0\"\ncompiler = \"1.7.0-rts\"\ntarget = \"native\"\n",
+        "[package]\nname = \"{}\"\nversion = \"0.1.0\"\ncompiler = \"1.8.0-rts\"\ntarget = \"native\"\n",
         project_name
     );
     write_utf8_no_bom(&target_dir.join("rts.toml"), &rts_toml);
@@ -291,11 +292,11 @@ pub fn main() -> i32 {
     let leitura: Result<f32, FalhaSensor> = self::monitorar(lim, i2c, cooler);
     match leitura {
         Ok(temp) => {
-            io::print_f32("[RustTS v1.7.0-rts] Temperatura Nominal (C): ", temp);
+            io::print_f32("[RustTS v1.8.0-rts] Temperatura Nominal (C): ", temp);
             return 0;
         },
         Err(falha) => {
-            io::println("[RustTS v1.7.0-rts] Alerta: Falha de Sensor Detectada!");
+            io::println("[RustTS v1.8.0-rts] Alerta: Falha de Sensor Detectada!");
             return 1;
         },
     }
@@ -307,7 +308,7 @@ pub fn main() -> i32 {
     }
 
     println!(
-        "[rtsc 1.7.0-rts] Initialized RustTS project in '{}'\n  -> Run project: rtsc run {}",
+        "[rtsc 1.8.0-rts] Initialized RustTS project in '{}'\n  -> Run project: rtsc run {}",
         target_dir.display(),
         main_rts_path.display()
     );
@@ -387,15 +388,15 @@ fn main() {
                 if let Some(dir) = &out_dir {
                     let h_path = dir.join(format!("{}.h", stem));
                     write_utf8_no_bom(&h_path, &header_code);
-                    println!("[rtsc 1.7.0-rts] Emitted C/C++ ABI header: {}", h_path.display());
+                    println!("[rtsc 1.8.0-rts] Emitted C/C++ ABI header: {}", h_path.display());
                 } else if let Some(out_path) = &output {
                     let h_path = out_path.with_extension("h");
                     write_utf8_no_bom(&h_path, &header_code);
-                    println!("[rtsc 1.7.0-rts] Emitted C/C++ ABI header: {}", h_path.display());
+                    println!("[rtsc 1.8.0-rts] Emitted C/C++ ABI header: {}", h_path.display());
                 } else {
                     let h_path = PathBuf::from("build").join(format!("{}.h", stem));
                     write_utf8_no_bom(&h_path, &header_code);
-                    println!("[rtsc 1.7.0-rts] Emitted C/C++ ABI header: {}", h_path.display());
+                    println!("[rtsc 1.8.0-rts] Emitted C/C++ ABI header: {}", h_path.display());
                 }
             }
 
@@ -403,11 +404,11 @@ fn main() {
                 let ts_code = TsSdkCodegen::emit_typescript_sdk(&module);
                 if let Some(out_path) = output {
                     write_utf8_no_bom(&out_path, &ts_code);
-                    println!("[rtsc 1.7.0-rts] Emitted TypeScript SDK: {}", out_path.display());
+                    println!("[rtsc 1.8.0-rts] Emitted TypeScript SDK: {}", out_path.display());
                 } else if let Some(dir) = out_dir {
                     let p = dir.join(format!("{}_sdk.ts", stem));
                     write_utf8_no_bom(&p, &ts_code);
-                    println!("[rtsc 1.7.0-rts] Emitted TypeScript SDK: {}", p.display());
+                    println!("[rtsc 1.8.0-rts] Emitted TypeScript SDK: {}", p.display());
                 } else {
                     println!("{}", ts_code);
                 }
@@ -438,16 +439,16 @@ fn main() {
                         });
                         compile_c99_with_clang(&c_path, &bin_path, &include_dirs, &lib_dirs, &link_libs, debug_symbols);
                         println!(
-                            "[rtsc 1.7.0-rts] Compiled native AVX2 binary: {}",
+                            "[rtsc 1.8.0-rts] Compiled native AVX2 binary: {}",
                             bin_path.display()
                         );
                     } else if let Some(out_path) = output {
                         write_utf8_no_bom(&out_path, &c99_code);
-                        println!("[rtsc 1.7.0-rts] Emitted C99 source: {}", out_path.display());
+                        println!("[rtsc 1.8.0-rts] Emitted C99 source: {}", out_path.display());
                     } else if let Some(dir) = out_dir {
                         let p = dir.join(format!("{}.c", stem));
                         write_utf8_no_bom(&p, &c99_code);
-                        println!("[rtsc 1.7.0-rts] Emitted C99 source: {}", p.display());
+                        println!("[rtsc 1.8.0-rts] Emitted C99 source: {}", p.display());
                     } else {
                         println!("{}", c99_code);
                     }
@@ -465,7 +466,7 @@ fn main() {
                             write_utf8_no_bom(&h_path, &artifact.header_code);
                             write_utf8_no_bom(&cpp_path, &artifact.source_code);
                             println!(
-                                "[rtsc 1.7.0-rts] Emitted Unreal UHT files: {}, {}",
+                                "[rtsc 1.8.0-rts] Emitted Unreal UHT files: {}, {}",
                                 h_path.display(),
                                 cpp_path.display()
                             );
@@ -495,7 +496,7 @@ fn main() {
                         write_utf8_no_bom(&rs_path, &out.rust_ffi_code);
                         write_utf8_no_bom(&cs_path, &out.csharp_wrapper_code);
                         println!(
-                            "[rtsc 1.7.0-rts] Emitted Unity FFI files: {}, {}",
+                            "[rtsc 1.8.0-rts] Emitted Unity FFI files: {}, {}",
                             rs_path.display(),
                             cs_path.display()
                         );
@@ -508,11 +509,11 @@ fn main() {
                     let mlir_code = MlirCodegen::emit_mlir(&module);
                     if let Some(out_path) = output {
                         write_utf8_no_bom(&out_path, &mlir_code);
-                        println!("[rtsc 1.7.0-rts] Emitted MLIR SSA module: {}", out_path.display());
+                        println!("[rtsc 1.8.0-rts] Emitted MLIR SSA module: {}", out_path.display());
                     } else if let Some(dir) = out_dir {
                         let p = dir.join(format!("{}.mlir", stem));
                         write_utf8_no_bom(&p, &mlir_code);
-                        println!("[rtsc 1.7.0-rts] Emitted MLIR SSA module: {}", p.display());
+                        println!("[rtsc 1.8.0-rts] Emitted MLIR SSA module: {}", p.display());
                     } else {
                         println!("{}", mlir_code);
                     }
@@ -538,23 +539,90 @@ fn main() {
                             debug_symbols,
                         );
                         println!(
-                            "[rtsc 1.7.0-rts] Direct LLVM IR (.ll -> native binary) compiled: {}",
+                            "[rtsc 1.8.0-rts] Direct LLVM IR (.ll -> native binary) compiled: {}",
                             bin_path.display()
                         );
                     } else if let Some(out_path) = output {
                         write_utf8_no_bom(&out_path, &ir_code);
-                        println!("[rtsc 1.7.0-rts] Emitted LLVM IR (.ll) module: {}", out_path.display());
+                        println!("[rtsc 1.8.0-rts] Emitted LLVM IR (.ll) module: {}", out_path.display());
                     } else if let Some(dir) = out_dir {
                         let p = dir.join(format!("{}.ll", stem));
                         write_utf8_no_bom(&p, &ir_code);
-                        println!("[rtsc 1.7.0-rts] Emitted LLVM IR (.ll) module: {}", p.display());
+                        println!("[rtsc 1.8.0-rts] Emitted LLVM IR (.ll) module: {}", p.display());
                     } else {
                         println!("{}", ir_code);
                     }
                 }
+                "wgsl" => {
+                    let wgsl_code = GpuCodegen::emit_wgsl(&module);
+                    if let Some(out_path) = output {
+                        write_utf8_no_bom(&out_path, &wgsl_code);
+                        println!(
+                            "[rtsc 1.8.0-rts] Emitted WebGPU WGSL Compute Shader: {}",
+                            out_path.display()
+                        );
+                    } else if let Some(dir) = out_dir {
+                        let p = dir.join(format!("{}.wgsl", stem));
+                        write_utf8_no_bom(&p, &wgsl_code);
+                        println!(
+                            "[rtsc 1.8.0-rts] Emitted WebGPU WGSL Compute Shader: {}",
+                            p.display()
+                        );
+                    } else {
+                        println!("{}", wgsl_code);
+                    }
+                }
+                "spirv" | "spv" => {
+                    let want_binary = compile_bin
+                        || target == "spv"
+                        || output
+                            .as_ref()
+                            .and_then(|p| p.extension())
+                            .and_then(|e| e.to_str())
+                            == Some("spv");
+                    if want_binary {
+                        let spv_bytes = GpuCodegen::emit_spirv_binary(&module);
+                        let out_path = output.unwrap_or_else(|| {
+                            let dir = out_dir.unwrap_or_else(|| PathBuf::from("build"));
+                            dir.join(format!("{}.spv", stem))
+                        });
+                        if let Some(parent) = out_path.parent() {
+                            if !parent.as_os_str().is_empty() {
+                                let _ = fs::create_dir_all(parent);
+                            }
+                        }
+                        if let Err(err) = fs::write(&out_path, &spv_bytes) {
+                            eprintln!("Failed to write '{}': {}", out_path.display(), err);
+                            process::exit(1);
+                        }
+                        println!(
+                            "[rtsc 1.8.0-rts] Emitted SPIR-V 1.5 Binary Module (magic 0x07230203, {} bytes): {}",
+                            spv_bytes.len(),
+                            out_path.display()
+                        );
+                    } else {
+                        let spvasm_code = GpuCodegen::emit_spirv_asm(&module);
+                        if let Some(out_path) = output {
+                            write_utf8_no_bom(&out_path, &spvasm_code);
+                            println!(
+                                "[rtsc 1.8.0-rts] Emitted SPIR-V 1.5 Assembly (.spvasm): {}",
+                                out_path.display()
+                            );
+                        } else if let Some(dir) = out_dir {
+                            let p = dir.join(format!("{}.spvasm", stem));
+                            write_utf8_no_bom(&p, &spvasm_code);
+                            println!(
+                                "[rtsc 1.8.0-rts] Emitted SPIR-V 1.5 Assembly (.spvasm): {}",
+                                p.display()
+                            );
+                        } else {
+                            println!("{}", spvasm_code);
+                        }
+                    }
+                }
                 other => {
                     eprintln!(
-                        "Unsupported target '{}'. Valid targets: native, mlir, llvm-ir, unreal, unity, ts-sdk",
+                        "Unsupported target '{}'. Valid targets: native, mlir, llvm-ir, wgsl, spirv, unreal, unity, ts-sdk",
                         other
                     );
                     process::exit(1);

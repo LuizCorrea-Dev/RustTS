@@ -420,3 +420,22 @@ Primeira etapa da Próxima Fronteira (`v2.0+`), adicionando geração direta de 
 ### Validação (`v1.7.0-rts`)
 - **`cargo test`:** **27/27** testes unitários aprovados (`test_v170_llvm_ir_direct_codegen_soa_and_fast_math_vectorization` e `test_v170_llvm_ir_ffi_intrinsics_and_executable_main`).
 - **Instalação Global:** `cargo install --path .` concluído com `rtsc --version` reportando **`rtsc 1.7.0-rts`**.
+
+---
+
+## Etapa 20 — Fase 8 do Ciclo 2 (`v1.8.0-rts`): Shaders & GPU Compute (`@gpu_kernel` / `@shader_shared`) $\rightarrow$ SPIR-V e WGSL (`70%` do Ciclo 2)
+
+### O que foi implementado
+1. **Verificador Semântico Estático de GPU (`RTS-E0601` a `RTS-E0603` em `src/sema.rs` e `src/diagnostics.rs`):**
+   - **`RTS-E0601 (GpuForbiddenCapability)`:** Bloqueia capacidades de CPU/Host/Hardware (`StdIO`, `I2CBus`, `PWMPin`, `SqlRead`, `NetSocket`, etc.) e chamadas a funções FFI (`extern "C" fn`) ou console (`io::*`) dentro de funções `@gpu_kernel`.
+   - **`RTS-E0602 (GpuLayoutAlignmentViolation)`:** Valida estaticamente que toda struct marcada com `@shader_shared` contém apenas tipos compatíveis com o alinhamento `std430`/`std140` da GPU (`f32`, `i32`, `u32`, `vec2..vec4`, `quat`, `mat3`, `mat4` e arrays fixos `[T; N]`).
+   - **`RTS-E0603 (GpuRecursionOrDynamicEscape)`:** Detecta e bloqueia recursão direta ou mútua no grafo de chamadas de kernels `@gpu_kernel`.
+2. **Emissor WebGPU WGSL (`--target=wgsl` em `src/codegen_gpu.rs`):**
+   - Traduz `@shader_shared struct` e `@component struct` para structs WGSL e mapeia capacidades `cap ReadColumn<T>`, `cap MutColumn<T>` e `cap TimeStep` automaticamente para `@group(0) @binding(N) var<storage, read / read_write>` e `var<uniform>`.
+   - Emite entry points `@compute @workgroup_size(64, 1, 1) fn nome(@builtin(global_invocation_id) global_id: vec3<u32>)` com despacho paralelo por thread (`let i: u32 = global_id.x; if (i >= u32(arrayLength(&col))) { return; }`).
+3. **Emissor Vulkan / DirectX 12 SPIR-V 1.5 (`--target=spirv` / `--target=spv` em `src/codegen_gpu.rs`):**
+   - Gera tanto assembly SPIR-V 1.5 auditável (`.spvasm`: `OpCapability Shader`, `OpExtInstImport "GLSL.std.450"`, `OpMemoryModel Logical GLSL450`, `OpEntryPoint GLCompute`, `OpExecutionMode LocalSize 64 1 1`, `OpDecorate DescriptorSet 0 / Binding N`) quanto bytecode binário de words de 32 bits little-endian (`.spv`, cabeçalho mágico `0x07230203`, versão `0x00010500`, generator `"RTSC"` `0x52545343`).
+
+### Validação (`v1.8.0-rts`)
+- **`cargo test`:** **30/30** testes unitários aprovados (`test_v180_gpu_sema_blocks_forbidden_cap_invalid_shader_layout_and_recursion`, `test_v180_wgsl_compute_shader_codegen_storage_buffers_and_workgroup`, `test_v180_spirv_asm_and_binary_magic_word_codegen`).
+- **Instalação Global:** `cargo install --path .` concluído com `rtsc --version` reportando **`rtsc 1.8.0-rts`**.

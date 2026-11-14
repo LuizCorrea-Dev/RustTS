@@ -1,4 +1,5 @@
 pub mod ast;
+pub mod codegen_gpu;
 pub mod codegen_llvm;
 pub mod codegen_mlir;
 pub mod codegen_native;
@@ -1297,5 +1298,134 @@ fn main(io: cap StdIO) -> i32 {
         assert!(ir.contains("call fast float @llvm.sqrt.f32("));
         assert!(ir.contains("define dso_local i32 @main()"));
         assert!(ir.contains("call i32 @puts(ptr @.str.4)"));
+    }
+
+    #[test]
+    fn test_v180_gpu_sema_blocks_forbidden_cap_invalid_shader_layout_and_recursion() {
+        let src = r#"
+@shader_shared
+struct BadGpuUniform {
+    label: string,
+    prec: f64
+}
+
+@gpu_kernel
+fn bad_kernel(
+    io: cap StdIO,
+    x: f32
+) -> f32 {
+    io::println("forbidden host call on GPU");
+    return bad_kernel(io, x - 1.0);
+}
+"#;
+        let (_module_opt, report) = compile_and_check(src, "test_v180_gpu_sema.rts");
+        assert_eq!(report.status, "error");
+        let codes: Vec<&str> = report
+            .diagnostics
+            .iter()
+            .map(|d| d.error_code.as_str())
+            .collect();
+        assert!(
+            codes.contains(&"RTS-E0601"),
+            "Expected RTS-E0601 (GpuForbiddenCapability), got {:?}",
+            codes
+        );
+        assert!(
+            codes.contains(&"RTS-E0602"),
+            "Expected RTS-E0602 (GpuLayoutAlignmentViolation), got {:?}",
+            codes
+        );
+        assert!(
+            codes.contains(&"RTS-E0603"),
+            "Expected RTS-E0603 (GpuRecursionOrDynamicEscape), got {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_v180_wgsl_compute_shader_codegen_storage_buffers_and_workgroup() {
+        let src = r#"
+@shader_shared
+struct Particle {
+    pos_x: f32,
+    pos_y: f32,
+    vel_x: f32,
+    vel_y: f32
+}
+
+@gpu_kernel
+pub fn simulate_particles(
+    particles: cap MutColumn<Particle>,
+    dt: cap TimeStep
+) {
+    let dt_val: f32 = dt.fixed_delta;
+    let count: usize = particles.len();
+    for i in 0..count {
+        particles[i].pos_x = math::lerp(particles[i].pos_x, particles[i].vel_x, dt_val);
+        particles[i].pos_y = particles[i].pos_y + particles[i].vel_y * dt_val;
+    }
+}
+"#;
+        let (module_opt, report) = compile_and_check(src, "test_v180_wgsl.rts");
+        assert_eq!(report.status, "ok", "{}", report.to_human_terminal());
+        let module = module_opt.expect("Valid module AST");
+        let wgsl = codegen_gpu::GpuCodegen::emit_wgsl(&module);
+        assert!(wgsl.contains("struct Particle {"));
+        assert!(wgsl.contains("@group(0) @binding(0) var<storage, read_write> particles: array<Particle>;"));
+        assert!(wgsl.contains("@group(0) @binding(1) var<uniform> dt: RtsTimeStep;"));
+        assert!(wgsl.contains("@compute @workgroup_size(64, 1, 1)"));
+        assert!(wgsl.contains("fn simulate_particles(@builtin(global_invocation_id) global_id: vec3<u32>)"));
+        assert!(wgsl.contains("arrayLength(&particles)"));
+        assert!(wgsl.contains("let i: u32 = global_id.x;"));
+        assert!(wgsl.contains("mix(particles[i].pos_x, particles[i].vel_x, dt_val)"));
+    }
+
+    #[test]
+    fn test_v180_spirv_asm_and_binary_magic_word_codegen() {
+        let src = r#"
+@shader_shared
+struct Particle {
+    pos_x: f32,
+    pos_y: f32,
+    vel_x: f32,
+    vel_y: f32
+}
+
+@gpu_kernel
+pub fn simulate_particles(
+    particles: cap MutColumn<Particle>,
+    dt: cap TimeStep
+) {
+    let dt_val: f32 = dt.fixed_delta;
+    let count: usize = particles.len();
+    for i in 0..count {
+        particles[i].pos_x = math::lerp(particles[i].pos_x, particles[i].vel_x, dt_val);
+        particles[i].pos_y = particles[i].pos_y + particles[i].vel_y * dt_val;
+    }
+}
+"#;
+        let (module_opt, report) = compile_and_check(src, "test_v180_spirv.rts");
+        assert_eq!(report.status, "ok", "{}", report.to_human_terminal());
+        let module = module_opt.expect("Valid module AST");
+
+        let spvasm = codegen_gpu::GpuCodegen::emit_spirv_asm(&module);
+        assert!(spvasm.contains("OpCapability Shader"));
+        assert!(spvasm.contains("OpMemoryModel Logical GLSL450"));
+        assert!(spvasm.contains("OpEntryPoint GLCompute %simulate_particles \"simulate_particles\" %gl_GlobalInvocationID"));
+        assert!(spvasm.contains("OpExecutionMode %simulate_particles LocalSize 64 1 1"));
+        assert!(spvasm.contains("OpDecorate %var_particles DescriptorSet 0"));
+        assert!(spvasm.contains("OpDecorate %var_particles Binding 0"));
+        assert!(spvasm.contains("OpExtInst %float %glsl450 FMix"));
+        assert!(spvasm.contains("OpFMul %float"));
+        assert!(spvasm.contains("OpFAdd %float"));
+
+        let spv_bin = codegen_gpu::GpuCodegen::emit_spirv_binary(&module);
+        assert!(spv_bin.len() >= 20 && spv_bin.len() % 4 == 0);
+        let magic = u32::from_le_bytes([spv_bin[0], spv_bin[1], spv_bin[2], spv_bin[3]]);
+        let version = u32::from_le_bytes([spv_bin[4], spv_bin[5], spv_bin[6], spv_bin[7]]);
+        let generator = u32::from_le_bytes([spv_bin[8], spv_bin[9], spv_bin[10], spv_bin[11]]);
+        assert_eq!(magic, 0x0723_0203);
+        assert_eq!(version, 0x0001_0500);
+        assert_eq!(generator, 0x5254_5343);
     }
 }

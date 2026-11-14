@@ -114,6 +114,8 @@ pub struct SymbolTable {
     pub enums: HashMap<String, Vec<(String, Option<TypeExpr>)>>,
     pub fn_return_types: HashMap<String, Option<TypeExpr>>,
     pub fn_param_types: HashMap<String, Vec<TypeExpr>>,
+    pub extern_fns: HashSet<String>,
+    pub call_edges: HashMap<String, Vec<String>>,
 }
 
 impl SymbolTable {
@@ -216,6 +218,7 @@ impl SymbolTable {
 
         // 2. Registra todas as structs, enums e funções declaradas no módulo e suas capacidades explícitas
         let mut call_edges: HashMap<String, Vec<String>> = HashMap::new();
+        let mut extern_fns: HashSet<String> = HashSet::new();
 
         for item in &module.items {
             match item {
@@ -281,6 +284,7 @@ impl SymbolTable {
                     );
                 }
                 Item::ExternFn(ext) => {
+                    extern_fns.insert(ext.name.clone());
                     fn_return_types.insert(ext.name.clone(), ext.return_type.clone());
                     fn_param_types.insert(
                         ext.name.clone(),
@@ -373,6 +377,8 @@ impl SymbolTable {
             enums,
             fn_return_types,
             fn_param_types,
+            extern_fns,
+            call_edges,
         }
     }
 
@@ -589,6 +595,45 @@ impl SemanticAnalyzer {
         }
     }
 
+    fn is_gpu_shader_shared_type(ty: &TypeExpr) -> bool {
+        match ty {
+            TypeExpr::Primitive(
+                PrimitiveType::F32 | PrimitiveType::I32 | PrimitiveType::U32 | PrimitiveType::Fix32,
+            ) => true,
+            TypeExpr::Math(
+                MathType::Vec2
+                | MathType::Vec3
+                | MathType::Vec4
+                | MathType::Quat
+                | MathType::Mat3
+                | MathType::Mat4,
+            ) => true,
+            TypeExpr::Array(inner, _) => Self::is_gpu_shader_shared_type(inner),
+            _ => false,
+        }
+    }
+
+    fn is_gpu_allowed_capability(cap: &CapabilitySpec) -> bool {
+        matches!(
+            cap.domain_name.as_str(),
+            "ReadColumn"
+                | "MutColumn"
+                | "TimeStep"
+                | "GpuQueue"
+                | "WebGpuDevice"
+                | "FrameArena"
+                | "ReadFrameArena"
+        ) || matches!(
+            cap.kind,
+            CapabilityKind::ReadColumn
+                | CapabilityKind::MutColumn
+                | CapabilityKind::Clock
+                | CapabilityKind::DeviceQueue
+                | CapabilityKind::ScopedArena(ArenaScope::FrameOrRequest)
+                | CapabilityKind::ReadScopedArena(ArenaScope::FrameOrRequest)
+        )
+    }
+
     fn check_struct(&mut self, s: &StructDecl) {
         if Self::is_tier_zero_forbidden(&s.name) {
             self.diagnostics.push(DiagnosticEntry {
@@ -604,10 +649,115 @@ impl SemanticAnalyzer {
                 deterministic_fixes: vec![],
             });
         }
+
+        // RTS-E0602: Verifica alinhamento e tipos std430/std140 em `@shader_shared struct`
+        if s.attributes.iter().any(|a| matches!(a, Attribute::ShaderShared)) {
+            for field in &s.fields {
+                if !Self::is_gpu_shader_shared_type(&field.ty) {
+                    self.diagnostics.push(DiagnosticEntry {
+                        error_code: "RTS-E0602".to_string(),
+                        category: DiagnosticCategory::GpuLayoutAlignmentViolation,
+                        file: self.file_path.clone(),
+                        span: field.span,
+                        ast_node: format!("ShaderSharedField({}.{})", s.name, field.name),
+                        message: format!(
+                            "Field '{}.{}' in '@shader_shared' struct has type '{}', which violates GPU std430/std140 layout alignment rules. Only 32-bit scalars (f32, i32, u32), SIMD vectors/matrices (vec2..vec4, quat, mat3, mat4), and fixed-size arrays [T; N] are permitted on GPU.",
+                            s.name, field.name, field.ty
+                        ),
+                        deterministic_fixes: vec![],
+                    });
+                }
+            }
+        }
+    }
+
+    fn check_gpu_kernel_constraints(&mut self, func: &FnDecl, sym_table: &SymbolTable) {
+        // 1. RTS-E0601: Bloqueia capacidades de CPU/IO/Hardware em `@gpu_kernel`
+        for param in &func.params {
+            if let Some(cap) = &param.capability {
+                if !Self::is_gpu_allowed_capability(cap) {
+                    self.diagnostics.push(DiagnosticEntry {
+                        error_code: "RTS-E0601".to_string(),
+                        category: DiagnosticCategory::GpuForbiddenCapability,
+                        file: self.file_path.clone(),
+                        span: param.span,
+                        ast_node: format!("GpuKernelParam({}: cap {})", param.name, cap),
+                        message: format!(
+                            "GPU kernel '{}' cannot request host/hardware capability 'cap {}'. Only GPU storage/uniform capabilities (ReadColumn, MutColumn, TimeStep, GpuQueue, WebGpuDevice) are permitted in '@gpu_kernel'.",
+                            func.name, cap
+                        ),
+                        deterministic_fixes: vec![],
+                    });
+                }
+            }
+        }
+
+        // 2. Coleta chamadas diretas no corpo do kernel para verificar RTS-E0601 (FFI / Host I/O) e RTS-E0603 (Recursão)
+        let mut direct_callees = Vec::new();
+        SymbolTable::collect_callees_in_stmts(&func.body, &mut direct_callees);
+
+        for raw_callee in &direct_callees {
+            let short = raw_callee.strip_prefix("self::").unwrap_or(raw_callee);
+            if sym_table.extern_fns.contains(short) || raw_callee.starts_with("io::") {
+                self.diagnostics.push(DiagnosticEntry {
+                    error_code: "RTS-E0601".to_string(),
+                    category: DiagnosticCategory::GpuForbiddenCapability,
+                    file: self.file_path.clone(),
+                    span: func.span,
+                    ast_node: format!("GpuKernelHostCall({} -> {})", func.name, raw_callee),
+                    message: format!(
+                        "GPU kernel '{}' invokes host/FFI routine '{}', which is forbidden in SPIR-V/WGSL compute shaders.",
+                        func.name, raw_callee
+                    ),
+                    deterministic_fixes: vec![],
+                });
+            }
+        }
+
+        // 3. RTS-E0603: Detecta recursão direta ou mútua no grafo de chamadas a partir de `func.name`
+        let mut visited = HashSet::new();
+        let mut queue: Vec<String> = direct_callees
+            .iter()
+            .map(|c| c.strip_prefix("self::").unwrap_or(c).to_string())
+            .collect();
+        let mut is_recursive = false;
+        while let Some(curr) = queue.pop() {
+            if curr == func.name {
+                is_recursive = true;
+                break;
+            }
+            if visited.insert(curr.clone()) {
+                if let Some(next_callees) = sym_table.call_edges.get(&curr) {
+                    for nc in next_callees {
+                        let norm = nc.strip_prefix("self::").unwrap_or(nc).to_string();
+                        queue.push(norm);
+                    }
+                }
+            }
+        }
+
+        if is_recursive {
+            self.diagnostics.push(DiagnosticEntry {
+                error_code: "RTS-E0603".to_string(),
+                category: DiagnosticCategory::GpuRecursionOrDynamicEscape,
+                file: self.file_path.clone(),
+                span: func.span,
+                ast_node: format!("GpuKernelRecursion({})", func.name),
+                message: format!(
+                    "GPU kernel '{}' exhibits direct or mutual recursion, which is strictly forbidden by SPIR-V (OpCapability Shader) and WebGPU WGSL execution models.",
+                    func.name
+                ),
+                deterministic_fixes: vec![],
+            });
+        }
     }
 
     fn check_function(&mut self, func: &FnDecl, sym_table: &SymbolTable) {
         let mut env = FunctionCapabilityEnv::from_fn_decl(func);
+
+        if func.attributes.iter().any(|a| matches!(a, Attribute::GpuKernel)) {
+            self.check_gpu_kernel_constraints(func, sym_table);
+        }
 
         // 1. Verifica capacidades Tier 0 Banidas (DOM/HTML)
         for param in &func.params {
