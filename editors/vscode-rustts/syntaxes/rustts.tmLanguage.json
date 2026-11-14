@@ -59,7 +59,7 @@
       "patterns": [
         {
           "name": "storage.type.primitive.rustts",
-          "match": "\\b(i8|i16|i32|i64|u8|u16|u32|u64|usize|f32|f64|fix32|bool|str|Vec2|Vec3|Vec4|Quat|Mat3|Mat4|SoA|Result|Option|Handle)\\b"
+          "match": "\\b(i8|i16|i32|i64|u8|u16|u32|u64|usize|f32|f64|fix32|bool|str|vec2|vec3|vec4|quat|mat3|mat4|Vec2|Vec3|Vec4|Quat|Mat3|Mat4|SoA|Result|Option|Handle|Json)\\b"
         }
       ]
     },
@@ -67,7 +67,7 @@
       "patterns": [
         {
           "name": "storage.modifier.capability.rustts",
-          "match": "\\b(cap|I2CBus|SPIBus|PWMPin|GPIOOut|GPIOIn|StdIO|NetSocket|AudioBus|FrameArena|ReadFrameArena|AllocArena|ECSWorld|World)\\b"
+          "match": "\\b(cap|I2CBus|I2CRead|I2CPort|SPIBus|PWMPin|PWMWrite|GPIOPin|GPIOOut|GPIOIn|DMAChannel|Interrupt|MonotonicClock|TimeStep|StdIO|NetSocket|TcpSocket|UdpTick|HttpRoute|SqlRead|SqlWrite|AudioBus|AudioBuffer|GpuQueue|WebGpuDevice|CanvasContext|StaticArena|LevelArena|SessionArena|FrameArena|RequestArena|TaskArena|ReadFrameArena|ReadRequestArena|ReadTaskArena|AllocArena|ReadColumn|MutColumn|Read|Mut|ECSWorld|World)\\b"
         }
       ]
     },
