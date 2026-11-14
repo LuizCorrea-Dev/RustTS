@@ -158,7 +158,7 @@ import core.io;
 import telemetria;
 
 @sealed_sig
-pub fn main(io: cap StdIO) -> int {
+pub fn main() -> int {
     // Inferência completa estilo TypeScript:
     let s1 = Sensor::novo(101, 0x48, 78.5, "TERMO-CORE-01");
     let offset_ambiente = -2.5;

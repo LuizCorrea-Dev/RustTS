@@ -307,10 +307,9 @@ Quando um agente de IA tenta violar uma regra de memória ou permissão de hardw
       "message": "Function 'get_user_profile' attempted to invoke 'db.delete_by_id' which requires capability 'cap SqlWrite<UsersTable>', but only holds 'cap SqlRead<UsersTable>'.",
       "deterministic_fixes": [
         {
-          "strategy": "remove_unauthorized_call",
-          "rationale": "Function is marked @sealed_sig; privilege escalation is forbidden.",
-          "replacement_snippet": "// REMOVED BY RTSC GUARD",
-          "target_line": 18
+          "action": "remove_unauthorized_call",
+          "line_to_remove": 18,
+          "security_policy": "SealedSignatureBoundary: AI agent is forbidden from mutating function signature to escalate privileges."
         }
       ]
     }
@@ -330,7 +329,7 @@ Quando um agente de IA tenta violar uma regra de memória ou permissão de hardw
 * [`devlog.md`](./devlog.md) — **Devlog & Cronologia (`v0.1.0-rts` → `v2.0.0-rts`):** Histórico técnico completo de versões, auditorias, suíte `cargo test` (`36/36`) e benchmarks AVX2/SoA.
 * [`RustTS_guia.md`](./RustTS_guia.md) — **Matriz de Escopo Operacional e Domínios:** Regras de aplicação Tier 1 / Tier 2 / Tier 0 e integração com TypeScript SDK.
 * [`editors/vscode-rustts/`](./editors/vscode-rustts/package.json) — **Extensão Oficial VS Code / Antigravity IDE (`v2.0.0`):** Syntax highlighting TextMate, snippets (incluindo `gpukernel`) e pacote `editors/rustts-lang-2.0.0.vsix` para arquivos `.rts`.
-* [`examples/kanori_zone_sim/`](./examples/kanori_zone_sim/src/main.rts) — **Showcase Multi-Arquivo KANORI (`v1.5.0`):** Projeto integrado com `import`, `impl Struct`, `core.math`, `Option<T>`, `extern "C"` e `rtsc run -g`.
+* [`examples/kanori_zone_sim/`](./examples/kanori_zone_sim/src/main.rts) — **Showcase Multi-Arquivo KANORI (`v2.0.0`):** Projeto integrado com `import`, `impl Struct`, `core.math`, `Option<T>`, `extern "C"` e `rtsc run -g`.
 * [`examples/kanori_gpu_wasi_sim/`](./examples/kanori_gpu_wasi_sim/src/main.rts) — **Showcase Heterogêneo KANORI (`v2.0.0`):** Pipeline unificado CPU (`--target llvm-ir`) + GPU Compute (`@gpu_kernel` $\rightarrow$ `spirv`/`wgsl`) + Sandbox WASI com *Fuel Metering* (`--target wasi --fuel-limit 100000`).
 * [`agenteRTS.md`](./agenteRTS.md) — **System Prompt do Agente Especialista:** Configuração de contexto para transformar LLMs em engenheiros de compiladores (`COMPILER-DEV`) e programadores nativos RustTS (`RTS-CODER`).
 ---
