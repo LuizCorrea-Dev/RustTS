@@ -211,9 +211,9 @@ rtsc build src/main.rts --target mlir -o build/app.mlir
 rtsc build src/main.rts --emit-header --out-dir build
 
 # 3. Shaders GPU Compute (@gpu_kernel): WebGPU (.wgsl) e Vulkan/DX12 SPIR-V 1.5 (.spvasm / .spv):
-rtsc build examples/kanori_gpu_wasi_sim/src/gpu_radiation.rts --target wgsl -o build/gpu_radiation.wgsl
-rtsc build examples/kanori_gpu_wasi_sim/src/gpu_radiation.rts --target spirv -o build/gpu_radiation.spvasm
-rtsc build examples/kanori_gpu_wasi_sim/src/gpu_radiation.rts --target spv -o build/gpu_radiation.spv
+rtsc build examples/kanori_gpu_wasi_sim/src/gpu_particles.rts --target wgsl -o build/gpu_particles.wgsl
+rtsc build examples/kanori_gpu_wasi_sim/src/gpu_particles.rts --target spirv -o build/gpu_particles.spvasm
+rtsc build examples/kanori_gpu_wasi_sim/src/gpu_particles.rts --target spv -o build/gpu_particles.spv
 
 # 4. Sandbox WASI Determinística com Fuel Metering (.wat e binário .wasm):
 rtsc build examples/kanori_gpu_wasi_sim/src/sandbox_agent.rts --target wasi --fuel-limit 75000 -o build/agent.wat

@@ -69,63 +69,66 @@ A RustTS **não é um "canivete suíço"**. Ela foi construída para domínios o
 ```rust
 module engine.physics;
 
-@soa_layout
-pub struct Transform {
-    pub x: f32,
-    pub y: f32,
-    pub z: f32,
+@component
+struct Transform {
+    position: vec3,
+    rotation: quat,
+    scale: vec3,
 }
 
-@soa_layout
-pub struct Velocity {
-    pub vx: f32,
-    pub vy: f32,
-    pub vz: f32,
+@component
+struct Velocity {
+    linear: vec3,
+    damping: f32,
 }
 
-pub struct CollisionEvent {
-    pub entity_id: usize,
-    pub impact_velocity: f32,
+struct CollisionEvent {
+    entity_a: Handle<Entity>,
+    entity_b: Handle<Entity>,
+    impact_point: vec3,
 }
 
 // O compilador garante ausência de aliasing entre 'transforms' e 'velocities',
 // vetorizando o loop em instruções AVX2/NEON ou LLVM IR automaticamente.
-@sealed_sig
-@vectorize
-pub fn integrate_kinematics_system(
+@system(stage = "FixedUpdate")
+pub fn integrate_kinematics(
     transforms: cap MutColumn<Transform>,
     velocities: cap ReadColumn<Velocity>,
-    frame_events: cap FrameArena<CollisionEvent>,
-    dt: f32,
-    entity_count: usize
-) -> usize {
-    let mut ground_hits: usize = 0;
+    events: cap FrameArena<CollisionEvent>,
+    time: cap TimeStep
+) {
+    let dt: f32 = time.fixed_delta;
+    let count: usize = transforms.len();
 
-    for i in 0..entity_count {
-        transforms[i].x = transforms[i].x + (velocities[i].vx * dt);
-        transforms[i].y = transforms[i].y + (velocities[i].vy * dt);
-        transforms[i].z = transforms[i].z + (velocities[i].vz * dt);
+    for i in 0..count {
+        let vel: vec3 = velocities[i].linear;
+        transforms[i].position = transforms[i].position + (vel * dt);
 
-        if transforms[i].y < 0.0 {
-            transforms[i].y = 0.0;
+        if transforms[i].position.y < 0.0 {
+            transforms[i].position.y = 0.0;
             // Alocação O(1) na arena do frame atual (reciclada a cada 16.6ms; proibida de escapar via RTS-E0501)
-            let _evt: Handle<CollisionEvent> = frame_events.alloc(CollisionEvent {
-                entity_id: i,
-                impact_velocity: velocities[i].vy,
+            events.push(CollisionEvent {
+                entity_a: transforms.handle_at(i),
+                entity_b: Handle::null(),
+                impact_point: transforms[i].position,
             });
-            ground_hits = ground_hits + 1;
         }
     }
-
-    return ground_hits;
 }
 ```
 
 ### 2. Hardware e Embarcados: Controle Físico Blindado por Capacidades (`examples/thermal_control.rts`)
 ```rust
-module embedded.thermal;
+module drone.thermal_control;
+import core.hardware;
+import core.math;
 
-pub enum HardwareFault {
+struct SensorConfig {
+    target_temp_celsius: f32,
+    max_pwm_duty: u8,
+}
+
+enum HardwareFault {
     I2CTimeout(u8),
     SensorDisconnected,
     OverheatCritical(f32),
@@ -133,61 +136,67 @@ pub enum HardwareFault {
 
 // Se uma IA tentar acessar rede, disco ou outro pino de hardware dentro desta função,
 // a compilação é abortada imediatamente no estágio de Capability Checking (RTS-E0402).
-@sealed_sig
-pub fn regulate_reactor_cooling(
-    i2c: cap I2CRead<0x48>,
-    pwm_fan: cap PWMWrite<Pin4>,
-    max_safe_celsius: f32
+pub fn regulate_motor_cooling(
+    config: SensorConfig,
+    i2c: cap I2CBus<0x48>,
+    pwm: cap PWMPin<4>,
+    clock: cap MonotonicClock
 ) -> Result<f32, HardwareFault> {
-    let raw_reg: u16 = i2c.read_register_u16(0x00)?;
-    let temp_celsius: f32 = (raw_reg as f32) * 0.0625;
+    let raw_data: u16 = i2c.read_register_u16(0x00)
+        .map_err(|_| HardwareFault::I2CTimeout(0x48))?;
 
-    if temp_celsius > max_safe_celsius {
-        pwm_fan.set_duty_cycle(100);
-        return Err(HardwareFault::OverheatCritical(temp_celsius));
+    if raw_data == 0xFFFF {
+        return Err(HardwareFault::SensorDisconnected);
     }
 
-    if temp_celsius > 65.0 {
-        pwm_fan.set_duty_cycle(75);
+    let current_temp: f32 = (raw_data as f32) * 0.0625;
+
+    if current_temp >= 105.0 {
+        pwm.set_duty(100);
+        return Err(HardwareFault::OverheatCritical(current_temp));
+    }
+
+    if current_temp > config.target_temp_celsius {
+        let delta: f32 = current_temp - config.target_temp_celsius;
+        let duty: u8 = math::clamp(delta * 5.0, 20.0, config.max_pwm_duty as f32) as u8;
+        pwm.set_duty(duty);
     } else {
-        pwm_fan.set_duty_cycle(25);
+        pwm.set_duty(0);
     }
 
-    return Ok(temp_celsius);
+    return Ok(current_temp);
 }
 ```
 
 ### 3. Compute Shaders GPU (`@gpu_kernel`) e Sandbox WASI com *Fuel Metering* (`examples/kanori_gpu_wasi_sim/`)
 ```rust
-module kanori.heterogeneous;
+module kanori.gpu_particles;
 
 @shader_shared
-pub struct RadiationParticle {
-    pub x: float,
-    pub y: float,
-    pub vx: float,
-    pub vy: float,
-    pub sieverts: float,
+struct RadiationParticle {
+    pos_x: f32,
+    pos_y: f32,
+    vel_x: f32,
+    vel_y: f32,
+    flux_sv: f32
 }
 
 // Compila nativamente para WebGPU (--target wgsl) e Vulkan/DX12 SPIR-V 1.5 (--target spirv / spv)
-@sealed_sig
 @gpu_kernel
-@workgroup_size(64, 1, 1)
 pub fn step_radiation_field(
     particles: cap MutColumn<RadiationParticle>,
-    dt: float,
-    decay_rate: float,
-    count: uint
+    dt: cap TimeStep
 ) {
+    let dt_val: f32 = dt.fixed_delta;
+    let count: usize = particles.len();
     for i in 0..count {
-        particles[i].x = particles[i].x + (particles[i].vx * dt);
-        particles[i].y = particles[i].y + (particles[i].vy * dt);
-        particles[i].sieverts = particles[i].sieverts * decay_rate;
+        particles[i].pos_x = particles[i].pos_x + particles[i].vel_x * dt_val;
+        particles[i].pos_y = particles[i].pos_y + particles[i].vel_y * dt_val;
+        particles[i].flux_sv = math::lerp(particles[i].flux_sv, 0.0, dt_val * 0.05);
     }
 }
 
-// Compila para WebAssembly/WASI (--target wasi / wasm --fuel-limit 100000) com Fuel Metering determinístico
+// Compila para WebAssembly/WASI (--target wasi / wasm --fuel-limit 75000) com Fuel Metering determinístico
 @sealed_sig
 pub fn decidir_evacuacao_agente(
     dose_inicial: float,
@@ -258,9 +267,9 @@ rtsc build examples/kanori_gpu_wasi_sim/src/main.rts --target mlir -o build/kano
 rtsc build examples/kanori_gpu_wasi_sim/src/main.rts --target llvm-ir --bin -o build/kanori_llvm.exe
 
 # 5. Backends GPU Compute (`@gpu_kernel`): WebGPU (`.wgsl`) e Vulkan/DX12 SPIR-V 1.5 (`.spvasm` / `.spv`)
-rtsc build examples/kanori_gpu_wasi_sim/src/gpu_radiation.rts --target wgsl -o build/gpu_radiation.wgsl
-rtsc build examples/kanori_gpu_wasi_sim/src/gpu_radiation.rts --target spirv -o build/gpu_radiation.spvasm
-rtsc build examples/kanori_gpu_wasi_sim/src/gpu_radiation.rts --target spv -o build/gpu_radiation.spv
+rtsc build examples/kanori_gpu_wasi_sim/src/gpu_particles.rts --target wgsl -o build/gpu_particles.wgsl
+rtsc build examples/kanori_gpu_wasi_sim/src/gpu_particles.rts --target spirv -o build/gpu_particles.spvasm
+rtsc build examples/kanori_gpu_wasi_sim/src/gpu_particles.rts --target spv -o build/gpu_particles.spv
 
 # 6. Backend Sandbox WASI Determinístico com Fuel Metering (`.wat` e binário `.wasm`)
 rtsc build examples/kanori_gpu_wasi_sim/src/sandbox_agent.rts --target wasi --fuel-limit 75000 -o build/agent.wat
@@ -277,24 +286,35 @@ rtsc --export-gbnf > rustts.gbnf
 
 ## Exemplo de Diagnóstico JSON para Auto-Correção de IA
 
-Quando um agente de IA tenta violar uma regra de memória ou permissão de hardware, `rtsc check --json-diagnostics` emite:
+Quando um agente de IA tenta violar uma regra de memória ou permissão de hardware, `rtsc check --json-diagnostics` emite o schema `CompilerDiagnosticsReport`:
 
 ```json
 {
+  "compiler_version": "2.0.0-rts",
   "status": "error",
-  "error_code": "RTS-E0402",
-  "category": "CapabilityViolation",
-  "location": {
-    "file": "src/server.rts",
-    "line": 18,
-    "column": 5,
-    "ast_node": "MethodCall(db.delete_by_id)"
-  },
-  "message": "Function 'get_user_profile' attempted a write operation ('delete_by_id') on resource 'UsersTable', but only possesses read capability 'cap SqlRead<UsersTable>'.",
-  "suggested_fix": {
-    "action": "remove_call_or_upgrade_cap",
-    "signature_patch": "db: cap SqlWrite<UsersTable>"
-  }
+  "diagnostics": [
+    {
+      "error_code": "RTS-E0402",
+      "category": "CapabilityViolation",
+      "file": "src/server.rts",
+      "span": {
+        "line_start": 18,
+        "col_start": 5,
+        "line_end": 18,
+        "col_end": 28
+      },
+      "ast_node": "MethodCall(db.delete_by_id)",
+      "message": "Function 'get_user_profile' attempted to invoke 'db.delete_by_id' which requires capability 'cap SqlWrite<UsersTable>', but only holds 'cap SqlRead<UsersTable>'.",
+      "deterministic_fixes": [
+        {
+          "strategy": "remove_unauthorized_call",
+          "rationale": "Function is marked @sealed_sig; privilege escalation is forbidden.",
+          "replacement_snippet": "// REMOVED BY RTSC GUARD",
+          "target_line": 18
+        }
+      ]
+    }
+  ]
 }
 ```
 

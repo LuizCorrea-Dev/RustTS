@@ -110,14 +110,14 @@ rtsc build examples/kanori_gpu_wasi_sim/src/main.rts --target llvm-ir --bin -o b
 ```
 
 ### 2.5. Gerar Compute Shaders GPU: WebGPU (`--target=wgsl`) e Vulkan/DX12 (`--target=spirv` / `spv`)
-Compila kernels anotados com `@gpu_kernel` e `@workgroup_size(X, Y, Z)` (validados contra `RTS-E0601`–`E0603`):
+Compila kernels anotados com `@gpu_kernel` (validados contra `RTS-E0601`–`E0603`):
 ```bash
 # WebGPU Shading Language (.wgsl)
-rtsc build examples/kanori_gpu_wasi_sim/src/gpu_radiation.rts --target wgsl -o build/gpu_radiation.wgsl
+rtsc build examples/kanori_gpu_wasi_sim/src/gpu_particles.rts --target wgsl -o build/gpu_particles.wgsl
 
 # Vulkan / DirectX 12 SPIR-V 1.5 Assembly (.spvasm) e Binário (.spv magic 0x07230203)
-rtsc build examples/kanori_gpu_wasi_sim/src/gpu_radiation.rts --target spirv -o build/gpu_radiation.spvasm
-rtsc build examples/kanori_gpu_wasi_sim/src/gpu_radiation.rts --target spv -o build/gpu_radiation.spv
+rtsc build examples/kanori_gpu_wasi_sim/src/gpu_particles.rts --target spirv -o build/gpu_particles.spvasm
+rtsc build examples/kanori_gpu_wasi_sim/src/gpu_particles.rts --target spv -o build/gpu_particles.spv
 ```
 
 ### 2.6. Gerar Sandbox WASI Determinística com *Fuel Metering* (`--target=wasi` / `wasm`)
@@ -183,7 +183,7 @@ clang -std=c11 -O3 -mavx2 -mfma -Wall -Wextra -Werror examples/thermal_control_b
 
 ## 4. Extensão para VS Code e Antigravity IDE (`v2.0.0`)
 
-A extensão oficial fornece realce semântico de sintaxe (`cap`, `@component`, `@system`, `@sealed_sig`, `@gpu_kernel`, `@workgroup_size`, `@shader_shared`, `?`, tipos vetoriais e capacidades), configuração de linguagem e snippets (`comp`, `sys`, `externc`, `gpukernel`). Consulte também o guia dedicado em [`editors/vscode-rustts/README.md`](./editors/vscode-rustts/README.md).
+A extensão oficial fornece realce semântico de sintaxe (`cap`, `@component`, `@system`, `@sealed_sig`, `@gpu_kernel`, `@shader_shared`, `?`, tipos vetoriais e capacidades), configuração de linguagem e snippets (`comp`, `sys`, `externc`, `gpukernel`). Consulte também o guia dedicado em [`editors/vscode-rustts/README.md`](./editors/vscode-rustts/README.md).
 
 - **Pacote VSIX pronto para VS Code e Antigravity IDE:** [`editors/rustts-lang-2.0.0.vsix`](./editors/rustts-lang-2.0.0.vsix) (instale via `Ctrl + Shift + P` → `Extensions: Install from VSIX...` → selecione `editors/rustts-lang-2.0.0.vsix` → `Developer: Reload Window`).
 - **Código-fonte da extensão e snippets:** [`editors/vscode-rustts/`](./editors/vscode-rustts/package.json) (carregue via `Ctrl + Shift + P` → `Developer: Install Extension from Location...`).
