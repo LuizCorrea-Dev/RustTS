@@ -6,18 +6,34 @@
 
 Bem-vindo ao **RustTS (`.rts`)**, o compilador determinístico de sistemas, motores em tempo real e controle físico de hardware baseado em **Capacidades (`cap`)**, **Arenas Escopadas ($O(1)$)** e geração nativa **SoA/AVX2**.
 
-Este guia cobre instalação via código-fonte (`v1.4.0-rts`), instaladores pré-compilados, manual completo da CLI `rtsc`, depuração `#line` e execução dos exemplos inclusos.
+Este guia cobre instalação via instaladores pré-compilados (`v1.4.0`), compilação a partir do código-fonte, manual completo da CLI `rtsc`, depuração source-level `#line` e execução dos exemplos inclusos.
 
 ---
 
 ## 1. Instalação
 
-### A. Versão Atual `v1.4.0-rts` a Partir do Código-Fonte (Recomendado)
+### A. Instaladores Pré-Compilados (GitHub Release [`v1.4.0`](https://github.com/LuizCorrea-Dev/RustTS/releases/tag/v1.4.0))
 
-Com o toolchain **Rust (`cargo` / `rustc`)** instalado (ex.: via [rustup.rs](https://rustup.rs) ou `winget install Rustlang.Rustup` no Windows):
+Os binários pré-compilados da release `v1.4.0` possuem **zero dependências externas** para análise semântica e transpilações:
+
+**Windows (PowerShell):**
+```powershell
+irm [https://raw.githubusercontent.com/LuizCorrea-Dev/RustTS/main/scripts/install.ps1](https://raw.githubusercontent.com/LuizCorrea-Dev/RustTS/main/scripts/install.ps1) | iex
+```
+
+**Linux e macOS (Bash / Zsh):**
+```bash
+curl -fsSL [https://raw.githubusercontent.com/LuizCorrea-Dev/RustTS/main/scripts/install.sh](https://raw.githubusercontent.com/LuizCorrea-Dev/RustTS/main/scripts/install.sh) | bash
+# Adicione ao perfil se necessário:
+export PATH="$HOME/.rtsc/bin:$PATH"
+```
+
+### B. Compilando a Partir do Código-Fonte (`v1.4.0-rts`)
+
+Com o toolchain **Rust (`cargo` / `rustc`)** instalado (via [rustup.rs](https://rustup.rs) ou `winget install Rustlang.Rustup` no Windows):
 
 ```bash
-git clone https://github.com/LuizCorrea-Dev/RustTS.git
+git clone [https://github.com/LuizCorrea-Dev/RustTS.git](https://github.com/LuizCorrea-Dev/RustTS.git)
 cd RustTS
 
 # Executa os 22 testes unitários do compilador
@@ -30,34 +46,18 @@ cargo build --release
 cargo install --path .
 ```
 
-### B. Instaladores Pré-Compilados (GitHub Release [`v1.0.0`](https://github.com/LuizCorrea-Dev/RustTS/releases/tag/v1.0.0))
-
-Os binários pré-compilados da tag `v1.0.0` possuem **zero dependências externas** para análise semântica e transpilações:
-
-**Windows (PowerShell):**
-```powershell
-irm https://raw.githubusercontent.com/LuizCorrea-Dev/RustTS/main/scripts/install.ps1 | iex
-```
-
-**Linux e macOS (Bash / Zsh):**
-```bash
-curl -fsSL https://raw.githubusercontent.com/LuizCorrea-Dev/RustTS/main/scripts/install.sh | bash
-# Adicione ao perfil se necessário:
-export PATH="$HOME/.rtsc/bin:$PATH"
-```
-
 ### Validar a Instalação
 ```bash
 rtsc --version
-# Saída esperada na v1.4.0-rts: rtsc 1.4.0-rts
+# Saída esperada: rtsc 1.4.0-rts
 ```
 
 ### Requisito Opcional para Execução Nativa (`rtsc run` e `--bin`)
-* Para rodar `rtsc check`, `--export-gbnf`, `--emit-ts-sdk`, `--emit-header`, `--target=unreal` e `--target=unity`, o `rtsc` **não precisa de compilador C externo**.
-* Para compilar e executar código nativo AVX2/FMA3 diretamente via `rtsc run` ou `rtsc build --bin`, utilize **LLVM/Clang** (localizado automaticamente no `PATH` ou no diretório LLVM do Visual Studio no Windows):
-  * **Windows:** `winget install LLVM.LLVM` (ou LLVM incluso no Visual Studio Build Tools)
-  * **Linux (Debian/Ubuntu):** `sudo apt install clang`
-  * **macOS:** `xcode-select --install`
+- Para rodar `rtsc check`, `--export-gbnf`, `--emit-ts-sdk`, `--emit-header`, `--target=unreal` e `--target=unity`, o `rtsc` **não precisa de compilador C externo**.
+- Para compilar e executar código nativo AVX2/FMA3 diretamente via `rtsc run` ou `rtsc build --bin`, utilize **LLVM/Clang** (localizado automaticamente no `PATH` ou no diretório LLVM do Visual Studio no Windows):
+  - **Windows:** `winget install LLVM.LLVM` (ou componente LLVM do Visual Studio 2022/2026)
+  - **Linux (Debian/Ubuntu):** `sudo apt install clang`
+  - **macOS:** `xcode-select --install`
 
 ---
 
@@ -103,13 +103,13 @@ rtsc build src/main.rts --bin -o build/app.exe
 ```
 
 ### 2.5. Gerar Atores C++ para Unreal Engine 5 (`--target=unreal`)
-Emite pares `.h` e `.cpp` compatíveis com UHT (*Unreal Header Tool*):
+Emite pares `A<Actor>.h` e `A<Actor>.cpp` separados e compatíveis com UHT (*Unreal Header Tool*):
 ```bash
 rtsc build examples/combat_unreal.rts --target=unreal --out-dir build/unreal
 ```
 
 ### 2.6. Gerar Plugin Rust C-ABI + Wrapper C# Zero-Copy para Unity (`--target=unity`)
-Emite `rtsc_plugin.rs` e `RtscNativeBridge.cs` operando sobre `NativeArray<T>`:
+Emite `<modulo>_unity_plugin.rs` (ex.: `engine_physics_unity_plugin.rs`) e `RtscNativeBridge.cs` operando sobre `NativeArray<T>`:
 ```bash
 rtsc build examples/engine_physics.rts --target=unity --out-dir build/unity
 ```
@@ -121,7 +121,12 @@ rtsc build examples/telemetry_server.rts --emit-ts-sdk -o build/telemetry_client
 
 ### 2.8. Exportar Gramática Formal GBNF (`--export-gbnf`)
 Exporta a gramática completa da versão `v1.4.0-rts` para *Constrained Decoding* em motores LLM (`llama.cpp`, `vLLM`):
+```powershell
+# Windows (PowerShell — garante gravação em UTF-8 sem BOM)
+rtsc --export-gbnf | Set-Content -Path rustts.gbnf -Encoding utf8
+```
 ```bash
+# Linux / macOS
 rtsc --export-gbnf > rustts.gbnf
 ```
 
@@ -148,18 +153,28 @@ rtsc check examples/combat_unreal.rts
 rtsc check examples/telemetry_server.rts
 ```
 
-Compilação manual dos harnesses de benchmark C99 com Clang (`-O3 -mavx2 -mfma`):
+Compilação e execução manual dos harnesses de benchmark C99 com Clang (`-O3 -mavx2 -mfma`):
 ```bash
-clang -std=c11 -O3 -mavx2 -mfma -Wall -Wextra -Werror examples/ballistics_10k_benchmark.c -o build/ballistics_bench
-clang -std=c11 -O3 -mavx2 -mfma -Wall -Wextra -Werror examples/engine_physics_benchmark.c -o build/engine_physics_bench
-clang -std=c11 -O3 -mavx2 -mfma -Wall -Wextra -Werror examples/thermal_control_benchmark.c -o build/thermal_control_bench
+mkdir -p build
+clang -std=c11 -O3 -mavx2 -mfma -Wall -Wextra -Werror examples/ballistics_10k_benchmark.c -o build/ballistics_bench.exe
+clang -std=c11 -O3 -mavx2 -mfma -Wall -Wextra -Werror examples/engine_physics_benchmark.c -o build/engine_physics_bench.exe
+clang -std=c11 -O3 -mavx2 -mfma -Wall -Wextra -Werror examples/thermal_control_benchmark.c -o build/thermal_control_bench.exe
 ```
 
 ---
 
-## 4. Extensão VS Code
+## 4. Extensão Oficial VS Code (`editors/vscode-rustts/`)
 
-O pacote oficial de *syntax highlighting* TextMate (`.tmLanguage.json`) e configuração de linguagem para arquivos `.rts` está disponível em [`editors/vscode-rustts/`](./editors/vscode-rustts/package.json).
+O pacote oficial de *syntax highlighting* TextMate (`.tmLanguage.json`) e configuração de linguagem para arquivos `.rts` está disponível em [`editors/vscode-rustts/`](./editors/vscode-rustts/package.json). Para instalá-lo localmente no seu VS Code:
+
+```powershell
+# Windows (PowerShell)
+Copy-Item -Path "editors\vscode-rustts" -Destination "$env:USERPROFILE\.vscode\extensions\rustts-lang-1.4.0" -Recurse -Force
+```
+```bash
+# Linux / macOS
+cp -r editors/vscode-rustts ~/.vscode/extensions/rustts-lang-1.4.0
+```
 
 ---
 
