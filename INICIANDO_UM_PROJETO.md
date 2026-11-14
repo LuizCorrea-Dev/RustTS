@@ -83,7 +83,7 @@ pub fn demonstrar_todos_os_aliases(
    *(Se precisar instalar ou atualizar, veja [INSTALACAO_E_USO.md](./INSTALACAO_E_USO.md)).*
 
 2. **Ative o Realce de Sintaxe e Snippets no VS Code ou Antigravity IDE:**
-   - **Pacote VSIX pronto para VS Code e Antigravity IDE:** [`editors/rustts-lang-1.4.0.vsix`](./editors/rustts-lang-1.4.0.vsix) — abra o editor e pressione **`Ctrl + Shift + P`** → **`Extensions: Install from VSIX...`** (ou **`Developer: Install Extension from Location...`** selecionando a pasta [`editors/vscode-rustts`](./editors/vscode-rustts)).
+   - **Pacote VSIX pronto para VS Code e Antigravity IDE:** [`editors/rustts-lang-1.5.0.vsix`](./editors/rustts-lang-1.5.0.vsix) — abra o editor e pressione **`Ctrl + Shift + P`** → **`Extensions: Install from VSIX...`** (ou **`Developer: Install Extension from Location...`** selecionando a pasta [`editors/vscode-rustts`](./editors/vscode-rustts)).
    - *(**Importante:** não dê duplo-clique no arquivo `.vsix` pelo Windows Explorer para evitar que o instalador do Visual Studio C++ intercepte o pacote).*
 
 ---

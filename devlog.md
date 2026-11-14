@@ -6,7 +6,7 @@
 
 Registro técnico cronológico da criação, auditorias de especificação, otimizações SIMD/memória, evolução semântica e validação em hardware real do compilador **RustTS (`rtsc`)**.
 
-- **Repositório Oficial:** [LuizCorrea-Dev/RustTS](https://github.com/LuizCorrea-Dev/RustTS) (`main`, tag `v1.0.0`)
+- **Repositório Oficial:** [LuizCorrea-Dev/RustTS](https://github.com/LuizCorrea-Dev/RustTS) (`main`, tag `v1.5.0`)
 - **Autor:** Luiz Correa — Rootszera
 - **Toolchain Nativa Verificada:** `rustc 1.99.1` / `cargo 1.99.1` + `LLVM/Clang 22.1.3` (`-std=c11 -O3 -mavx2 -mfma -Wall -Wextra -Werror`)
 

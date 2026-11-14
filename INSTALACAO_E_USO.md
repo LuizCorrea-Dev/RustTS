@@ -6,15 +6,15 @@
 
 Bem-vindo ao **RustTS (`.rts`)**, o compilador determinístico de sistemas, motores em tempo real e controle físico de hardware baseado em **Capacidades (`cap`)**, **Arenas Escopadas ($O(1)$)** e geração nativa **SoA/AVX2**.
 
-Este guia cobre instalação via instaladores pré-compilados (`v1.4.0`), compilação a partir do código-fonte, manual completo da CLI `rtsc`, depuração source-level `#line` e execução dos exemplos inclusos.
+Este guia cobre instalação via instaladores pré-compilados (`v1.5.0`), compilação a partir do código-fonte, manual completo da CLI `rtsc`, depuração source-level `#line` e execução dos exemplos inclusos.
 
 ---
 
 ## 1. Instalação
 
-### A. Instaladores Pré-Compilados (GitHub Release [`v1.4.0`](https://github.com/LuizCorrea-Dev/RustTS/releases/tag/v1.4.0))
+### A. Instaladores Pré-Compilados (GitHub Release [`v1.5.0`](https://github.com/LuizCorrea-Dev/RustTS/releases/tag/v1.5.0))
 
-Os binários pré-compilados da release `v1.4.0` possuem **zero dependências externas** para análise semântica e transpilações:
+Os binários pré-compilados da release `v1.5.0` possuem **zero dependências externas** para análise semântica e transpilações:
 
 **Windows (PowerShell):**
 ```powershell
@@ -163,11 +163,11 @@ clang -std=c11 -O3 -mavx2 -mfma -Wall -Wextra -Werror examples/thermal_control_b
 
 ---
 
-## 4. Extensão para VS Code e Antigravity IDE (`v1.4.0`)
+## 4. Extensão para VS Code e Antigravity IDE (`v1.5.0`)
 
 A extensão oficial fornece realce semântico de sintaxe (`cap`, `@component`, `@system`, `@sealed_sig`, `?`, tipos vetoriais e capacidades), configuração de linguagem e snippets (`comp`, `sys`, `externc`). Consulte também o guia dedicado em [`editors/vscode-rustts/README.md`](./editors/vscode-rustts/README.md).
 
-- **Pacote VSIX pronto para VS Code e Antigravity IDE:** [`editors/rustts-lang-1.4.0.vsix`](./editors/rustts-lang-1.4.0.vsix) (instale via `Ctrl + Shift + P` → `Extensions: Install from VSIX...` → selecione `editors/rustts-lang-1.4.0.vsix` → `Developer: Reload Window`).
+- **Pacote VSIX pronto para VS Code e Antigravity IDE:** [`editors/rustts-lang-1.5.0.vsix`](./editors/rustts-lang-1.5.0.vsix) (instale via `Ctrl + Shift + P` → `Extensions: Install from VSIX...` → selecione `editors/rustts-lang-1.5.0.vsix` → `Developer: Reload Window`).
 - **Código-fonte da extensão e snippets:** [`editors/vscode-rustts/`](./editors/vscode-rustts/package.json) (carregue via `Ctrl + Shift + P` → `Developer: Install Extension from Location...`).
 
 > **Atenção (Windows):** **NÃO dê duplo-clique** no arquivo `.vsix` pelo Windows Explorer. O Windows associa `.vsix` ao `VSIXInstaller.exe` do *Microsoft Visual Studio Build Tools* (C++/C#), exibindo o erro `MissingPackagePartException`. Instale sempre por dentro do **VS Code** ou **Antigravity IDE**, ou via terminal:
@@ -176,7 +176,7 @@ A extensão oficial fornece realce semântico de sintaxe (`cap`, `@component`, `
 ```powershell
 foreach ($base in @("$env:USERPROFILE\.antigravity\extensions", "$env:USERPROFILE\.vscode\extensions")) {
     if (Test-Path (Split-Path $base -Parent)) {
-        $dest = "$base\rootszera.rustts-lang-1.4.0"
+        $dest = "$base\rootszera.rustts-lang-1.5.0"
         Remove-Item $dest -Recurse -Force -ErrorAction SilentlyContinue
         New-Item -ItemType Directory -Force -Path $dest | Out-Null
         Copy-Item -Path "editors\vscode-rustts\*" -Destination $dest -Recurse -Force
@@ -186,8 +186,8 @@ foreach ($base in @("$env:USERPROFILE\.antigravity\extensions", "$env:USERPROFIL
 
 **Instalação via Bash/Zsh (Linux / macOS):**
 ```bash
-mkdir -p ~/.vscode/extensions/rootszera.rustts-lang-1.4.0 && cp -r editors/vscode-rustts/* ~/.vscode/extensions/rootszera.rustts-lang-1.4.0/
-mkdir -p ~/.antigravity/extensions/rootszera.rustts-lang-1.4.0 && cp -r editors/vscode-rustts/* ~/.antigravity/extensions/rootszera.rustts-lang-1.4.0/
+mkdir -p ~/.vscode/extensions/rootszera.rustts-lang-1.5.0 && cp -r editors/vscode-rustts/* ~/.vscode/extensions/rootszera.rustts-lang-1.5.0/
+mkdir -p ~/.antigravity/extensions/rootszera.rustts-lang-1.5.0 && cp -r editors/vscode-rustts/* ~/.antigravity/extensions/rootszera.rustts-lang-1.5.0/
 ```
 
 ---

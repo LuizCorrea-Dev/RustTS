@@ -1,4 +1,8 @@
-# Guia de Contribuição — RustTS (`rtsc`)
+<p align="center">
+  <img src="./rustts_language_logo.png" alt="RustTS Logo" width="220">
+</p>
+
+# Guia de Contribuição — RustTS (`rtsc v1.5.0-rts`)
 
 Obrigado pelo interesse em contribuir com o **RustTS (`rtsc`)**! Este repositório reúne o compilador de sistemas determinístico em Rust e seus backends para **C99 SIMD/SoA**, **Unreal Engine 5**, **Unity** e **TypeScript SDK**.
 
@@ -30,8 +34,8 @@ Antes de propor alterações na linguagem ou no compilador, tenha em mente os pi
 | [`src/codegen_unreal.rs`](./src/codegen_unreal.rs) | Emissor C++ UHT (`.h` / `.cpp`) para Unreal Engine 5 |
 | [`src/codegen_unity.rs`](./src/codegen_unity.rs) | Emissor FFI Rust (`extern "C"`) + wrapper C# `NativeArray<T>` para Unity |
 | [`src/codegen_ts_sdk.rs`](./src/codegen_ts_sdk.rs) | Emissor TypeScript SDK (`RtsResult<T, ApiError>`, `u64`/`i64` → `string`) |
-| [`src/main.rs`](./src/main.rs) | CLI `rtsc` (`check`, `build`, `--export-gbnf`) |
-| [`src/lib.rs`](./src/lib.rs) | Pipeline integrado `compile_and_check` e suíte de testes unitários |
+| [`src/main.rs`](./src/main.rs) | CLI `rtsc` (`init`, `check`, `build`, `run`, `--export-gbnf`) |
+| [`src/lib.rs`](./src/lib.rs) | Pipeline integrado `compile_and_check_project` e suíte de 23 testes unitários |
 
 ---
 
