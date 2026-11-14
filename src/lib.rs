@@ -1,4 +1,5 @@
 pub mod ast;
+pub mod codegen_mlir;
 pub mod codegen_native;
 pub mod codegen_ts_sdk;
 pub mod codegen_unity;
@@ -1122,5 +1123,107 @@ pub fn main() -> int {
         assert!(c99.contains("int64_t timestamp_epoch = 1700000000u;"));
         assert!(c99.contains("size_t indice_buffer = 0u;"));
         assert!(c99.contains("double precisao_orbital = "));
+    }
+
+    #[test]
+    fn test_v160_mlir_ssa_codegen_soa_scf_and_capabilities() {
+        let src = r#"
+module sim.mlir_physics;
+
+@component
+struct Position {
+    px: f32,
+    py: f32,
+}
+
+@component
+struct Velocity {
+    vx: f32,
+    vy: f32,
+}
+
+struct HitEvent {
+    entity_idx: u32,
+    impact_speed: f32,
+}
+
+@system(stage = "FixedUpdate")
+pub fn step_physics(
+    pos: cap MutColumn<Position>,
+    vel: cap ReadColumn<Velocity>,
+    hits: cap FrameArena<HitEvent>,
+    time: cap TimeStep
+) {
+    let dt = time.fixed_delta;
+    let count = pos.len();
+
+    for i in 0..count {
+        let ny = pos[i].py + (vel[i].vy * dt);
+        pos[i].py = ny;
+        if ny < 0.0 {
+            hits.push(HitEvent { entity_idx: i as u32, impact_speed: vel[i].vy });
+        }
+    }
+}
+"#;
+        let (mod_ok, report) = compile_and_check(src, "src/v160_mlir_physics.rts");
+        assert_eq!(
+            report.status, "ok",
+            "v1.6.0 MLIR physics diagnostics: {:?}",
+            report.diagnostics
+        );
+        let mlir = codegen_mlir::MlirCodegen::emit_mlir(mod_ok.as_ref().unwrap());
+        assert!(mlir.contains("module @sim_mlir_physics attributes"));
+        assert!(mlir.contains("rts.soa_alignment = 64 : i64"));
+        assert!(mlir.contains(
+            "%pos: memref<?xf32, strided<[1]>> {rts.cap = \"MutColumn<Position>\", rts.access = \"read_write\", llvm.noalias, llvm.align = 64 : i64}"
+        ));
+        assert!(mlir.contains(
+            "%vel: memref<?xf32, strided<[1]>> {rts.cap = \"ReadColumn<Velocity>\", rts.access = \"read_only\", llvm.noalias, llvm.align = 64 : i64}"
+        ));
+        assert!(mlir.contains("rts.arena_rank = 1 : i32"));
+        assert!(mlir.contains("scf.for %i ="));
+        assert!(mlir.contains("{rts.simd_tile = 256 : i32, rts.vectorize_width = 8 : i32}"));
+        assert!(mlir.contains("memref.load %pos[%i] {rts.field = \"py\", rts.aligned = 64 : i64}"));
+        assert!(mlir.contains("arith.mulf"));
+        assert!(mlir.contains("arith.addf"));
+        assert!(mlir.contains("memref.store"));
+        assert!(mlir.contains("scf.if"));
+        assert!(mlir.contains("\"rts.arena_push\""));
+    }
+
+    #[test]
+    fn test_v160_mlir_hardware_and_ffi_capabilities() {
+        let src = r#"
+module hw.mlir_driver;
+import core.hardware;
+
+extern "C" fn puts(msg: string, console: cap StdIO) -> int;
+
+pub fn monitor_bus(i2c: cap I2CBus<0x48>, pwm: cap PWMPin<0>, console: cap StdIO) -> int {
+    puts("Iniciando leitura MLIR I2C", console);
+    let mut tentativas: int = 0;
+    while tentativas < 3 {
+        pwm.set_duty(80);
+        tentativas = tentativas + 1;
+    }
+    return tentativas;
+}
+"#;
+        let (mod_ok, report) = compile_and_check(src, "src/v160_mlir_hw.rts");
+        assert_eq!(
+            report.status, "ok",
+            "v1.6.0 MLIR hardware diagnostics: {:?}",
+            report.diagnostics
+        );
+        let mlir = codegen_mlir::MlirCodegen::emit_mlir(mod_ok.as_ref().unwrap());
+        assert!(mlir.contains(
+            "func.func private @puts(!rts.str) -> i32 attributes { llvm.emit_c_interface, rts.ffi_abi = \"C\", rts.required_caps = [\"StdIO\"] }"
+        ));
+        assert!(mlir.contains("func.call @puts("));
+        assert!(mlir.contains("scf.while : () -> ()"));
+        assert!(mlir.contains("scf.condition("));
+        assert!(mlir.contains("\"rts.hw_call\"(%pwm"));
+        assert!(mlir.contains("arith.addi"));
     }
 }

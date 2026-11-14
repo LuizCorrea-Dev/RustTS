@@ -1,6 +1,6 @@
 use crate::ast::*;
 
-/// Gerador da Ponte de Contrato TypeScript (`rtsc build --emit-ts-sdk` — v1.5.0-rts).
+/// Gerador da Ponte de Contrato TypeScript (`rtsc build --emit-ts-sdk` — v1.6.0-rts).
 /// 1. Preserva inteiros de 64 bits (`u64`, `i64`, `usize`) como `string` decimal na serialização JSON
 ///    para impedir perda de precisão acima de 2^53 - 1 (IEEE-754 Double).
 /// 2. Exporta `RtsResult<T, E>` como Discriminated Union sem `throw` para funções que retornam `Result<T, E>`.
@@ -11,7 +11,7 @@ impl TsSdkCodegen {
         let mut ts = String::new();
 
         ts.push_str("// ==========================================================================\n");
-        ts.push_str("// Generated deterministically by rtsc 1.5.0-rts --emit-ts-sdk\n");
+        ts.push_str("// Generated deterministically by rtsc 1.6.0-rts --emit-ts-sdk\n");
         ts.push_str(&format!("// Source Backend Module: {}\n", module.path.join(".")));
         ts.push_str("// Architecture Rule: Tier-1 RustTS Backend (RequestArena) -> Typed TS SDK\n");
         ts.push_str("// Safety Guarantee: u64/i64 mapped to string (IEEE-754 53-bit overflow proof)\n");

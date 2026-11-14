@@ -2,7 +2,7 @@
   <img src="./rustts_language_logo.png" alt="RustTS Logo" width="220">
 </p>
 
-# RustTS (`rtsc`) — Devlog de Evolução Arquitetural, Versões e Testes (`v0.1.0-rts` → `v1.5.0-rts`)
+# RustTS (`rtsc`) — Devlog de Evolução Arquitetural, Versões e Testes (`v0.1.0-rts` → `v1.6.0-rts`)
 
 Registro técnico cronológico da criação, auditorias de especificação, otimizações SIMD/memória, evolução semântica e validação em hardware real do compilador **RustTS (`rtsc`)**.
 
@@ -33,6 +33,7 @@ Registro técnico cronológico da criação, auditorias de especificação, otim
 | **`v1.3.0-rts`** | FFI Blindado por `cap`, `impl Struct` & `core.math` (`Fase 4: 85%`) | `extern "C" fn` com remoção zero-overhead de tokens `cap`, blocos `impl Struct`, 11 funções de `core.math` (`<math.h>`), flags `-l`/`-L`/`-I` | **`cargo test`: 20/20 PASS** + chamada real à `libc` (`puts`, `abs`) sob `-Wall -Wextra -Werror` |
 | **`v1.4.0-rts`** | Debugging `#line`, Header `.h`, VS Code & KANORI (`Fase 5: 100%`) | Diretivas `#line`, `-g`/`--debug` (`-g -O0`), `--emit-header` (`emit_c_header`), extensão `editors/vscode-rustts/`, showcase `examples/kanori_zone_sim/` | **`cargo test`: 22/22 PASS**; `rtsc 1.4.0-rts`; `rtsc run -g` e `rtsc check` 5/5 aprovados |
 | **`v1.5.0-rts`** | Ergonomia TypeScript/C: Inferência no `let` & Aliases de Tipos | Aliases custo-zero (`int`, `uint`, `byte`, `float`, `number`, `boolean`, `string`), `infer_c_type_from_expr` para `let` sem `: Tipo`, inferência de `-IntLit` (`i32`) e construtores `vec2`/`vec3`/`vec4`/`quat` | **`cargo test`: 23/23 PASS** (`test_v150_typescript_ergonomics_type_aliases_and_let_inference`); `rtsc 1.5.0-rts` |
+| **`v1.6.0-rts`** | Ciclo 2 (Fase 6: 20%): Backend MLIR SSA (`--target=mlir`) | Novo módulo `src/codegen_mlir.rs` emitindo dialetos `func`, `scf`, `memref`, `arith`, `vector` e `rts` (`llvm.noalias`, `llvm.align = 64`, `rts.simd_tile = 256`) | **`cargo test`: 25/25 PASS** (`test_v160_mlir_ssa_codegen_soa_scf_and_capabilities`, `test_v160_mlir_hardware_and_ffi_capabilities`) |
 
 ---
 
@@ -380,3 +381,22 @@ Refinamento ergonômico unindo a fluidez de escrita do TypeScript e C à seguran
 ### Validação (`v1.5.0-rts`)
 - **`cargo test`:** **23/23** testes unitários aprovados (`test_v150_typescript_ergonomics_type_aliases_and_let_inference`).
 - **Instalação Global:** `cargo install --path .` concluído com `rtsc --version` reportando **`rtsc 1.5.0-rts`**.
+
+---
+
+## Etapa 18 — `v1.6.0-rts`: Ciclo 2 (Fase 6: 0% → 20%) — Backend MLIR SSA (`--target=mlir`)
+
+Primeira etapa da Próxima Fronteira (`v2.0+`), adicionando geração direta de representação intermediária SSA no formato **MLIR** (`func`, `scf`, `memref`, `arith`, `vector` e `rts`).
+
+### Evoluções Implementadas
+1. **Gerador MLIR SSA Determinístico ([src/codegen_mlir.rs](src/codegen_mlir.rs)):**
+   - Numeração SSA monotônica (`%0`, `%1`, ...) e mapeamento completo dos 14 tipos escalares e tipos vetoriais (`vector<2xf32>`, `vector<3xf32>`, `vector<4xf32>`).
+   - Tradução de `cap MutColumn<T>` e `cap ReadColumn<T>` para descritores `memref<?xf32, strided<[1]>>` anotados com `llvm.noalias`, `llvm.align = 64 : i64` e `rts.access`.
+   - Lowering de loops `for i in 0..n` para `scf.for` com `{rts.simd_tile = 256 : i32, rts.vectorize_width = 8 : i32}`, condicionais para `scf.if`, laços `while` para `scf.while`, acessos SoA para `memref.load` / `memref.store` e aritmética tipada para `arith.addf`/`addi`, `arith.mulf`/`muli`, `arith.cmpf`/`cmpi`.
+   - Declarações `extern "C" fn` emitidas como `func.func private` com `llvm.emit_c_interface` e lista auditável `rts.required_caps`.
+2. **Integração na CLI (`--target=mlir` em [src/main.rs](src/main.rs)):**
+   - Suporte a `rtsc build <arquivo.rts> --target=mlir [-o <saida.mlir> | --out-dir <pasta>]`.
+
+### Validação (`v1.6.0-rts`)
+- **`cargo test`:** **25/25** testes unitários aprovados (`test_v160_mlir_ssa_codegen_soa_scf_and_capabilities` e `test_v160_mlir_hardware_and_ffi_capabilities`).
+- **Instalação Global:** `cargo install --path .` concluído com `rtsc --version` reportando **`rtsc 1.6.0-rts`**.

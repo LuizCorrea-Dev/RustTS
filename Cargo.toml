@@ -1,6 +1,6 @@
 [package]
 name = "rtsc"
-version = "1.5.0-rts"
+version = "1.6.0-rts"
 edition = "2021"
 authors = ["Luiz Correa - Rootszera"]
 description = "RustTS (.rts) Deterministic Systems & Engine Compiler for Humans and AI"

@@ -1,4 +1,5 @@
 use clap::{Parser as ClapParser, Subcommand};
+use rtsc_core::codegen_mlir::MlirCodegen;
 use rtsc_core::codegen_native::NativeCodegen;
 use rtsc_core::codegen_ts_sdk::TsSdkCodegen;
 use rtsc_core::codegen_unity::UnityCodegen;
@@ -12,7 +13,7 @@ use std::process::{self, Command};
 #[derive(ClapParser)]
 #[command(
     name = "rtsc",
-    version = "1.5.0-rts",
+    version = "1.6.0-rts",
     about = "RustTS (.rts) Deterministic Systems & Engine Compiler for Humans and AI"
 )]
 struct Cli {
@@ -195,7 +196,7 @@ fn scaffold_project(target_dir: &Path) {
         .unwrap_or("meu_projeto_rts");
 
     let rts_toml = format!(
-        "[package]\nname = \"{}\"\nversion = \"0.1.0\"\ncompiler = \"1.5.0-rts\"\ntarget = \"native\"\n",
+        "[package]\nname = \"{}\"\nversion = \"0.1.0\"\ncompiler = \"1.6.0-rts\"\ntarget = \"native\"\n",
         project_name
     );
     write_utf8_no_bom(&target_dir.join("rts.toml"), &rts_toml);
@@ -244,11 +245,11 @@ pub fn main() -> i32 {
     let leitura: Result<f32, FalhaSensor> = self::monitorar(lim, i2c, cooler);
     match leitura {
         Ok(temp) => {
-            io::print_f32("[RustTS v1.5.0-rts] Temperatura Nominal (C): ", temp);
+            io::print_f32("[RustTS v1.6.0-rts] Temperatura Nominal (C): ", temp);
             return 0;
         },
         Err(falha) => {
-            io::println("[RustTS v1.5.0-rts] Alerta: Falha de Sensor Detectada!");
+            io::println("[RustTS v1.6.0-rts] Alerta: Falha de Sensor Detectada!");
             return 1;
         },
     }
@@ -260,7 +261,7 @@ pub fn main() -> i32 {
     }
 
     println!(
-        "[rtsc 1.5.0-rts] Initialized RustTS project in '{}'\n  -> Run project: rtsc run {}",
+        "[rtsc 1.6.0-rts] Initialized RustTS project in '{}'\n  -> Run project: rtsc run {}",
         target_dir.display(),
         main_rts_path.display()
     );
@@ -340,15 +341,15 @@ fn main() {
                 if let Some(dir) = &out_dir {
                     let h_path = dir.join(format!("{}.h", stem));
                     write_utf8_no_bom(&h_path, &header_code);
-                    println!("[rtsc 1.5.0-rts] Emitted C/C++ ABI header: {}", h_path.display());
+                    println!("[rtsc 1.6.0-rts] Emitted C/C++ ABI header: {}", h_path.display());
                 } else if let Some(out_path) = &output {
                     let h_path = out_path.with_extension("h");
                     write_utf8_no_bom(&h_path, &header_code);
-                    println!("[rtsc 1.5.0-rts] Emitted C/C++ ABI header: {}", h_path.display());
+                    println!("[rtsc 1.6.0-rts] Emitted C/C++ ABI header: {}", h_path.display());
                 } else {
                     let h_path = PathBuf::from("build").join(format!("{}.h", stem));
                     write_utf8_no_bom(&h_path, &header_code);
-                    println!("[rtsc 1.5.0-rts] Emitted C/C++ ABI header: {}", h_path.display());
+                    println!("[rtsc 1.6.0-rts] Emitted C/C++ ABI header: {}", h_path.display());
                 }
             }
 
@@ -356,11 +357,11 @@ fn main() {
                 let ts_code = TsSdkCodegen::emit_typescript_sdk(&module);
                 if let Some(out_path) = output {
                     write_utf8_no_bom(&out_path, &ts_code);
-                    println!("[rtsc 1.5.0-rts] Emitted TypeScript SDK: {}", out_path.display());
+                    println!("[rtsc 1.6.0-rts] Emitted TypeScript SDK: {}", out_path.display());
                 } else if let Some(dir) = out_dir {
                     let p = dir.join(format!("{}_sdk.ts", stem));
                     write_utf8_no_bom(&p, &ts_code);
-                    println!("[rtsc 1.5.0-rts] Emitted TypeScript SDK: {}", p.display());
+                    println!("[rtsc 1.6.0-rts] Emitted TypeScript SDK: {}", p.display());
                 } else {
                     println!("{}", ts_code);
                 }
@@ -391,16 +392,16 @@ fn main() {
                         });
                         compile_c99_with_clang(&c_path, &bin_path, &include_dirs, &lib_dirs, &link_libs, debug_symbols);
                         println!(
-                            "[rtsc 1.5.0-rts] Compiled native AVX2 binary: {}",
+                            "[rtsc 1.6.0-rts] Compiled native AVX2 binary: {}",
                             bin_path.display()
                         );
                     } else if let Some(out_path) = output {
                         write_utf8_no_bom(&out_path, &c99_code);
-                        println!("[rtsc 1.5.0-rts] Emitted C99 source: {}", out_path.display());
+                        println!("[rtsc 1.6.0-rts] Emitted C99 source: {}", out_path.display());
                     } else if let Some(dir) = out_dir {
                         let p = dir.join(format!("{}.c", stem));
                         write_utf8_no_bom(&p, &c99_code);
-                        println!("[rtsc 1.5.0-rts] Emitted C99 source: {}", p.display());
+                        println!("[rtsc 1.6.0-rts] Emitted C99 source: {}", p.display());
                     } else {
                         println!("{}", c99_code);
                     }
@@ -418,7 +419,7 @@ fn main() {
                             write_utf8_no_bom(&h_path, &artifact.header_code);
                             write_utf8_no_bom(&cpp_path, &artifact.source_code);
                             println!(
-                                "[rtsc 1.5.0-rts] Emitted Unreal UHT files: {}, {}",
+                                "[rtsc 1.6.0-rts] Emitted Unreal UHT files: {}, {}",
                                 h_path.display(),
                                 cpp_path.display()
                             );
@@ -448,7 +449,7 @@ fn main() {
                         write_utf8_no_bom(&rs_path, &out.rust_ffi_code);
                         write_utf8_no_bom(&cs_path, &out.csharp_wrapper_code);
                         println!(
-                            "[rtsc 1.5.0-rts] Emitted Unity FFI files: {}, {}",
+                            "[rtsc 1.6.0-rts] Emitted Unity FFI files: {}, {}",
                             rs_path.display(),
                             cs_path.display()
                         );
@@ -457,9 +458,22 @@ fn main() {
                         println!("// === C# NATIVEARRAY WRAPPER ===\n{}", out.csharp_wrapper_code);
                     }
                 }
+                "mlir" => {
+                    let mlir_code = MlirCodegen::emit_mlir(&module);
+                    if let Some(out_path) = output {
+                        write_utf8_no_bom(&out_path, &mlir_code);
+                        println!("[rtsc 1.6.0-rts] Emitted MLIR SSA module: {}", out_path.display());
+                    } else if let Some(dir) = out_dir {
+                        let p = dir.join(format!("{}.mlir", stem));
+                        write_utf8_no_bom(&p, &mlir_code);
+                        println!("[rtsc 1.6.0-rts] Emitted MLIR SSA module: {}", p.display());
+                    } else {
+                        println!("{}", mlir_code);
+                    }
+                }
                 other => {
                     eprintln!(
-                        "Unsupported target '{}'. Valid targets: native, unreal, unity, ts-sdk",
+                        "Unsupported target '{}'. Valid targets: native, mlir, unreal, unity, ts-sdk",
                         other
                     );
                     process::exit(1);
