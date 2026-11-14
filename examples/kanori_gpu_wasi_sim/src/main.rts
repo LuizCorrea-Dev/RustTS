@@ -1,0 +1,22 @@
+module kanori.heterogeneous;
+import gpu_particles;
+import sandbox_agent;
+
+extern "C" fn puts(msg: string, io: cap StdIO) -> int;
+
+pub fn main() -> i32 {
+    let io: cap StdIO = StdIO::new();
+    let _h = self::puts("=== [KANORI v2.0.0-rts] Pipeline Heterogeneo (LLVM IR + GPU SPIR-V/WGSL + WASI Fuel) ===", io);
+
+    let dose_setor_a = self::calcular_dose_particula(420.0, 9.0, 0.25);
+    io::print_f32("[CPU/LLVM + GPU-SHARED] Dose calculada no Setor A (Sv/h): ", dose_setor_a);
+
+    let alerta_evacuacao = self::decidir_evacuacao_agente(dose_setor_a, 35.0, 6);
+    io::print_i32("[WASI-SANDBOX-FUEL] Codigo de decisao do agente (1=Evacuar, 0=Manter): ", alerta_evacuacao);
+
+    if alerta_evacuacao == 1 {
+        let _ok = self::puts("[KANORI-STATUS] Evacuacao autonoma acionada dentro do orcamento deterministico de Fuel!", io);
+    }
+
+    return 0;
+}

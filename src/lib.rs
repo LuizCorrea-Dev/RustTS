@@ -1510,4 +1510,55 @@ pub fn step_agent(clock: cap MonotonicClock) -> i32 {
         assert_eq!(&wasm[0..4], &[0x00, 0x61, 0x73, 0x6D]); // "\0asm"
         assert_eq!(&wasm[4..8], &[0x01, 0x00, 0x00, 0x00]); // version 1
     }
+
+    #[test]
+    fn test_v200_kanori_heterogeneous_cpu_llvm_gpu_wgsl_spirv_and_wasi_showcase() {
+        let entry_path = Path::new("examples/kanori_gpu_wasi_sim/src/main.rts");
+        let (module_opt, report) = compile_and_check_project(entry_path);
+        assert_eq!(report.status, "ok", "{}", report.to_human_terminal());
+        let module = module_opt.expect("Valid heterogeneous KANORI v2.0.0 module");
+
+        // 1. Native C99 + AVX2
+        let c99 = codegen_native::NativeCodegen::emit_c99(&module);
+        assert!(c99.contains("kanori_heterogeneous_calcular_dose_particula"));
+        assert!(c99.contains("kanori_heterogeneous_decidir_evacuacao_agente"));
+
+        // 2. MLIR SSA Dialect
+        let mlir = codegen_mlir::MlirCodegen::emit_mlir(&module);
+        assert!(mlir.contains("func.func public @kanori_heterogeneous_calcular_dose_particula"));
+        assert!(mlir.contains("func.func public @kanori_heterogeneous_step_radiation_field"));
+
+        // 3. Direct LLVM IR (.ll)
+        let llvm_ir = codegen_llvm::LlvmIrCodegen::emit_llvm_ir(&module);
+        assert!(llvm_ir.contains("%RadiationParticle_t = type { float, float, float, float, float }"));
+        assert!(llvm_ir.contains("define dso_local float @kanori_heterogeneous_calcular_dose_particula"));
+        assert!(llvm_ir.contains("define dso_local i32 @main()"));
+
+        // 4. WebGPU WGSL Compute Shader
+        let wgsl = codegen_gpu::GpuCodegen::emit_wgsl(&module);
+        assert!(wgsl.contains("@compute @workgroup_size(64, 1, 1)"));
+        assert!(wgsl.contains("fn step_radiation_field(@builtin(global_invocation_id) global_id: vec3<u32>)"));
+        assert!(wgsl.contains("var<storage, read_write> particles: array<RadiationParticle>;"));
+
+        // 5. Vulkan / DX12 SPIR-V 1.5 (.spvasm & .spv binary)
+        let spvasm = codegen_gpu::GpuCodegen::emit_spirv_asm(&module);
+        assert!(spvasm.contains("OpEntryPoint GLCompute %step_radiation_field"));
+        let spv_bin = codegen_gpu::GpuCodegen::emit_spirv_binary(&module);
+        assert_eq!(&spv_bin[0..4], &0x0723_0203u32.to_le_bytes());
+
+        // 6. WASI Deterministic Fuel-Metered Sandbox (.wat & .wasm binary)
+        let wat = codegen_wasi::WasiCodegen::emit_wat(&module, 75_000);
+        assert!(wat.contains("(global $__rts_fuel (mut i64) (i64.const 75000))"));
+        assert!(wat.contains("(func $decidir_evacuacao_agente (export \"decidir_evacuacao_agente\")"));
+        let wasm_bin = codegen_wasi::WasiCodegen::emit_wasm_binary(&module, 75_000);
+        assert_eq!(&wasm_bin[0..4], &[0x00, 0x61, 0x73, 0x6D]);
+    }
+
+    #[test]
+    fn test_v200_compiler_version_and_full_diagnostic_taxonomy_homologation() {
+        assert_eq!(diagnostics::COMPILER_VERSION, "2.0.0-rts");
+        let ok_report = diagnostics::CompilerDiagnosticsReport::ok();
+        assert_eq!(ok_report.compiler_version, "2.0.0-rts");
+        assert_eq!(ok_report.status, "ok");
+    }
 }

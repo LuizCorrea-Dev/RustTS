@@ -258,15 +258,16 @@ Quando um agente de IA tenta violar uma regra de memória ou permissão de hardw
 
 ## Estrutura do Repositório e Documentação
 
-* [`INSTALACAO_E_USO.md`](./INSTALACAO_E_USO.md) — **Guia Oficial de Instalação e Uso (`v1.5.0-rts`):** Instalação, build via Cargo, manual da CLI `rtsc`, exemplos e solução de problemas.
-* [`INICIANDO_UM_PROJETO.md`](./INICIANDO_UM_PROJETO.md) — **Tutorial: Iniciando um Projeto com RustTS (`v1.5.0-rts`):** Ergonomia TypeScript/C (`int`, `uint`, `byte`, `float`, `number`, `boolean`, `string` + inferência no `let`), `rtsc init`, `pub fn main()`, `rtsc run [-g]`, `import`, FFI e `--emit-header`.
-* [`MANUAL_TIPOS_RUSTTS.md`](./MANUAL_TIPOS_RUSTTS.md) — **Manual Oficial de Tipos, Capacidades e Memória (`v1.5.0-rts`):** Referência completa dos 14 tipos escalares e seus aliases (TS / C / C# / Unreal Engine 5), inferência `let`, tipos SIMD, coleções `[T; N]`, tipos algébricos e tokens `cap`.
-* [`Guia_Interativo_e_Documentacao_RustTS.html`](./Guia_Interativo_e_Documentacao_RustTS.html) — **Guia Interativo & Documentação HTML:** Dashboard interativo com documentação completa da linguagem e Cheat Sheet (`v1.5.0-rts`).
+* [`INSTALACAO_E_USO.md`](./INSTALACAO_E_USO.md) — **Guia Oficial de Instalação e Uso (`v2.0.0-rts`):** Instalação, build via Cargo, manual da CLI `rtsc`, backends MLIR/LLVM/SPIR-V/WGSL/WASI, exemplos e solução de problemas.
+* [`INICIANDO_UM_PROJETO.md`](./INICIANDO_UM_PROJETO.md) — **Tutorial: Iniciando um Projeto com RustTS (`v2.0.0-rts`):** Ergonomia TypeScript/C, `rtsc init`, `pub fn main()`, `rtsc run [--llvm] [-g]`, `@gpu_kernel` (SPIR-V/WGSL), sandbox WASI (`--fuel-limit`), `import`, FFI e `--emit-header`.
+* [`MANUAL_TIPOS_RUSTTS.md`](./MANUAL_TIPOS_RUSTTS.md) — **Manual Oficial de Tipos, Capacidades e Memória (`v2.0.0-rts`):** Referência completa dos 14 tipos escalares e seus aliases (TS / C / C# / Unreal Engine 5), inferência `let`, tipos SIMD, coleções `[T; N]`, tipos algébricos e tokens `cap`.
+* [`Guia_Interativo_e_Documentacao_RustTS.html`](./Guia_Interativo_e_Documentacao_RustTS.html) — **Guia Interativo & Documentação HTML:** Dashboard interativo com documentação completa da linguagem e Cheat Sheet (`v2.0.0-rts`).
 * [`CONTRIBUTING.md`](./CONTRIBUTING.md) — **Guia de Contribuição:** Mapa do compilador (`src/`), padrões de código, suíte `cargo test` e checklist para Pull Requests.
-* [`devlog.md`](./devlog.md) — **Devlog & Cronologia (`v0.1.0-rts` → `v1.5.0-rts`):** Histórico técnico completo de versões, auditorias, suíte `cargo test` (`23/23`) e benchmarks AVX2/SoA.
+* [`devlog.md`](./devlog.md) — **Devlog & Cronologia (`v0.1.0-rts` → `v2.0.0-rts`):** Histórico técnico completo de versões, auditorias, suíte `cargo test` (`35/35`) e benchmarks AVX2/SoA.
 * [`RustTS_guia.md`](./RustTS_guia.md) — **Matriz de Escopo Operacional e Domínios:** Regras de aplicação Tier 1 / Tier 2 / Tier 0 e integração com TypeScript SDK.
-* [`editors/vscode-rustts/`](./editors/vscode-rustts/package.json) — **Extensão Oficial VS Code / Antigravity IDE:** Syntax highlighting TextMate, snippets e pacote `.vsix` para arquivos `.rts`.
-* [`examples/kanori_zone_sim/`](./examples/kanori_zone_sim/src/main.rts) — **Showcase Multi-Arquivo KANORI:** Projeto integrado com `import`, `impl Struct`, `core.math`, `Option<T>`, `extern "C"` e `rtsc run -g`.
+* [`editors/vscode-rustts/`](./editors/vscode-rustts/package.json) — **Extensão Oficial VS Code / Antigravity IDE (`v2.0.0`):** Syntax highlighting TextMate, snippets (incluindo `gpukernel`) e pacote `editors/rustts-lang-2.0.0.vsix` para arquivos `.rts`.
+* [`examples/kanori_zone_sim/`](./examples/kanori_zone_sim/src/main.rts) — **Showcase Multi-Arquivo KANORI (`v1.5.0`):** Projeto integrado com `import`, `impl Struct`, `core.math`, `Option<T>`, `extern "C"` e `rtsc run -g`.
+* [`examples/kanori_gpu_wasi_sim/`](./examples/kanori_gpu_wasi_sim/src/main.rts) — **Showcase Heterogêneo KANORI (`v2.0.0`):** Pipeline unificado CPU (`--target llvm-ir`) + GPU Compute (`@gpu_kernel` $\rightarrow$ `spirv`/`wgsl`) + Sandbox WASI com *Fuel Metering* (`--target wasi --fuel-limit 100000`).
 * [`agenteRTS.md`](./agenteRTS.md) — **System Prompt do Agente Especialista:** Configuração de contexto para transformar LLMs em engenheiros de compiladores (`COMPILER-DEV`) e programadores nativos RustTS (`RTS-CODER`).
 ---
 
@@ -277,8 +278,11 @@ Quando um agente de IA tenta violar uma regra de memória ou permissão de hardw
 - [x] **Fase 3 (`v1.2.0-rts`):** Projetos multi-arquivo (`import` recursivo com detecção de ciclos e `RTS-E0102`), forward declarations C99, `Option<T>`, arrays `[T; N]` e `break`/`continue`.
 - [x] **Fase 4 (`v1.3.0-rts`):** FFI `extern "C" fn` blindado por `cap` com remoção zero-overhead, blocos `impl Struct`, biblioteca matemática `core.math` e flags `-l`, `-L`, `-I`.
 - [x] **Fase 5 (`v1.4.0-rts`):** Diretivas `#line` + flag `-g`/`--debug`, exportação de header C/C++ (`--emit-header`), extensão VS Code e showcase multi-arquivo `examples/kanori_zone_sim/`.
-- [x] **Fase 6 (`v1.5.0-rts`):** Ergonomia TypeScript/C com inferência completa de tipos no `let` e aliases de tipos de largura fixa (`int`, `uint`, `byte`, `float`, `number`, `boolean`, `string`) (`cargo test` **23/23 PASS**).
-- [ ] **Próxima Fronteira (`v2.0+`):** Backend direto MLIR/LLVM, SPIR-V para shaders GPU e sandbox WASI com *Fuel Metering*.
+- [x] **Fase 5.1 (`v1.5.0-rts`):** Ergonomia TypeScript/C com inferência completa de tipos no `let` e família completa de aliases para os 14 tipos escalares (`int8..int64`, `uint8..uint64`, `int`, `uint`, `byte`, `float`, `double`, `number`, `boolean`, `string`).
+- [x] **Fase 6 (`v1.6.0-rts`):** Backend intermediário MLIR SSA (`--target=mlir`: dialetos `func`, `scf`, `memref`, `arith`, `vector` com metadados `rts.cap` e `llvm.noalias`).
+- [x] **Fase 7 (`v1.7.0-rts`):** Backend direto LLVM IR (`.ll`) e compilação nativa sem C99 (`--target=llvm-ir --bin` e `rtsc run --llvm` via `clang -x ir -O3 -mavx2 -mfma`).
+- [x] **Fase 8 (`v1.8.0-rts`):** Backend GPU Compute (`@gpu_kernel` e `@shader_shared`) compilando diretamente para WebGPU (`--target=wgsl`) e Vulkan/DX12 SPIR-V 1.5 (`--target=spirv` `.spvasm` e binário `.spv` magic `0x07230203`), com verificação estática `RTS-E0601`–`E0603`.
+- [x] **Fase 9 & 10 (`v1.9.0-rts` → `v2.0.0-rts`):** Sandbox WASI determinística (`.wat` e binário `.wasm` magic `\0asm`) com *Fuel Metering* automático (`--fuel-limit <N>` + `RTS-E0701`) e showcase heterogêneo `examples/kanori_gpu_wasi_sim/` (`cargo test` **35/35 PASS**).
 
 ---
 

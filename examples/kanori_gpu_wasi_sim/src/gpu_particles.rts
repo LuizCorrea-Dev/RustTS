@@ -1,0 +1,32 @@
+module kanori.gpu_particles;
+
+@shader_shared
+struct RadiationParticle {
+    pos_x: f32,
+    pos_y: f32,
+    vel_x: f32,
+    vel_y: f32,
+    flux_sv: f32
+}
+
+@sealed_sig
+pub fn calcular_dose_particula(flux_base: float, distancia: float, aten: float) -> float {
+    let dist_segura = math::clamp(distancia, 1.0, 500.0);
+    let decaimento = math::sqrt(dist_segura) * aten;
+    let t = math::clamp(1.0 / (1.0 + decaimento), 0.0, 1.0);
+    return math::lerp(0.0, flux_base, t);
+}
+
+@gpu_kernel
+pub fn step_radiation_field(
+    particles: cap MutColumn<RadiationParticle>,
+    dt: cap TimeStep
+) {
+    let dt_val: f32 = dt.fixed_delta;
+    let count: usize = particles.len();
+    for i in 0..count {
+        particles[i].pos_x = particles[i].pos_x + particles[i].vel_x * dt_val;
+        particles[i].pos_y = particles[i].pos_y + particles[i].vel_y * dt_val;
+        particles[i].flux_sv = math::lerp(particles[i].flux_sv, 0.0, dt_val * 0.05);
+    }
+}

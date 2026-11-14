@@ -458,3 +458,18 @@ Primeira etapa da Próxima Fronteira (`v2.0+`), adicionando geração direta de 
 ### Validação (`v1.9.0-rts`)
 - **`cargo test`:** **33/33** testes unitários aprovados (`test_v190_wasi_sema_rts_e0701_blocks_open_sig_and_hardware_caps_in_sandbox`, `test_v190_wasi_wat_codegen_fuel_metering_on_fn_and_loops`, `test_v190_wasm_binary_magic_header_and_leb128_sections`).
 - **Instalação Global:** `cargo install --path .` concluído com `rtsc --version` reportando **`rtsc 1.9.0-rts`**.
+
+---
+
+## Etapa 22 — Fase 10 do Ciclo 2 (`v2.0.0-rts` — 100% da Régua v2.0): Pipeline Heterogêneo Unificado (CPU LLVM IR + GPU SPIR-V/WGSL + Sandbox WASI Fuel) & Release `v2.0.0`
+
+### O que foi implementado
+1. **Showcase Multi-Arquivo Heterogêneo (`examples/kanori_gpu_wasi_sim/`):**
+   - `src/gpu_particles.rts`: Declara `@shader_shared struct RadiationParticle`, `@gpu_kernel pub fn step_radiation_field` (compilável para WebGPU `.wgsl` e Vulkan/DX12 `.spvasm`/`.spv`) e a função determinística compartilhada `calcular_dose_particula`.
+   - `src/sandbox_agent.rts`: Declara `module sandbox.kanori_agent;` com `@sealed_sig pub fn decidir_evacuacao_agente` instrumentada com *Fuel Metering* determinístico (compilável para `.wat` e `.wasm`).
+   - `src/main.rts`: Orquestra e executa a simulação completa diretamente via backend LLVM IR (`rtsc run examples/kanori_gpu_wasi_sim/src/main.rts --llvm`).
+2. **Suíte Completa de Homologação `v2.0.0-rts` (`35/35` Testes Unitários em `src/lib.rs`):**
+   - `test_v200_kanori_heterogeneous_cpu_llvm_gpu_wgsl_spirv_and_wasi_showcase`: Valida a compilação unificada do showcase heterogêneo nos 6 backends (`C99`, `MLIR`, `LLVM IR .ll`, `WebGPU WGSL`, `Vulkan SPIR-V 1.5` e `WASI Fuel-Metered .wat/.wasm`).
+   - `test_v200_compiler_version_and_full_diagnostic_taxonomy_homologation`: Homologa a versão `2.0.0-rts` e o protocolo JSON de diagnósticos.
+3. **Extensão Oficial `editors/rustts-lang-2.0.0.vsix`, Manuais Atualizados e Release `v2.0.0`:**
+   - Atualização de `README.md`, `INSTALACAO_E_USO.md`, `INICIANDO_UM_PROJETO.md`, `MANUAL_TIPOS_RUSTTS.md`, `editors/vscode-rustts/` (`v2.0.0`) e `RELEASE_NOTES_v2.0.0.md`.

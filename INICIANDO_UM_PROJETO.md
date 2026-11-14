@@ -2,9 +2,9 @@
   <img src="./rustts_language_logo.png" alt="RustTS Logo" width="220">
 </p>
 
-# Como Iniciar um Projeto com RustTS (`v1.5.0-rts`)
+# Como Iniciar um Projeto com RustTS (`v2.0.0-rts`)
 
-Na versão **`v1.5.0-rts`**, a RustTS une a **ergonomia e fluidez do TypeScript e C** com a **segurança determinística e performance AVX2 do Rust e C99**:
+Na versão **`v2.0.0-rts`**, a RustTS une a **ergonomia e fluidez do TypeScript e C** com a **segurança determinística e performance AVX2 do Rust e C99**:
 - **Inferência de Tipos Completa no `let`:** Você não precisa anotar `: f32` ou `: u32` em toda variável local (`let velocidade = 12.5;`, `let contador = 0;`, `let ativo = true;`, `let pos = vec3(1.0, 2.0, 3.0);`).
 - **Dois Estilos de Tipos de Largura Fixa (Zero Ambiguidade):** Você pode usar os nomes amigáveis do TypeScript/C (`int`, `uint`, `byte`, `float`, `number`, `boolean`, `string`) **ou** os tipos explícitos de hardware (`i8..i64`, `u8..u64`, `f32`, `f64`, `bool`, `str`). Ambos compilam para exatamente os mesmos registradores C99 (`int32_t`, `uint32_t`, `uint8_t`, `float`, `bool`, `const char*`) com **zero overhead**.
 
@@ -78,12 +78,12 @@ pub fn demonstrar_todos_os_aliases(
 1. Confirme no terminal que o compilador `rtsc` está atualizado:
    ```bash
    rtsc --version
-   # Saída esperada: rtsc 1.5.0-rts
+   # Saída esperada: rtsc 2.0.0-rts
    ```
    *(Se precisar instalar ou atualizar, veja [INSTALACAO_E_USO.md](./INSTALACAO_E_USO.md)).*
 
 2. **Ative o Realce de Sintaxe e Snippets no VS Code ou Antigravity IDE:**
-   - **Pacote VSIX pronto para VS Code e Antigravity IDE:** [`editors/rustts-lang-1.5.0.vsix`](./editors/rustts-lang-1.5.0.vsix) — abra o editor e pressione **`Ctrl + Shift + P`** → **`Extensions: Install from VSIX...`** (ou **`Developer: Install Extension from Location...`** selecionando a pasta [`editors/vscode-rustts`](./editors/vscode-rustts)).
+   - **Pacote VSIX pronto para VS Code e Antigravity IDE:** [`editors/rustts-lang-2.0.0.vsix`](./editors/rustts-lang-2.0.0.vsix) — abra o editor e pressione **`Ctrl + Shift + P`** → **`Extensions: Install from VSIX...`** (ou **`Developer: Install Extension from Location...`** selecionando a pasta [`editors/vscode-rustts`](./editors/vscode-rustts)).
    - *(**Importante:** não dê duplo-clique no arquivo `.vsix` pelo Windows Explorer para evitar que o instalador do Visual Studio C++ intercepte o pacote).*
 
 ---
@@ -101,7 +101,7 @@ Isso gera automaticamente (em UTF-8 puro sem BOM):
 
 ```text
 meu_jogo/
-├── rts.toml          # Manifesto do projeto (compiler = "1.5.0-rts", target = "native")
+├── rts.toml          # Manifesto do projeto (compiler = "2.0.0-rts", target = "native")
 ├── .gitignore        # Ignora /build/ e binários nativos (*.exe, *.pdb, *.obj, *.o)
 ├── src/
 │   └── main.rts      # Ponto de entrada executável com `pub fn main() -> int`

@@ -33,5 +33,30 @@
             "extern \"C\" fn ${1:c_function}(${2:arg}: ${3:i32}, ${4:guard}: cap ${5:StdIO}) -> ${6:i32};"
         ],
         "description": "Declara uma função FFI C-ABI protegida por capacidade"
+    },
+    "RustTS GPU Compute Kernel": {
+        "prefix": "gpukernel",
+        "body": [
+            "@shader_shared",
+            "struct ${1:Particle} {",
+            "    pos_x: f32,",
+            "    pos_y: f32,",
+            "    vel_x: f32,",
+            "    vel_y: f32,",
+            "}",
+            "",
+            "@gpu_kernel",
+            "pub fn ${2:step_particles}(",
+            "    ${3:buf}: cap MutColumn<${1:Particle}>,",
+            "    dt: cap TimeStep",
+            ") {",
+            "    let dt_val: f32 = dt.fixed_delta;",
+            "    let count: usize = ${3:buf}.len();",
+            "    for i in 0..count {",
+            "        $0",
+            "    }",
+            "}"
+        ],
+        "description": "Cria um Compute Kernel @gpu_kernel (SPIR-V 1.5 / WebGPU WGSL)"
     }
 }
