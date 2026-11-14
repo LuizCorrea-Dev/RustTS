@@ -260,6 +260,7 @@ Quando um agente de IA tenta violar uma regra de memória ou permissão de hardw
 
 * [`INSTALACAO_E_USO.md`](./INSTALACAO_E_USO.md) — **Guia Oficial de Instalação e Uso (`v1.5.0-rts`):** Instalação, build via Cargo, manual da CLI `rtsc`, exemplos e solução de problemas.
 * [`INICIANDO_UM_PROJETO.md`](./INICIANDO_UM_PROJETO.md) — **Tutorial: Iniciando um Projeto com RustTS (`v1.5.0-rts`):** Ergonomia TypeScript/C (`int`, `uint`, `byte`, `float`, `number`, `boolean`, `string` + inferência no `let`), `rtsc init`, `pub fn main()`, `rtsc run [-g]`, `import`, FFI e `--emit-header`.
+* [`MANUAL_TIPOS_RUSTTS.md`](./MANUAL_TIPOS_RUSTTS.md) — **Manual Oficial de Tipos, Capacidades e Memória (`v1.5.0-rts`):** Referência completa dos 14 tipos escalares e seus aliases (TS / C / C# / Unreal Engine 5), inferência `let`, tipos SIMD, coleções `[T; N]`, tipos algébricos e tokens `cap`.
 * [`Guia_Interativo_e_Documentacao_RustTS.html`](./Guia_Interativo_e_Documentacao_RustTS.html) — **Guia Interativo & Documentação HTML:** Dashboard interativo com documentação completa da linguagem e Cheat Sheet (`v1.5.0-rts`).
 * [`CONTRIBUTING.md`](./CONTRIBUTING.md) — **Guia de Contribuição:** Mapa do compilador (`src/`), padrões de código, suíte `cargo test` e checklist para Pull Requests.
 * [`devlog.md`](./devlog.md) — **Devlog & Cronologia (`v0.1.0-rts` → `v1.5.0-rts`):** Histórico técnico completo de versões, auditorias, suíte `cargo test` (`23/23`) e benchmarks AVX2/SoA.
