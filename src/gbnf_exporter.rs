@@ -62,7 +62,13 @@ type-expr       ::= primitive-type
 primitive-type  ::= "i8" | "i16" | "i32" | "i64"
                   | "u8" | "u16" | "u32" | "u64" | "usize"
                   | "f32" | "f64" | "fix32" | "bool" | "str"
-                  | "int" | "uint" | "byte" | "float" | "number" | "boolean" | "string"
+                  | "int8" | "int16" | "int32" | "int64"
+                  | "uint8" | "uint16" | "uint32" | "uint64"
+                  | "sbyte" | "short" | "int" | "long"
+                  | "byte" | "ushort" | "uint" | "ulong"
+                  | "size_t" | "uintptr"
+                  | "float32" | "float64" | "float" | "double" | "number"
+                  | "fixed32" | "boolean" | "string"
 
 math-type       ::= "vec2" | "vec3" | "vec4" | "quat" | "mat3" | "mat4"
 

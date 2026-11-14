@@ -10,21 +10,66 @@ Na versão **`v1.5.0-rts`**, a RustTS une a **ergonomia e fluidez do TypeScript 
 
 ---
 
-## Tabela Rápida de Tipos: Estilo TypeScript/C vs. Estilo Hardware
+## Tabela Rápida de Tipos: Todos os 14 Tipos Escalares com Aliases TS / C / C# / Unreal
 
-Use o estilo que for mais confortável para a sua equipe (ou misture ambos livremente no mesmo arquivo):
+Use o estilo que for mais confortável para a sua equipe (ou misture ambos livremente no mesmo arquivo — todos compilam com custo zero na AST via DFA do lexer):
 
-| O que você quer representar | Estilo Amigável (TypeScript / C) | Estilo Explícito (Rust / Hardware) | Tipo C99 Gerado (`codegen_native`) | Exemplo de Inferência Automática (`let`) |
-| :--- | :--- | :--- | :--- | :--- |
-| **Inteiro com sinal (32-bit)** | `int` | `i32` | `int32_t` | `let delta = -10;` |
-| **Inteiro sem sinal (32-bit)** | `uint` | `u32` | `uint32_t` | `let id = 42;` |
-| **Byte / Registrador (8-bit)** | `byte` | `u8` | `uint8_t` | `let reg: byte = 0x48;` |
-| **Ponto Flutuante SIMD (32-bit)** | `float` ou `number` | `f32` | `float` | `let temp = 36.5;` |
-| **Ponto Flutuante Duplo (64-bit)** | `f64` | `f64` | `double` | `let preciso: f64 = 3.1415926535;` |
-| **Booleano Lógico** | `boolean` | `bool` | `bool` | `let online = true;` |
-| **Texto Imutável** | `string` | `str` | `const char*` | `let tag = "SENSOR-01";` |
-| **Vetores e Quaternions SIMD** | `vec2`, `vec3`, `vec4`, `quat` | `vec2`, `vec3`, `vec4`, `quat` | `rts_vec3_t` (ou lanes SoA) | `let pos = vec3(1.0, 2.0, 3.0);` |
-| **Array de Tamanho Fixo na Stack** | `[float; 4]` ou `[number; 4]` | `[f32; 4]` | `float nome[4]` | `let pesos = [1.0, 2.0, 3.0, 4.0];` |
+| Tipo Canônico | Aliases TS / C / C# / UE5 | C99 Nativo (`codegen_native`) | Unreal C++ (`codegen_unreal`) | TypeScript SDK (`codegen_ts_sdk`) | Exemplo de Inferência ou Declaração (`let`) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **`i8`** | `int8`, `sbyte` | `int8_t` | `int32` | `number` | `let delta_curto: int8 = -10;` |
+| **`i16`** | `int16`, `short` | `int16_t` | `int32` | `number` | `let offset_mapa: int16 = -512;` |
+| **`i32`** | `int`, `int32` | `int32_t` | `int32` | `number` | `let delta = -10;` |
+| **`i64`** | `int64`, `long` | `int64_t` | `int64` | `string` | `let timestamp_epoch: int64 = 1700000000;` |
+| **`u8`** | `byte`, `uint8` | `uint8_t` | `uint8` | `number` | `let reg: byte = 0x48;` |
+| **`u16`** | `uint16`, `ushort` | `uint16_t` | `uint16` | `number` | `let adc: uint16 = 4095;` |
+| **`u32`** | `uint`, `uint32` | `uint32_t` | `uint32` | `number` | `let id = 42;` |
+| **`u64`** | `uint64`, `ulong` | `uint64_t` | `uint64` | `string` | `let steam_id: uint64 = 76561198000000000;` |
+| **`usize`** | `size_t`, `uintptr` | `size_t` | `int32` | `string` | `let indice_buffer: size_t = 0;` |
+| **`f32`** | `number`, `float`, `float32` | `float` | `float` | `number` | `let temp = 36.5;` |
+| **`f64`** | `double`, `float64` | `double` | `double` | `number` | `let preciso: double = 3.1415926535;` |
+| **`fix32`** | `fixed32` | `int32_t` | `int32` | `number` | `let fisica_rede: fixed32 = 1024;` |
+| **`bool`** | `boolean` | `bool` | `bool` | `boolean` | `let online = true;` |
+| **`str`** | `string` | `const char*` | `FString` | `string` | `let tag = "SENSOR-01";` |
+| **Vetores SIMD** | `vec2`, `vec3`, `vec4`, `quat` | `rts_vec3_t` (ou lanes SoA) | `FVector` / `FQuat` | `readonly number[]` | `let pos = vec3(1.0, 2.0, 3.0);` |
+| **Array Fixo** | `[float; 4]`, `[number; 4]` | `float nome[4]` | `float[4]` | `readonly number[]` | `let pesos = [1.0, 2.0, 3.0, 4.0];` |
+
+### Exemplo Prático Completo com Todos os Aliases Escalares
+
+```rust
+module manual.escalares_completos;
+import core.io;
+
+pub fn demonstrar_todos_os_aliases(
+    pino: uint8,
+    leitura_adc: uint16,
+    cliques: uint32,
+    steam_id: uint64,
+    io: cap StdIO
+) -> int32 {
+    // 1. Inteiros com sinal (Aliases C / Unreal / C#)
+    let delta_curto: int8 = -10;
+    let offset_mapa: int16 = -512;
+    let saldo_conta: int32 = -42;
+    let timestamp_epoch: int64 = 1700000000;
+
+    // 2. Inteiros de ponteiro, ponto flutuante e ponto fixo
+    let indice_buffer: size_t = 0;
+    let velocidade_ar: float32 = 343.2;
+    let precisao_orbital: float64 = 0.000000125;
+    let fisica_rede: fixed32 = 1024;
+
+    // 3. Booleano e Texto (Aliases TypeScript)
+    let sensor_online: boolean = true;
+    let mensagem: string = "Telemetria Validada: ";
+
+    if sensor_online && pino > 0 && indice_buffer == 0 && steam_id > 0 {
+        let total = (leitura_adc as float32) + velocidade_ar + (precisao_orbital as float32);
+        io::print_f32(mensagem, total);
+        return saldo_conta + (delta_curto as int32) + (offset_mapa as int32) + (cliques as int32) + (timestamp_epoch as int32) + fisica_rede;
+    }
+    return 0;
+}
+```
 
 ---
 

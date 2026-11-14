@@ -118,35 +118,54 @@ pub enum TokenKind {
     #[token("None")]
     KwNone,
 
-    // Tipos Primitivos Escalares + Aliases Ergonômicos (TypeScript / C)
+    // Tipos Primitivos Escalares + Família Completa de Aliases (TypeScript / C / C# / Unreal)
     #[token("i8")]
+    #[token("int8")]
+    #[token("sbyte")]
     TyI8,
     #[token("i16")]
+    #[token("int16")]
+    #[token("short")]
     TyI16,
     #[token("i32")]
+    #[token("int32")]
     #[token("int")]
     TyI32,
     #[token("i64")]
+    #[token("int64")]
+    #[token("long")]
     TyI64,
     #[token("u8")]
+    #[token("uint8")]
     #[token("byte")]
     TyU8,
     #[token("u16")]
+    #[token("uint16")]
+    #[token("ushort")]
     TyU16,
     #[token("u32")]
+    #[token("uint32")]
     #[token("uint")]
     TyU32,
     #[token("u64")]
+    #[token("uint64")]
+    #[token("ulong")]
     TyU64,
     #[token("usize")]
+    #[token("size_t")]
+    #[token("uintptr")]
     TyUsize,
     #[token("f32")]
+    #[token("float32")]
     #[token("float")]
     #[token("number")]
     TyF32,
     #[token("f64")]
+    #[token("float64")]
+    #[token("double")]
     TyF64,
     #[token("fix32")]
+    #[token("fixed32")]
     TyFix32,
     #[token("bool")]
     #[token("boolean")]

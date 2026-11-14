@@ -370,7 +370,7 @@ Refinamento ergonômico unindo a fluidez de escrita do TypeScript e C à seguran
 
 ### Evoluções Implementadas
 1. **Aliases de Tipos Primitivos Custo-Zero na AST ([src/lexer.rs](src/lexer.rs), [src/gbnf_exporter.rs](src/gbnf_exporter.rs), [editors/vscode-rustts/syntaxes/rustts.tmLanguage.json](editors/vscode-rustts/syntaxes/rustts.tmLanguage.json)):**
-   - Adicionados `#[token("int")]` em `TyI32`, `#[token("uint")]` em `TyU32`, `#[token("byte")]` em `TyU8`, `#[token("float")]` e `#[token("number")]` em `TyF32`, `#[token("boolean")]` em `TyBool` e `#[token("string")]` em `TyStr`, mapeando diretamente para os nós `TypeExpr::Primitive(...)` canônicos.
+   - Cobertura completa para os 14 tipos escalares em estilo TypeScript / C / C# / Unreal Engine 5: `int8`/`sbyte` (`TyI8`), `int16`/`short` (`TyI16`), `int`/`int32` (`TyI32`), `int64`/`long` (`TyI64`), `byte`/`uint8` (`TyU8`), `uint16`/`ushort` (`TyU16`), `uint`/`uint32` (`TyU32`), `uint64`/`ulong` (`TyU64`), `size_t`/`uintptr` (`TyUsize`), `number`/`float`/`float32` (`TyF32`), `double`/`float64` (`TyF64`), `fixed32` (`TyFix32`), `boolean` (`TyBool`) e `string` (`TyStr`).
 2. **Inferência de Inteiros Negativos e Construtores Vetoriais ([src/parser.rs](src/parser.rs), [src/sema.rs](src/sema.rs)):**
    - `Expr::Unary` com `UnaryOp::Neg` sobre `Expr::IntLit` infere `PrimitiveType::I32` (`int32_t`).
    - Suporte a construtores diretos `vec2(...)`, `vec3(...)`, `vec4(...)` e `quat(...)` em expressões primárias e inferência semântica.

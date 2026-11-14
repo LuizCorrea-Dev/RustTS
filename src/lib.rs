@@ -1015,6 +1015,7 @@ fn privada(x: i32) -> i32 {
     fn test_v150_typescript_ergonomics_type_aliases_and_let_inference() {
         let src = r#"
 module teste.ergonomia_ts;
+import core.io;
 
 @component
 struct Telemetria {
@@ -1041,6 +1042,42 @@ impl Telemetria {
     pub fn ler_temperatura(self: Telemetria) -> number {
         return self.temperatura;
     }
+}
+
+pub fn demonstrar_todos_os_aliases(
+    pino: uint8,
+    leitura_adc: uint16,
+    cliques: uint32,
+    steam_id: uint64,
+    io: cap StdIO
+) -> int32 {
+    let delta_curto: int8 = -10;
+    let offset_mapa: int16 = -512;
+    let saldo_conta: int32 = -42;
+    let timestamp_epoch: int64 = 1700000000;
+
+    let alt_sbyte: sbyte = -1;
+    let alt_short: short = -2;
+    let alt_ushort: ushort = 100;
+    let alt_long: long = 1000;
+    let alt_ulong: ulong = 2000;
+    let alt_uintptr: uintptr = 0;
+
+    let indice_buffer: size_t = 0;
+    let velocidade_ar: float32 = 343.2;
+    let precisao_orbital: float64 = 0.000000125;
+    let alt_double: double = 1.5;
+    let fisica_rede: fixed32 = 1024;
+
+    let sensor_online: boolean = true;
+    let mensagem: string = "Telemetria Validada: ";
+
+    if sensor_online && pino > 0 && indice_buffer == 0 && steam_id > 0 && alt_uintptr == 0 && alt_ulong > 0 {
+        let total = (leitura_adc as float32) + velocidade_ar + (precisao_orbital as float32) + (alt_double as float32);
+        io::print_f32(mensagem, total);
+        return saldo_conta + (delta_curto as int32) + (offset_mapa as int32) + (cliques as int32) + (timestamp_epoch as int32) + (alt_sbyte as int32) + (alt_short as int32) + (alt_ushort as int32) + (alt_long as int32) + fisica_rede;
+    }
+    return 0;
 }
 
 @sealed_sig
@@ -1080,5 +1117,10 @@ pub fn main() -> int {
         assert!(c99.contains("Telemetria_t tele = teste_ergonomia_ts_criar("));
         assert!(c99.contains("float temp_atual = teste_ergonomia_ts_ler_temperatura(tele);"));
         assert!(c99.contains("uint32_t id_sensor = tele.id;"));
+        assert!(c99.contains("int8_t delta_curto = (-10);"));
+        assert!(c99.contains("int16_t offset_mapa = (-512);"));
+        assert!(c99.contains("int64_t timestamp_epoch = 1700000000u;"));
+        assert!(c99.contains("size_t indice_buffer = 0u;"));
+        assert!(c99.contains("double precisao_orbital = "));
     }
 }
