@@ -1844,7 +1844,13 @@ impl SemanticAnalyzer {
             Expr::Cast { target_type, .. } => Some(target_type.clone()),
             Expr::Unary { op, expr: inner, .. } => match op {
                 UnaryOp::Not => Some(TypeExpr::Primitive(PrimitiveType::Bool)),
-                UnaryOp::Neg => self.infer_expr_type(env, sym_table, inner),
+                UnaryOp::Neg => {
+                    if matches!(inner.as_ref(), Expr::IntLit(_, _)) {
+                        Some(TypeExpr::Primitive(PrimitiveType::I32))
+                    } else {
+                        self.infer_expr_type(env, sym_table, inner)
+                    }
+                }
             },
             Expr::TryOp { expr: inner, .. } => {
                 let core = match inner.as_ref() {
@@ -1948,6 +1954,15 @@ impl SemanticAnalyzer {
                         name: "Entity".to_string(),
                         generics: vec![],
                     })));
+                }
+                if namespace == "self" {
+                    match called_fn.as_str() {
+                        "vec2" => return Some(TypeExpr::Math(MathType::Vec2)),
+                        "vec3" => return Some(TypeExpr::Math(MathType::Vec3)),
+                        "vec4" => return Some(TypeExpr::Math(MathType::Vec4)),
+                        "quat" => return Some(TypeExpr::Math(MathType::Quat)),
+                        _ => {}
+                    }
                 }
                 let qualified_key = if namespace == "self" {
                     called_fn.clone()

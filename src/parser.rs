@@ -977,6 +977,18 @@ impl Parser {
                 payload: None,
                 span: tok.span,
             }),
+            TokenKind::TyVec2 | TokenKind::TyVec3 | TokenKind::TyVec4 | TokenKind::TyQuat => {
+                let func = tok.lexeme.clone();
+                self.expect(&TokenKind::LParen)?;
+                let args = self.parse_arg_list()?;
+                let end = self.expect(&TokenKind::RParen)?.span;
+                Ok(Expr::StaticCall {
+                    namespace: "self".to_string(),
+                    func,
+                    args,
+                    span: tok.span.merge(end),
+                })
+            }
             TokenKind::TyHandle => {
                 self.expect(&TokenKind::ColonColon)?;
                 let func = self.expect_ident()?;

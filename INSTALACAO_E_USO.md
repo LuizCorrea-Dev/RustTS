@@ -2,7 +2,7 @@
   <img src="./rustts_language_logo.png" alt="RustTS Logo" width="220">
 </p>
 
-# Guia Oficial de Instalação e Uso — RustTS (`rtsc v1.4.0-rts`)
+# Guia Oficial de Instalação e Uso — RustTS (`rtsc v1.5.0-rts`)
 
 Bem-vindo ao **RustTS (`.rts`)**, o compilador determinístico de sistemas, motores em tempo real e controle físico de hardware baseado em **Capacidades (`cap`)**, **Arenas Escopadas ($O(1)$)** e geração nativa **SoA/AVX2**.
 
@@ -28,7 +28,7 @@ curl -fsSL https://raw.githubusercontent.com/LuizCorrea-Dev/RustTS/main/scripts/
 export PATH="$HOME/.rtsc/bin:$PATH"
 ```
 
-### B. Compilando a Partir do Código-Fonte (`v1.4.0-rts`)
+### B. Compilando a Partir do Código-Fonte (`v1.5.0-rts`)
 
 Com o toolchain **Rust (`cargo` / `rustc`)** instalado (via [rustup.rs](https://rustup.rs) ou `winget install Rustlang.Rustup` no Windows):
 
@@ -36,7 +36,7 @@ Com o toolchain **Rust (`cargo` / `rustc`)** instalado (via [rustup.rs](https://
 git clone https://github.com/LuizCorrea-Dev/RustTS.git
 cd RustTS
 
-# Executa os 22 testes unitários do compilador
+# Executa os 23 testes unitários do compilador
 cargo test
 
 # Compila o executável otimizado (LTO fat, opt-level 3)
@@ -49,7 +49,7 @@ cargo install --path .
 ### Validar a Instalação
 ```bash
 rtsc --version
-# Saída esperada: rtsc 1.4.0-rts
+# Saída esperada: rtsc 1.5.0-rts
 ```
 
 ### Requisito Opcional para Execução Nativa (`rtsc run` e `--bin`)
@@ -61,7 +61,7 @@ rtsc --version
 
 ---
 
-## 2. Manual de Comandos do Compilador (`rtsc 1.4.0-rts`)
+## 2. Manual de Comandos do Compilador (`rtsc 1.5.0-rts`)
 
 ### 2.1. Criar Novo Projeto (`rtsc init`)
 Gera `rts.toml`, `.gitignore`, `src/main.rts` (com `pub fn main() -> i32`) e `build/`:
@@ -77,7 +77,7 @@ rtsc check examples/kanori_zone_sim/src/main.rts --json-diagnostics
 ```
 Saída esperada:
 ```text
-[rtsc 1.4.0-rts] OK: 0 capability violations, 0 transitive leaks, 0 capability forgeries, 0 arena escapes.
+[rtsc 1.5.0-rts] OK: 0 capability violations, 0 transitive leaks, 0 capability forgeries, 0 arena escapes.
 ```
 
 ### 2.3. Compilar e Executar Imediatamente (`rtsc run`)
@@ -120,7 +120,7 @@ rtsc build examples/telemetry_server.rts --emit-ts-sdk -o build/telemetry_client
 ```
 
 ### 2.8. Exportar Gramática Formal GBNF (`--export-gbnf`)
-Exporta a gramática completa da versão `v1.4.0-rts` para *Constrained Decoding* em motores LLM (`llama.cpp`, `vLLM`):
+Exporta a gramática completa da versão `v1.5.0-rts` para *Constrained Decoding* em motores LLM (`llama.cpp`, `vLLM`):
 ```powershell
 # Windows (PowerShell — garante gravação em UTF-8 sem BOM)
 rtsc --export-gbnf | Set-Content -Path rustts.gbnf -Encoding utf8
@@ -136,7 +136,7 @@ rtsc --export-gbnf > rustts.gbnf
 
 | Arquivo `.rts` | Domínio / Recurso Demonstrado |
 | :--- | :--- |
-| `examples/kanori_zone_sim/src/main.rts` | Showcase multi-arquivo `v1.4.0-rts` (`import`, `impl Struct`, `core.math`, `Option<f32>`, `extern "C" fn`, `[f32; 4]`, `while` + `continue`/`break`, `#line -g`) |
+| `examples/kanori_zone_sim/src/main.rts` | Showcase multi-arquivo `v1.5.0-rts` (`import`, `impl Struct`, `core.math`, `Option<f32>`, `extern "C" fn`, `[f32; 4]`, `while` + `continue`/`break`, `#line -g`) |
 | `examples/thermal_control.rts` | Hardware embarcado (`I2CBus`, `PWMPin`, `TryOp ?`, `match` exaustivo, `while`) |
 | `examples/ballistics_10k_benchmark.rts` | Simulação ECS de 10.000 projéteis com `FrameArena`, `ReadFrameArena` e Strip-Mining L1d |
 | `examples/engine_physics.rts` | Desdobramento vetorial `vec3` em colunas SoA + detecção de colisão |

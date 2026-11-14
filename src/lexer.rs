@@ -118,34 +118,41 @@ pub enum TokenKind {
     #[token("None")]
     KwNone,
 
-    // Tipos Primitivos Escalares
+    // Tipos Primitivos Escalares + Aliases Ergonômicos (TypeScript / C)
     #[token("i8")]
     TyI8,
     #[token("i16")]
     TyI16,
     #[token("i32")]
+    #[token("int")]
     TyI32,
     #[token("i64")]
     TyI64,
     #[token("u8")]
+    #[token("byte")]
     TyU8,
     #[token("u16")]
     TyU16,
     #[token("u32")]
+    #[token("uint")]
     TyU32,
     #[token("u64")]
     TyU64,
     #[token("usize")]
     TyUsize,
     #[token("f32")]
+    #[token("float")]
+    #[token("number")]
     TyF32,
     #[token("f64")]
     TyF64,
     #[token("fix32")]
     TyFix32,
     #[token("bool")]
+    #[token("boolean")]
     TyBool,
     #[token("str")]
+    #[token("string")]
     TyStr,
 
     // Tipos Matemáticos Nativos SIMD-Ready

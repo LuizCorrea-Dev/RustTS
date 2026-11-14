@@ -2,219 +2,184 @@
   <img src="./rustts_language_logo.png" alt="RustTS Logo" width="220">
 </p>
 
-# Como Iniciar um Projeto com RustTS (`v1.4.0-rts`)
+# Como Iniciar um Projeto com RustTS (`v1.5.0-rts`)
 
-Na versão **`v1.4.0-rts`**, o compilador `rtsc` opera como um toolchain autônomo de sistemas e motores de jogos: inicialização de projetos (`rtsc init`), resolução recursiva multi-arquivo em disco (`import`), compilação direta via LLVM/Clang com vetorização AVX2 ou depuração source-level `#line` (`rtsc run [-g]`), blocos de métodos nativos (`impl Struct`), FFI C-ABI protegido por capacidades (`extern "C" fn`), exportação de cabeçalhos C/C++ (`--emit-header`) e geração de código para **C99 Nativo**, **Unreal Engine 5**, **Unity** e **TypeScript SDK**.
-
-## Passo 1 — Verifique a Instalação do Compilador e Extensão (VS Code / Antigravity IDE)
-
-1. Confirme no terminal que o binário `rtsc` está disponível no `PATH`:
-   ```bash
-   rtsc --version
-   # Saída esperada: rtsc 1.4.0-rts
-   ```
-   *(Caso ainda não tenha instalado o compilador, consulte [INSTALACAO_E_USO.md](./INSTALACAO_E_USO.md)).*
-
-2. **Instale a Extensão Oficial no VS Code ou Antigravity IDE:**
-   - **Pacote VSIX pronto para VS Code e Antigravity IDE:** [`editors/rustts-lang-1.4.0.vsix`](./editors/rustts-lang-1.4.0.vsix) — pressione **`Ctrl + Shift + P`** → **`Extensions: Install from VSIX...`** e selecione o arquivo *(**NÃO dê duplo-clique pelo Windows Explorer**, pois o `VSIXInstaller.exe` do Visual Studio C++ exibe `MissingPackagePartException`)*.
-   - **Código-fonte da extensão, snippets (`comp`, `sys`, `externc`) e guia completo:** [`editors/vscode-rustts/README.md`](./editors/vscode-rustts/README.md) (ou **`Developer: Install Extension from Location...`** em `editors/vscode-rustts/`).
+Na versão **`v1.5.0-rts`**, a RustTS une a **ergonomia e fluidez do TypeScript e C** com a **segurança determinística e performance AVX2 do Rust e C99**:
+- **Inferência de Tipos Completa no `let`:** Você não precisa anotar `: f32` ou `: u32` em toda variável local (`let velocidade = 12.5;`, `let contador = 0;`, `let ativo = true;`, `let pos = vec3(1.0, 2.0, 3.0);`).
+- **Dois Estilos de Tipos de Largura Fixa (Zero Ambiguidade):** Você pode usar os nomes amigáveis do TypeScript/C (`int`, `uint`, `byte`, `float`, `number`, `boolean`, `string`) **ou** os tipos explícitos de hardware (`i8..i64`, `u8..u64`, `f32`, `f64`, `bool`, `str`). Ambos compilam para exatamente os mesmos registradores C99 (`int32_t`, `uint32_t`, `uint8_t`, `float`, `bool`, `const char*`) com **zero overhead**.
 
 ---
 
-## Passo 2 — Crie um Projeto Autônomo (`rtsc init`)
+## Tabela Rápida de Tipos: Estilo TypeScript/C vs. Estilo Hardware
 
-Use o subcomando `rtsc init` para gerar a estrutura padrão do projeto:
+Use o estilo que for mais confortável para a sua equipe (ou misture ambos livremente no mesmo arquivo):
+
+| O que você quer representar | Estilo Amigável (TypeScript / C) | Estilo Explícito (Rust / Hardware) | Tipo C99 Gerado (`codegen_native`) | Exemplo de Inferência Automática (`let`) |
+| :--- | :--- | :--- | :--- | :--- |
+| **Inteiro com sinal (32-bit)** | `int` | `i32` | `int32_t` | `let delta = -10;` |
+| **Inteiro sem sinal (32-bit)** | `uint` | `u32` | `uint32_t` | `let id = 42;` |
+| **Byte / Registrador (8-bit)** | `byte` | `u8` | `uint8_t` | `let reg: byte = 0x48;` |
+| **Ponto Flutuante SIMD (32-bit)** | `float` ou `number` | `f32` | `float` | `let temp = 36.5;` |
+| **Ponto Flutuante Duplo (64-bit)** | `f64` | `f64` | `double` | `let preciso: f64 = 3.1415926535;` |
+| **Booleano Lógico** | `boolean` | `bool` | `bool` | `let online = true;` |
+| **Texto Imutável** | `string` | `str` | `const char*` | `let tag = "SENSOR-01";` |
+| **Vetores e Quaternions SIMD** | `vec2`, `vec3`, `vec4`, `quat` | `vec2`, `vec3`, `vec4`, `quat` | `rts_vec3_t` (ou lanes SoA) | `let pos = vec3(1.0, 2.0, 3.0);` |
+| **Array de Tamanho Fixo na Stack** | `[float; 4]` ou `[number; 4]` | `[f32; 4]` | `float nome[4]` | `let pesos = [1.0, 2.0, 3.0, 4.0];` |
+
+---
+
+## Passo 1 — Verifique o Compilador e Instale a Extensão da IDE
+
+1. Confirme no terminal que o compilador `rtsc` está atualizado:
+   ```bash
+   rtsc --version
+   # Saída esperada: rtsc 1.5.0-rts
+   ```
+   *(Se precisar instalar ou atualizar, veja [INSTALACAO_E_USO.md](./INSTALACAO_E_USO.md)).*
+
+2. **Ative o Realce de Sintaxe e Snippets no VS Code ou Antigravity IDE:**
+   - **Pacote VSIX pronto para VS Code e Antigravity IDE:** [`editors/rustts-lang-1.4.0.vsix`](./editors/rustts-lang-1.4.0.vsix) — abra o editor e pressione **`Ctrl + Shift + P`** → **`Extensions: Install from VSIX...`** (ou **`Developer: Install Extension from Location...`** selecionando a pasta [`editors/vscode-rustts`](./editors/vscode-rustts)).
+   - *(**Importante:** não dê duplo-clique no arquivo `.vsix` pelo Windows Explorer para evitar que o instalador do Visual Studio C++ intercepte o pacote).*
+
+---
+
+## Passo 2 — Crie um Novo Projeto (`rtsc init`)
+
+No terminal, crie a estrutura completa do projeto com um único comando:
 
 ```bash
-rtsc init meu_projeto
-cd meu_projeto
+rtsc init meu_jogo
+cd meu_jogo
 ```
 
-Estrutura criada automaticamente em UTF-8 sem BOM:
+Isso gera automaticamente (em UTF-8 puro sem BOM):
 
 ```text
-meu_projeto/
-├── rts.toml          # Manifesto do pacote (compiler = "1.4.0-rts", target = "native")
-├── .gitignore        # Ignora /build/ e artefatos nativos (*.exe, *.pdb, *.obj, *.o)
+meu_jogo/
+├── rts.toml          # Manifesto do projeto (compiler = "1.5.0-rts", target = "native")
+├── .gitignore        # Ignora /build/ e binários nativos (*.exe, *.pdb, *.obj, *.o)
 ├── src/
-│   └── main.rts      # Entrypoint nativo com `pub fn main() -> i32`
+│   └── main.rts      # Ponto de entrada executável com `pub fn main() -> int`
 └── build/            # Código C99, headers `.h` e executáveis gerados pelo rtsc
 ```
 
-> **Nota sobre codificação no Windows:** o lexer do `rtsc` remove de forma transparente o UTF-8 BOM (`\u{FEFF}`) na leitura de arquivos `.rts`, e todos os arquivos gerados por `-o` / `--out-dir` são gravados em UTF-8 puro.
+---
 
-## Passo 3 — Organize Múltiplos Módulos (`import`, `impl` e `extern "C" fn`)
+## Passo 3 — Escrevendo Código Fluido com `let`, `impl`, `import` e `cap`
 
-O `rtsc` resolve automaticamente dependências declaradas com `import`, mesclando as ASTs em ordem topológica e validando tipos (`RTS-E0301`) e capacidades transitivas (`RTS-E0403`) entre todos os arquivos do projeto.
+Em `RustTS`, você só precisa declarar tipos nas **assinaturas de funções (`fn`)** e nas **definições de estruturas (`struct`)** — garantindo que os contratos de memória e capacidades (`@sealed_sig`) permaneçam 100% explícitos e auditáveis para humanos e IA. Dentro do corpo das funções, o `let` deduce tudo automaticamente.
 
-### 3.1. Crie o módulo de domínio em `src/meu_sensor.rts`
+### 3.1. Crie o módulo `src/telemetria.rts`
 
 ```rust
-module meu_sensor;
-import core.hardware;
+module telemetria;
 import core.math;
 
-struct Limites {
-    max_temp: f32,
-    fator_cooler: f32,
+@component
+struct Sensor {
+    id: uint,
+    canal: byte,
+    ativo: boolean,
+    leitura_atual: number,
+    nome: string,
 }
 
-enum FalhaSensor {
-    Offline(u8),
-    Critico(f32),
-}
-
-impl Limites {
-    pub fn calcular_duty(self: Limites, temp: f32) -> u8 {
-        let bruto: f32 = temp * self.fator_cooler;
-        return math::clamp(bruto, 20.0, 80.0) as u8;
-    }
-}
-
-@sealed_sig
-pub fn monitorar(
-    lim: Limites,
-    i2c: cap I2CBus<0x48>,
-    cooler: cap PWMPin<4>
-) -> Result<f32, FalhaSensor> {
-    let reg: u16 = i2c.read_register_u16(0x00)
-        .map_err(|_| FalhaSensor::Offline(0x48))?;
-
-    let temp: f32 = (reg as f32) * 0.0625;
-    if temp > lim.max_temp {
-        cooler.set_duty(100);
-        return Err(FalhaSensor::Critico(temp));
+impl Sensor {
+    @sealed_sig
+    pub fn novo(id: uint, canal: byte, leitura: number, nome: string) -> Sensor {
+        return Sensor {
+            id: id,
+            canal: canal,
+            ativo: true,
+            leitura_atual: leitura,
+            nome: nome,
+        };
     }
 
-    let duty: u8 = lim.calcular_duty(temp);
-    cooler.set_duty(duty);
-    return Ok(temp);
+    @sealed_sig
+    pub fn temperatura_compensada(self: Sensor, offset: float) -> number {
+        // Inferência automática no `let`: sem precisar repetir `: float`
+        let ajustada = self.leitura_atual + offset;
+        return math::clamp(ajustada, 0.0, 120.0);
+    }
 }
 ```
 
-### 3.2. Conecte no entrypoint `src/main.rts` (com FFI C-ABI protegido por `cap`)
-
-Parâmetros `cap` declarados em funções `extern "C" fn` exigem comprovação estática de autoridade em tempo de compilação e são removidos automaticamente na assinatura C99 final (zero overhead na ABI C):
+### 3.2. Importe e execute em `src/main.rts`
 
 ```rust
-module app;
-import core.hardware;
+module main;
 import core.io;
-import meu_sensor;
+import telemetria;
 
-extern "C" fn puts(msg: str, console: cap StdIO) -> i32;
+@sealed_sig
+pub fn main(io: cap StdIO) -> int {
+    // Inferência completa estilo TypeScript:
+    let s1 = Sensor::novo(101, 0x48, 78.5, "TERMO-CORE-01");
+    let offset_ambiente = -2.5;
+    let temp_final = s1.temperatura_compensada(offset_ambiente);
+    let historico = [72.0, 74.5, 76.0, temp_final];
 
-pub fn main() -> i32 {
-    let console: cap StdIO = StdIO::new();
-    let i2c: cap I2CBus<0x48> = I2CBus::new(0x48);
-    let cooler: cap PWMPin<4> = PWMPin::new(4);
-
-    puts("=== [RustTS v1.4.0-rts] Inicializando Telemetria ===", console);
-
-    let lim: Limites = Limites {
-        max_temp: 85.0,
-        fator_cooler: 0.75,
-    };
-
-    let res: Result<f32, FalhaSensor> = monitorar(lim, i2c, cooler);
-    match res {
-        Ok(temp) => {
-            io::print_f32("[OK] Temperatura Nominal (C): ", temp);
-            return 0;
-        }
-        Err(_) => {
-            puts("[ALERTA] Falha de barramento I2C ou superaquecimento!", console);
-            return 1;
-        }
-    }
+    io::println(s1.nome);
+    io::print_f32("Temperatura compensada (C): ", historico[3]);
+    return 0;
 }
 ```
 
-## Passo 4 — Verifique, Compile e Depure (`rtsc check` / `rtsc run`)
+---
 
-### 4.1. Verificação Estática Multi-Arquivo (`< 15 ms`)
-Valida sintaxe, tipos, exaustividade de `match` (`RTS-E0302`), ausência de vazamento de arenas (`RTS-E0501`) e grafo transitivo de capacidades (`RTS-E0402`..`RTS-E0404`):
+## Passo 4 — Validar, Executar e Depurar (`rtsc check` e `rtsc run`)
 
+### 1. Validação Estática Instantânea (`< 15 ms`)
+Verifica tipos, exaustividade de `match`, escopo de arenas e capacidades transitivas em todos os módulos importados:
 ```bash
 rtsc check src/main.rts
 ```
-Saída esperada:
-```text
-[rtsc 1.4.0-rts] OK: 0 capability violations, 0 transitive leaks, 0 capability forgeries, 0 arena escapes.
-```
-*(Adicione `--json-diagnostics` para emitir relatórios JSON estruturados para agentes de IA).*
+*(Para integração com agentes de IA e auto-correção determinística, adicione `--json-diagnostics`).*
 
-### 4.2. Execução Direta Otimizada (`-O3 -mavx2 -mfma`)
-Transpila todos os módulos importados para `build/main.c`, invoca o LLVM/Clang com `-std=c11 -O3 -mavx2 -mfma -Wall -Wextra -Werror` e executa o binário nativo imediatamente:
-
+### 2. Compilar e Executar Nativamente (`rtsc run`)
+Transpila todos os arquivos `.rts` para C99 SIMD, invoca o `clang -O3 -mavx2 -mfma` automaticamente e executa o binário:
 ```bash
 rtsc run src/main.rts
 ```
 
-### 4.3. Depuração Source-Level Direto no `.rts` (`-g` / `--debug`)
-Compila com `-g -O0` e mapeia cada instrução C99 de volta para a linha exata do arquivo `.rts` via diretivas `#line`:
-
+### 3. Depuração Source-Level linha a linha (`rtsc run -g`)
+Injeta diretivas `#line <linha> "<arquivo>.rts"` no C99 e compila com `-g -O0`, permitindo colocar breakpoints diretamente nos arquivos `.rts` via LLDB, GDB ou VS Code:
 ```bash
 rtsc run src/main.rts -g
 ```
-*(Você pode abrir `build/main.exe` no debugger do Visual Studio, VS Code `cppvsdbg`/`codelldb`, GDB ou LLDB e posicionar breakpoints diretamente nas linhas de `src/main.rts`).*
 
-## Passo 5 — Exportação de Artefatos e Integração com Engines / Hosts Externos
+---
 
-Para integrar módulos `.rts` em motores C/C++ próprios, Unreal Engine 5, Unity ou frontends Next.js/React, use `rtsc build`:
+## Passo 5 — Compilar para Motores de Jogos, C/C++ e Web SDK (`rtsc build`)
 
-### 5.1. Engine Própria C/C++ (`--emit-header` + Linkagem Externa `-l / -L / -I`)
-Gera `build/main.c` e o cabeçalho ABI `build/main.h` (com `#pragma once` e `extern "C"` contendo apenas as funções `pub fn` do módulo):
+O mesmo código `.rts` pode ser exportado para qualquer alvo suportado pelo compilador:
 
 ```bash
-# Gera build/main.c e build/main.h
-rtsc build src/main.rts --out-dir build --emit-header
+# 1. Binário Nativo Stand-Alone (.exe / ELF) + Código C99:
+rtsc build src/main.rts --bin --out-dir build
 
-# Compila um executável linkando contra bibliotecas C externas (ex: Raylib / SDL3 / OpenGL)
-rtsc build src/main.rts --bin -o build/game.exe -l raylib -l opengl32 -L ./libs -I ./include
+# 2. Biblioteca Nativa + Header C/C++ (.h) para linkar com C, C++ ou Rust:
+rtsc build src/main.rts --emit-header --out-dir build
+
+# 3. Linkagem direta com bibliotecas C externas (ex: Raylib, SDL2, OpenGL):
+rtsc run src/main.rts -l raylib -l opengl32 -l gdi32 -l winmm
+
+# 4. Unreal Engine 5 (gera A<Actor>.h e A<Actor>.cpp com macros UCLASS/UPROPERTY):
+rtsc build examples/combat_unreal.rts --target unreal --out-dir build/unreal
+
+# 5. Unity Engine (gera plugin C-ABI em Rust + wrapper C# zero-copy com NativeArray<T>):
+rtsc build examples/engine_physics.rts --target unity --out-dir build/unity
+
+# 6. TypeScript SDK (gera cliente tipado com proteção de 64 bits e RtsResult<T, E>):
+rtsc build examples/telemetry_server.rts --emit-ts-sdk -o build/telemetry_client_sdk.ts
 ```
 
-### 5.2. Unreal Engine 5 (`--target=unreal`)
-Emite os arquivos `A<Actor>.h` e `A<Actor>.cpp` separados e prontos para o Unreal Header Tool (UHT), incluindo `UCLASS()`, `UPROPERTY()`, `UFUNCTION()`, `DOREPLIFETIME` e mapeamento matemático para `FMath::*`:
+---
 
-```bash
-rtsc build examples/combat_unreal.rts --target=unreal --out-dir Source/MeuJogoUE5
-```
+## Próximos Passos e Exemplos Prontos no Repositório
 
-### 5.3. Unity Engine (`--target=unity`)
-Emite o código FFI Rust (`<modulo>_unity_plugin.rs`) e o wrapper C# zero-copy (`RtscNativeBridge.cs` com `NativeArray<T>` e `NativeArrayUnsafeUtility`):
-
-```bash
-rtsc build examples/engine_physics.rts --target=unity --out-dir build/unity
-```
-*(Compile o arquivo `build/unity/engine_physics_unity_plugin.rs` como uma biblioteca dinâmica Rust `cdylib` chamada `rtsc_native_plugin.dll` / `.so` / `.dylib` e copie a DLL junto com `RtscNativeBridge.cs` para `Assets/Plugins/RustTS/` no seu projeto Unity).*
-
-### 5.4. Frontend Web TypeScript / Next.js (`--emit-ts-sdk`)
-Gera um cliente HTTP TypeScript estritamente tipado (`RtsResult<T, E>` sem `throw` e inteiros de 64 bits mapeados como `string` para evitar perda de precisão IEEE-754):
-
-```bash
-rtsc build examples/telemetry_server.rts --emit-ts-sdk -o frontend/src/sdk/telemetry_client.ts
-```
-
-### 5.5. Gramática Formal GBNF para LLMs Locais (`--export-gbnf`)
-Exporta a gramática formal `1.4.0-rts` para *Constrained Decoding* (`0%` de erro sintático em `llama.cpp` / `vLLM`):
-
-```powershell
-# Windows (PowerShell — garante gravação em UTF-8 sem BOM)
-rtsc --export-gbnf | Set-Content -Path build/rustts.gbnf -Encoding utf8
-```
-```bash
-# Linux / macOS
-rtsc --export-gbnf > build/rustts.gbnf
-```
-
-## Passo 6 — Projetos e Showcases de Referência (`examples/`)
-
-| Domínio | Arquivos de Referência | Comando de Teste / Execução |
-| --- | --- | --- |
-| **Showcase Multi-Arquivo KANORI (`v1.4.0-rts`)** | [`examples/kanori_zone_sim/src/main.rts`](./examples/kanori_zone_sim/src/main.rts)<br>[`examples/kanori_zone_sim/src/anomaly_math.rts`](./examples/kanori_zone_sim/src/anomaly_math.rts) | `rtsc run examples/kanori_zone_sim/src/main.rts -g` |
-| **Controle de Hardware (`I2C`/`PWM`) & `match`** | [`examples/thermal_control.rts`](./examples/thermal_control.rts)<br>[`examples/thermal_control_benchmark.c`](./examples/thermal_control_benchmark.c) | `rtsc check examples/thermal_control.rts` |
-| **Balística SIMD AVX2 (`10.000` projéteis em `7.58 µs`)** | [`examples/ballistics_10k_benchmark.rts`](./examples/ballistics_10k_benchmark.rts)<br>[`examples/ballistics_10k_benchmark.c`](./examples/ballistics_10k_benchmark.c) | `rtsc check examples/ballistics_10k_benchmark.rts` |
-| **Física ECS SoA 64B (`vec3` Unrolling)** | [`examples/engine_physics.rts`](./examples/engine_physics.rts)<br>[`examples/engine_physics_benchmark.c`](./examples/engine_physics_benchmark.c) | `rtsc check examples/engine_physics.rts` |
-| **Ator Replicado Unreal Engine 5** | [`examples/combat_unreal.rts`](./examples/combat_unreal.rts) | `rtsc build examples/combat_unreal.rts --target=unreal --out-dir build/ue5` |
-| **Servidor Telemetria + SDK TypeScript** | [`examples/telemetry_server.rts`](./examples/telemetry_server.rts)<br>[`examples/telemetry_client_sdk.ts`](./examples/telemetry_client_sdk.ts) | `rtsc build examples/telemetry_server.rts --emit-ts-sdk -o build/client.ts` |
+Explore a pasta [`examples/`](./examples/) para ver projetos reais em funcionamento:
+- [`examples/kanori_zone_sim/src/main.rts`](./examples/kanori_zone_sim/src/main.rts) — Simulação multi-arquivo de zonas térmicas e risco ecológico (**KANORI**).
+- [`examples/ballistics_10k_benchmark.rts`](./examples/ballistics_10k_benchmark.rts) — Simulação física SIMD AVX2 de 10.000 projéteis a **$7,58\text{ }\mu\text{s/frame}$**.
+- [`examples/thermal_control.rts`](./examples/thermal_control.rts) — Controle de hardware embarcados (`I2CBus<0x48>`, `PWMPin<0>`, `MonotonicClock`) com falha segura.

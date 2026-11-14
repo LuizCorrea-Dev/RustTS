@@ -2,7 +2,7 @@
   <img src="./rustts_language_logo.png" alt="RustTS Logo" width="220">
 </p>
 
-# RustTS (`rtsc`) — Devlog de Evolução Arquitetural, Versões e Testes (`v0.1.0-rts` → `v1.4.0-rts`)
+# RustTS (`rtsc`) — Devlog de Evolução Arquitetural, Versões e Testes (`v0.1.0-rts` → `v1.5.0-rts`)
 
 Registro técnico cronológico da criação, auditorias de especificação, otimizações SIMD/memória, evolução semântica e validação em hardware real do compilador **RustTS (`rtsc`)**.
 
@@ -32,6 +32,7 @@ Registro técnico cronológico da criação, auditorias de especificação, otim
 | **`v1.2.0-rts`** | Projetos Multi-Arquivo & Gramática Completa (`Fase 3: 70%`) | Resolução recursiva de `import` (`RTS-E0102`), forward declarations C99, `Option<T>` em C99 (`Some`/`None`/`match`), `[T; N]`, `break`/`continue` | **`cargo test`: 18/18 PASS** + execução `rtsc run` com múltiplos arquivos `.rts` |
 | **`v1.3.0-rts`** | FFI Blindado por `cap`, `impl Struct` & `core.math` (`Fase 4: 85%`) | `extern "C" fn` com remoção zero-overhead de tokens `cap`, blocos `impl Struct`, 11 funções de `core.math` (`<math.h>`), flags `-l`/`-L`/`-I` | **`cargo test`: 20/20 PASS** + chamada real à `libc` (`puts`, `abs`) sob `-Wall -Wextra -Werror` |
 | **`v1.4.0-rts`** | Debugging `#line`, Header `.h`, VS Code & KANORI (`Fase 5: 100%`) | Diretivas `#line`, `-g`/`--debug` (`-g -O0`), `--emit-header` (`emit_c_header`), extensão `editors/vscode-rustts/`, showcase `examples/kanori_zone_sim/` | **`cargo test`: 22/22 PASS**; `rtsc 1.4.0-rts`; `rtsc run -g` e `rtsc check` 5/5 aprovados |
+| **`v1.5.0-rts`** | Ergonomia TypeScript/C: Inferência no `let` & Aliases de Tipos | Aliases custo-zero (`int`, `uint`, `byte`, `float`, `number`, `boolean`, `string`), `infer_c_type_from_expr` para `let` sem `: Tipo`, inferência de `-IntLit` (`i32`) e construtores `vec2`/`vec3`/`vec4`/`quat` | **`cargo test`: 23/23 PASS** (`test_v150_typescript_ergonomics_type_aliases_and_let_inference`); `rtsc 1.5.0-rts` |
 
 ---
 
@@ -360,3 +361,22 @@ Fase 5 final ($85\% \rightarrow 100\%$ da régua de maturidade), fechando debugg
     ```
   - `rtsc build examples/kanori_zone_sim/src/main.rts --emit-header --out-dir build/kanori` gerou `build/kanori/main.h` e `build/kanori/main.c`.
 - **Regressão dos Exemplos (`rtsc check`):** Todos os 5 exemplos em `examples/*.rts` validados com `0 capability violations, 0 transitive leaks, 0 capability forgeries, 0 arena escapes`.
+
+---
+
+## Etapa 17 — `v1.5.0-rts`: Ergonomia TypeScript/C — Inferência Completa no `let` & Aliases de Tipos de Largura Fixa
+
+Refinamento ergonômico unindo a fluidez de escrita do TypeScript e C à segurança estática e performance C99/AVX2 da RustTS.
+
+### Evoluções Implementadas
+1. **Aliases de Tipos Primitivos Custo-Zero na AST ([src/lexer.rs](src/lexer.rs), [src/gbnf_exporter.rs](src/gbnf_exporter.rs), [editors/vscode-rustts/syntaxes/rustts.tmLanguage.json](editors/vscode-rustts/syntaxes/rustts.tmLanguage.json)):**
+   - Adicionados `#[token("int")]` em `TyI32`, `#[token("uint")]` em `TyU32`, `#[token("byte")]` em `TyU8`, `#[token("float")]` e `#[token("number")]` em `TyF32`, `#[token("boolean")]` em `TyBool` e `#[token("string")]` em `TyStr`, mapeando diretamente para os nós `TypeExpr::Primitive(...)` canônicos.
+2. **Inferência de Inteiros Negativos e Construtores Vetoriais ([src/parser.rs](src/parser.rs), [src/sema.rs](src/sema.rs)):**
+   - `Expr::Unary` com `UnaryOp::Neg` sobre `Expr::IntLit` infere `PrimitiveType::I32` (`int32_t`).
+   - Suporte a construtores diretos `vec2(...)`, `vec3(...)`, `vec4(...)` e `quat(...)` em expressões primárias e inferência semântica.
+3. **Inferência Completa de Tipos C99 em `Stmt::Let` ([src/codegen_native.rs](src/codegen_native.rs)):**
+   - Implementado `NativeCodegen::infer_c_type_from_expr` com rastreamento de `fn_return_c_types`, `struct_field_c_types` e `local_c_types` em `LoweringCtx`, permitindo declarar variáveis locais `let x = ...;` sem anotação `: Tipo` para escalares, strings, structs, enums, métodos `impl`, chamadas estáticas, vetores `vec3(...)` e arrays `[a, b, c]`.
+
+### Validação (`v1.5.0-rts`)
+- **`cargo test`:** **23/23** testes unitários aprovados (`test_v150_typescript_ergonomics_type_aliases_and_let_inference`).
+- **Instalação Global:** `cargo install --path .` concluído com `rtsc --version` reportando **`rtsc 1.5.0-rts`**.

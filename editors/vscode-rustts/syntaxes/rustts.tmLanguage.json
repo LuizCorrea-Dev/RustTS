@@ -122,7 +122,7 @@
       "patterns": [
         {
           "name": "storage.type.primitive.rustts",
-          "match": "\\b(i8|i16|i32|i64|u8|u16|u32|u64|usize|f32|f64|fix32|bool|str|vec2|vec3|vec4|quat|mat3|mat4|Vec2|Vec3|Vec4|Quat|Mat3|Mat4|SoA|Result|Option|Handle|Json)\\b"
+          "match": "\\b(i8|i16|i32|i64|u8|u16|u32|u64|usize|f32|f64|fix32|bool|str|int|uint|byte|float|number|boolean|string|vec2|vec3|vec4|quat|mat3|mat4|Vec2|Vec3|Vec4|Quat|Mat3|Mat4|SoA|Result|Option|Handle|Json)\\b"
         },
         {
           "name": "entity.name.type.rustts",

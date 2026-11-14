@@ -4,7 +4,7 @@
 pub fn export_rustts_gbnf() -> &'static str {
     r#"# ==============================================================================
 # RustTS (.rts) Official Formal Grammar for Constrained LLM Decoding (GBNF)
-# Compiler: rtsc 1.4.0-rts | Specification: RustTS_guia.md (One Canonical Way)
+# Compiler: rtsc 1.5.0-rts | Specification: RustTS_guia.md (One Canonical Way)
 # ==============================================================================
 
 root            ::= ws module-decl? (import-decl)* (item ws)*
@@ -62,6 +62,7 @@ type-expr       ::= primitive-type
 primitive-type  ::= "i8" | "i16" | "i32" | "i64"
                   | "u8" | "u16" | "u32" | "u64" | "usize"
                   | "f32" | "f64" | "fix32" | "bool" | "str"
+                  | "int" | "uint" | "byte" | "float" | "number" | "boolean" | "string"
 
 math-type       ::= "vec2" | "vec3" | "vec4" | "quat" | "mat3" | "mat4"
 

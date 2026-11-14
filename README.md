@@ -258,13 +258,13 @@ Quando um agente de IA tenta violar uma regra de memória ou permissão de hardw
 
 ## Estrutura do Repositório e Documentação
 
-* [`INSTALACAO_E_USO.md`](./INSTALACAO_E_USO.md) — **Guia Oficial de Instalação e Uso (`v1.4.0-rts`):** Instalação, build via Cargo, manual da CLI `rtsc`, exemplos e solução de problemas.
-* [`INICIANDO_UM_PROJETO.md`](./INICIANDO_UM_PROJETO.md) — **Tutorial: Iniciando um Projeto com RustTS (`v1.4.0-rts`):** Fluxo com `rtsc init`, `pub fn main()`, `rtsc run [-g]`, projetos multi-arquivo (`import`), FFI e exportação `--emit-header`.
-* [`Guia_Interativo_e_Documentacao_RustTS.html`](./Guia_Interativo_e_Documentacao_RustTS.html) — **Guia Interativo & Documentação HTML:** Dashboard interativo com documentação completa da linguagem e Cheat Sheet (`v1.4.0-rts`).
+* [`INSTALACAO_E_USO.md`](./INSTALACAO_E_USO.md) — **Guia Oficial de Instalação e Uso (`v1.5.0-rts`):** Instalação, build via Cargo, manual da CLI `rtsc`, exemplos e solução de problemas.
+* [`INICIANDO_UM_PROJETO.md`](./INICIANDO_UM_PROJETO.md) — **Tutorial: Iniciando um Projeto com RustTS (`v1.5.0-rts`):** Ergonomia TypeScript/C (`int`, `uint`, `byte`, `float`, `number`, `boolean`, `string` + inferência no `let`), `rtsc init`, `pub fn main()`, `rtsc run [-g]`, `import`, FFI e `--emit-header`.
+* [`Guia_Interativo_e_Documentacao_RustTS.html`](./Guia_Interativo_e_Documentacao_RustTS.html) — **Guia Interativo & Documentação HTML:** Dashboard interativo com documentação completa da linguagem e Cheat Sheet (`v1.5.0-rts`).
 * [`CONTRIBUTING.md`](./CONTRIBUTING.md) — **Guia de Contribuição:** Mapa do compilador (`src/`), padrões de código, suíte `cargo test` e checklist para Pull Requests.
-* [`devlog.md`](./devlog.md) — **Devlog & Cronologia (`v0.1.0-rts` → `v1.4.0-rts`):** Histórico técnico completo de versões, auditorias, suíte `cargo test` (`22/22`) e benchmarks AVX2/SoA.
+* [`devlog.md`](./devlog.md) — **Devlog & Cronologia (`v0.1.0-rts` → `v1.5.0-rts`):** Histórico técnico completo de versões, auditorias, suíte `cargo test` (`23/23`) e benchmarks AVX2/SoA.
 * [`RustTS_guia.md`](./RustTS_guia.md) — **Matriz de Escopo Operacional e Domínios:** Regras de aplicação Tier 1 / Tier 2 / Tier 0 e integração com TypeScript SDK.
-* [`editors/vscode-rustts/`](./editors/vscode-rustts/package.json) — **Extensão Oficial VS Code:** Syntax highlighting TextMate e configuração de linguagem para arquivos `.rts`.
+* [`editors/vscode-rustts/`](./editors/vscode-rustts/package.json) — **Extensão Oficial VS Code / Antigravity IDE:** Syntax highlighting TextMate, snippets e pacote `.vsix` para arquivos `.rts`.
 * [`examples/kanori_zone_sim/`](./examples/kanori_zone_sim/src/main.rts) — **Showcase Multi-Arquivo KANORI:** Projeto integrado com `import`, `impl Struct`, `core.math`, `Option<T>`, `extern "C"` e `rtsc run -g`.
 * [`agenteRTS.md`](./agenteRTS.md) — **System Prompt do Agente Especialista:** Configuração de contexto para transformar LLMs em engenheiros de compiladores (`COMPILER-DEV`) e programadores nativos RustTS (`RTS-CODER`).
 ---
@@ -275,7 +275,8 @@ Quando um agente de IA tenta violar uma regra de memória ou permissão de hardw
 - [x] **Fase 2 (`v1.1.0-rts`):** Autonomia da CLI (`rtsc init`, `rtsc run`, `-o`, `--out-dir`, `--bin`), remoção de UTF-8 BOM, `RTS_UNUSED`, `io::*` e entrypoint nativo `pub fn main()`.
 - [x] **Fase 3 (`v1.2.0-rts`):** Projetos multi-arquivo (`import` recursivo com detecção de ciclos e `RTS-E0102`), forward declarations C99, `Option<T>`, arrays `[T; N]` e `break`/`continue`.
 - [x] **Fase 4 (`v1.3.0-rts`):** FFI `extern "C" fn` blindado por `cap` com remoção zero-overhead, blocos `impl Struct`, biblioteca matemática `core.math` e flags `-l`, `-L`, `-I`.
-- [x] **Fase 5 (`v1.4.0-rts`):** Diretivas `#line` + flag `-g`/`--debug`, exportação de header C/C++ (`--emit-header`), extensão VS Code e showcase multi-arquivo `examples/kanori_zone_sim/` (`cargo test` **22/22 PASS**).
+- [x] **Fase 5 (`v1.4.0-rts`):** Diretivas `#line` + flag `-g`/`--debug`, exportação de header C/C++ (`--emit-header`), extensão VS Code e showcase multi-arquivo `examples/kanori_zone_sim/`.
+- [x] **Fase 6 (`v1.5.0-rts`):** Ergonomia TypeScript/C com inferência completa de tipos no `let` e aliases de tipos de largura fixa (`int`, `uint`, `byte`, `float`, `number`, `boolean`, `string`) (`cargo test` **23/23 PASS**).
 - [ ] **Próxima Fronteira (`v2.0+`):** Backend direto MLIR/LLVM, SPIR-V para shaders GPU e sandbox WASI com *Fuel Metering*.
 
 ---

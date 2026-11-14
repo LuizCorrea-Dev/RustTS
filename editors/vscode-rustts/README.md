@@ -1,6 +1,6 @@
 # Extensão Oficial RustTS (`.rts`) para VS Code e Antigravity IDE (`v1.4.0`)
 
-Pacote oficial de realce de sintaxe (TextMate), configuração de linguagem e snippets para a linguagem determinística **RustTS (`.rts`)** (`rtsc v1.4.0-rts`).
+Pacote oficial de realce de sintaxe (TextMate), configuração de linguagem e snippets para a linguagem determinística **RustTS (`.rts`)** (`rtsc v1.5.0-rts`).
 
 ## Recursos Inclusos
 - **Colorização Semântica Dedicada:** Destaque em alto contraste para o modificador `cap`, domínios de capacidades (`I2CBus`, `PWMPin`, `StdIO`, `FrameArena`, `ReadFrameArena`, `MutColumn`, `ReadColumn`), atributos de compilador (`@component`, `@system`, `@parallel_system`, `@sealed_sig`, `@open_sig`, `@unreal_actor`) e operador de propagação `?`.

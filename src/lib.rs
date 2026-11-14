@@ -1010,4 +1010,75 @@ fn privada(x: i32) -> i32 {
         assert!(c99.contains("math_sqrt"));
         assert!(c99.contains("int main(void)"));
     }
+
+    #[test]
+    fn test_v150_typescript_ergonomics_type_aliases_and_let_inference() {
+        let src = r#"
+module teste.ergonomia_ts;
+
+@component
+struct Telemetria {
+    id: uint,
+    status: byte,
+    ativo: boolean,
+    temperatura: number,
+    rotulo: string,
+}
+
+impl Telemetria {
+    @sealed_sig
+    pub fn criar(id: int, temp: float, rotulo: string) -> Telemetria {
+        return Telemetria {
+            id: 42,
+            status: 1,
+            ativo: true,
+            temperatura: temp,
+            rotulo: rotulo,
+        };
+    }
+
+    @sealed_sig
+    pub fn ler_temperatura(self: Telemetria) -> number {
+        return self.temperatura;
+    }
+}
+
+@sealed_sig
+pub fn main() -> int {
+    // Inferência completa no `let` (estilo TypeScript) sem anotação `: Tipo`
+    let contador = 10;
+    let delta_negativo = -5;
+    let ganho = 2.5;
+    let ligado = true;
+    let nome = "KANORI-NODE-01";
+    let pos = vec3(1.0, 2.0, 3.0);
+    let pesos = [1.0, 2.0, 3.0, 4.0];
+    let tele = Telemetria::criar(contador, ganho, nome);
+    let temp_atual = tele.ler_temperatura();
+    let id_sensor = tele.id;
+
+    if ligado && id_sensor > 0 && temp_atual > 0.0 && pos.x > 0.0 && pesos[0] > 0.0 && delta_negativo < 0 {
+        return 0;
+    }
+    return 1;
+}
+"#;
+        let (mod_ok, report) = compile_and_check(src, "src/v150_ergonomics.rts");
+        assert_eq!(
+            report.status, "ok",
+            "v1.5.0 TypeScript ergonomics diagnostics: {:?}",
+            report.diagnostics
+        );
+        let c99 = codegen_native::NativeCodegen::emit_c99(mod_ok.as_ref().unwrap());
+        assert!(c99.contains("uint32_t contador = 10u;"));
+        assert!(c99.contains("int32_t delta_negativo = (-5);"));
+        assert!(c99.contains("float ganho = 2.5f;"));
+        assert!(c99.contains("bool ligado = true;"));
+        assert!(c99.contains("const char* nome = \"KANORI-NODE-01\";"));
+        assert!(c99.contains("rts_vec3_t pos = (rts_vec3_t){ 1.0f, 2.0f, 3.0f };"));
+        assert!(c99.contains("float pesos[4] = { 1.0f, 2.0f, 3.0f, 4.0f };"));
+        assert!(c99.contains("Telemetria_t tele = teste_ergonomia_ts_criar("));
+        assert!(c99.contains("float temp_atual = teste_ergonomia_ts_ler_temperatura(tele);"));
+        assert!(c99.contains("uint32_t id_sensor = tele.id;"));
+    }
 }
