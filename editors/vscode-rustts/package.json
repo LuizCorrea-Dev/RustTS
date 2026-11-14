@@ -1,0 +1,28 @@
+{
+  "name": "rustts-lang",
+  "displayName": "RustTS (.rts) — Deterministic Systems & Engine Language",
+  "description": "Official syntax highlighting and language configuration for RustTS (.rts) v1.4.0-rts",
+  "version": "1.4.0",
+  "publisher": "Rootszera",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Programming Languages"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "rustts",
+        "aliases": ["RustTS", "rustts"],
+        "extensions": [".rts"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "rustts",
+        "scopeName": "source.rustts",
+        "path": "./syntaxes/rustts.tmLanguage.json"
+      }
+    ]
+  }
+}

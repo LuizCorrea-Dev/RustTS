@@ -3,16 +3,16 @@ use rtsc_core::codegen_native::NativeCodegen;
 use rtsc_core::codegen_ts_sdk::TsSdkCodegen;
 use rtsc_core::codegen_unity::UnityCodegen;
 use rtsc_core::codegen_unreal::UnrealCodegen;
-use rtsc_core::compile_and_check;
+use rtsc_core::compile_and_check_project;
 use rtsc_core::gbnf_exporter::export_rustts_gbnf;
 use std::fs;
-use std::path::PathBuf;
-use std::process;
+use std::path::{Path, PathBuf};
+use std::process::{self, Command};
 
 #[derive(ClapParser)]
 #[command(
     name = "rtsc",
-    version = "1.0.0-rts",
+    version = "1.4.0-rts",
     about = "RustTS (.rts) Deterministic Systems & Engine Compiler for Humans and AI"
 )]
 struct Cli {
@@ -26,6 +26,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Initialize a new RustTS project structure (`rts.toml`, `src/main.rts`, `build/`)
+    Init {
+        /// Target directory or project name (defaults to current directory `.`)
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
     /// Validate `.rts` source code capabilities, types, and arena scopes (< 15ms)
     Check {
         /// Path to the `.rts` file
@@ -34,20 +40,230 @@ enum Commands {
         #[arg(long = "json-diagnostics")]
         json_diagnostics: bool,
     },
-    /// Transpile and compile `.rts` source code to the target platform
+    /// Transpile and compile `.rts` source code to the target platform or native executable
     Build {
         /// Path to the `.rts` file
         file: PathBuf,
         /// Compilation target: `native` (C99/SIMD/SoA), `unreal` (UE5 UHT .h/.cpp), `unity` (C-ABI + C# NativeArray), or `ts-sdk`
         #[arg(long = "target", default_value = "native")]
         target: String,
+        /// Write output directly to UTF-8 file (without BOM) instead of stdout
+        #[arg(short = 'o', long = "output")]
+        output: Option<PathBuf>,
+        /// Output directory for multi-file targets (`unreal` .h/.cpp, `unity` .rs/.cs, `native` .c/.exe)
+        #[arg(long = "out-dir")]
+        out_dir: Option<PathBuf>,
+        /// Compile generated C99 directly into a native executable binary via Clang/LLVM
+        #[arg(long = "bin")]
+        compile_bin: bool,
         /// Emit TypeScript SDK contract (`client.ts`) for Next.js/React frontends
         #[arg(long = "emit-ts-sdk")]
         emit_ts_sdk: bool,
+        /// Emit C/C++ ABI header (`<module>.h`) for public `.rts` functions
+        #[arg(long = "emit-header")]
+        emit_header: bool,
+        /// Emit debug symbols (`-g -O0` for LLDB/GDB source mapping via `#line`)
+        #[arg(short = 'g', long = "debug")]
+        debug_symbols: bool,
         /// Emit structured JSON AST diagnostics on failure
         #[arg(long = "json-diagnostics")]
         json_diagnostics: bool,
+        /// Link against external native C library (e.g., `-l raylib -l opengl32`)
+        #[arg(short = 'l', long = "link-lib")]
+        link_libs: Vec<String>,
+        /// Add directory to native library search path (`-L <dir>`)
+        #[arg(short = 'L', long = "lib-dir")]
+        lib_dirs: Vec<PathBuf>,
+        /// Add directory to C header include search path (`-I <dir>`)
+        #[arg(short = 'I', long = "include-dir")]
+        include_dirs: Vec<PathBuf>,
     },
+    /// Compile `.rts` to a native SIMD binary and execute it immediately
+    Run {
+        /// Path to the `.rts` file containing `pub fn main()`
+        file: PathBuf,
+        /// Emit debug symbols (`-g -O0` for LLDB/GDB source mapping via `#line`)
+        #[arg(short = 'g', long = "debug")]
+        debug_symbols: bool,
+        /// Emit structured JSON AST diagnostics on failure
+        #[arg(long = "json-diagnostics")]
+        json_diagnostics: bool,
+        /// Link against external native C library (e.g., `-l raylib -l opengl32`)
+        #[arg(short = 'l', long = "link-lib")]
+        link_libs: Vec<String>,
+        /// Add directory to native library search path (`-L <dir>`)
+        #[arg(short = 'L', long = "lib-dir")]
+        lib_dirs: Vec<PathBuf>,
+        /// Add directory to C header include search path (`-I <dir>`)
+        #[arg(short = 'I', long = "include-dir")]
+        include_dirs: Vec<PathBuf>,
+    },
+}
+
+fn find_clang_binary() -> Option<PathBuf> {
+    if Command::new("clang").arg("--version").output().is_ok() {
+        return Some(PathBuf::from("clang"));
+    }
+    let candidates = [
+        r"C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\Llvm\x64\bin\clang.exe",
+        r"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\Llvm\x64\bin\clang.exe",
+        r"C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\Llvm\x64\bin\clang.exe",
+        r"C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Tools\Llvm\x64\bin\clang.exe",
+        r"C:\Program Files\LLVM\bin\clang.exe",
+    ];
+    for c in candidates {
+        let p = PathBuf::from(c);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+fn write_utf8_no_bom(path: &Path, content: &str) {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            let _ = fs::create_dir_all(parent);
+        }
+    }
+    fs::write(path, content.as_bytes()).unwrap_or_else(|err| {
+        eprintln!("Failed to write '{}': {}", path.display(), err);
+        process::exit(1);
+    });
+}
+
+fn compile_c99_with_clang(
+    c_file: &Path,
+    bin_file: &Path,
+    include_dirs: &[PathBuf],
+    lib_dirs: &[PathBuf],
+    link_libs: &[String],
+    debug_symbols: bool,
+) {
+    let clang = find_clang_binary().unwrap_or_else(|| {
+        eprintln!("error: LLVM/Clang compiler ('clang') not found in PATH or Visual Studio LLVM tools.");
+        process::exit(1);
+    });
+
+    if let Some(parent) = bin_file.parent() {
+        if !parent.as_os_str().is_empty() {
+            let _ = fs::create_dir_all(parent);
+        }
+    }
+
+    let mut cmd = Command::new(&clang);
+    let flags: &[&str] = if debug_symbols {
+        &["-std=c11", "-g", "-O0", "-mavx2", "-mfma", "-Wall", "-Wextra", "-Werror"]
+    } else {
+        &["-std=c11", "-O3", "-mavx2", "-mfma", "-Wall", "-Wextra", "-Werror"]
+    };
+    cmd.args(flags)
+        .arg(c_file)
+        .arg("-o")
+        .arg(bin_file);
+
+    for inc in include_dirs {
+        cmd.arg(format!("-I{}", inc.display()));
+    }
+    for lib_dir in lib_dirs {
+        cmd.arg(format!("-L{}", lib_dir.display()));
+    }
+    for lib in link_libs {
+        cmd.arg(format!("-l{}", lib));
+    }
+
+    let status = cmd.status().unwrap_or_else(|err| {
+        eprintln!("Failed to invoke '{}': {}", clang.display(), err);
+        process::exit(1);
+    });
+
+    if !status.success() {
+        eprintln!("error: native C99 compilation failed via '{}'.", clang.display());
+        process::exit(status.code().unwrap_or(1));
+    }
+}
+
+fn scaffold_project(target_dir: &Path) {
+    let src_dir = target_dir.join("src");
+    let build_dir = target_dir.join("build");
+    let _ = fs::create_dir_all(&src_dir);
+    let _ = fs::create_dir_all(&build_dir);
+
+    let project_name = target_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("meu_projeto_rts");
+
+    let rts_toml = format!(
+        "[package]\nname = \"{}\"\nversion = \"0.1.0\"\ncompiler = \"1.4.0-rts\"\ntarget = \"native\"\n",
+        project_name
+    );
+    write_utf8_no_bom(&target_dir.join("rts.toml"), &rts_toml);
+
+    let gitignore = "/build/\n*.exe\n*.pdb\n*.obj\n*.o\n";
+    write_utf8_no_bom(&target_dir.join(".gitignore"), gitignore);
+
+    let main_rts = r#"module app.main;
+import core.hardware;
+import core.math;
+
+struct Limites {
+    max_temp: f32,
+}
+
+enum FalhaSensor {
+    Offline(u8),
+    Critico(f32),
+}
+
+@sealed_sig
+pub fn monitorar(
+    lim: Limites,
+    i2c: cap I2CBus<0x48>,
+    cooler: cap PWMPin<4>
+) -> Result<f32, FalhaSensor> {
+    let bruto: u16 = i2c.read_register_u16(0x00)
+        .map_err(|_| FalhaSensor::Offline(0x48))?;
+
+    let temp: f32 = (bruto as f32) * 0.0625;
+    if temp > lim.max_temp {
+        cooler.set_duty(100);
+        return Err(FalhaSensor::Critico(temp));
+    }
+
+    let duty: u8 = math::clamp(temp, 20.0, 80.0) as u8;
+    cooler.set_duty(duty);
+    return Ok(temp);
+}
+
+pub fn main() -> i32 {
+    let lim: Limites = Limites { max_temp: 85.0 };
+    let i2c: cap I2CBus<0x48> = I2CBus::new(0x48);
+    let cooler: cap PWMPin<4> = PWMPin::new(4);
+
+    let leitura: Result<f32, FalhaSensor> = self::monitorar(lim, i2c, cooler);
+    match leitura {
+        Ok(temp) => {
+            io::print_f32("[RustTS v1.4.0-rts] Temperatura Nominal (C): ", temp);
+            return 0;
+        },
+        Err(falha) => {
+            io::println("[RustTS v1.4.0-rts] Alerta: Falha de Sensor Detectada!");
+            return 1;
+        },
+    }
+}
+"#;
+    let main_rts_path = src_dir.join("main.rts");
+    if !main_rts_path.exists() {
+        write_utf8_no_bom(&main_rts_path, main_rts);
+    }
+
+    println!(
+        "[rtsc 1.4.0-rts] Initialized RustTS project in '{}'\n  -> Run project: rtsc run {}",
+        target_dir.display(),
+        main_rts_path.display()
+    );
 }
 
 fn main() {
@@ -59,17 +275,20 @@ fn main() {
     }
 
     match cli.command {
+        Some(Commands::Init { path }) => {
+            scaffold_project(&path);
+        }
         Some(Commands::Check {
             file,
             json_diagnostics,
         }) => {
             let file_str = file.to_string_lossy().replace('\\', "/");
-            let source = fs::read_to_string(&file).unwrap_or_else(|err| {
+            if let Err(err) = fs::metadata(&file) {
                 eprintln!("Failed to read '{}': {}", file_str, err);
                 process::exit(1);
-            });
+            }
 
-            let (_module, report) = compile_and_check(&source, &file_str);
+            let (_module, report) = compile_and_check_project(&file);
             if json_diagnostics {
                 println!("{}", report.to_json_pretty());
             } else {
@@ -83,16 +302,24 @@ fn main() {
         Some(Commands::Build {
             file,
             target,
+            output,
+            out_dir,
+            compile_bin,
             emit_ts_sdk,
+            emit_header,
+            debug_symbols,
             json_diagnostics,
+            link_libs,
+            lib_dirs,
+            include_dirs,
         }) => {
             let file_str = file.to_string_lossy().replace('\\', "/");
-            let source = fs::read_to_string(&file).unwrap_or_else(|err| {
+            if let Err(err) = fs::metadata(&file) {
                 eprintln!("Failed to read '{}': {}", file_str, err);
                 process::exit(1);
-            });
+            }
 
-            let (module_opt, report) = compile_and_check(&source, &file_str);
+            let (module_opt, report) = compile_and_check_project(&file);
             if report.status != "ok" {
                 if json_diagnostics {
                     println!("{}", report.to_json_pretty());
@@ -103,35 +330,193 @@ fn main() {
             }
 
             let module = module_opt.expect("Valid module AST");
+            let stem = file
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("module");
+
+            if emit_header {
+                let header_code = NativeCodegen::emit_c_header(&module);
+                if let Some(dir) = &out_dir {
+                    let h_path = dir.join(format!("{}.h", stem));
+                    write_utf8_no_bom(&h_path, &header_code);
+                    println!("[rtsc 1.4.0-rts] Emitted C/C++ ABI header: {}", h_path.display());
+                } else if let Some(out_path) = &output {
+                    let h_path = out_path.with_extension("h");
+                    write_utf8_no_bom(&h_path, &header_code);
+                    println!("[rtsc 1.4.0-rts] Emitted C/C++ ABI header: {}", h_path.display());
+                } else {
+                    let h_path = PathBuf::from("build").join(format!("{}.h", stem));
+                    write_utf8_no_bom(&h_path, &header_code);
+                    println!("[rtsc 1.4.0-rts] Emitted C/C++ ABI header: {}", h_path.display());
+                }
+            }
+
             if emit_ts_sdk || target == "ts-sdk" {
-                println!("{}", TsSdkCodegen::emit_typescript_sdk(&module));
+                let ts_code = TsSdkCodegen::emit_typescript_sdk(&module);
+                if let Some(out_path) = output {
+                    write_utf8_no_bom(&out_path, &ts_code);
+                    println!("[rtsc 1.4.0-rts] Emitted TypeScript SDK: {}", out_path.display());
+                } else if let Some(dir) = out_dir {
+                    let p = dir.join(format!("{}_sdk.ts", stem));
+                    write_utf8_no_bom(&p, &ts_code);
+                    println!("[rtsc 1.4.0-rts] Emitted TypeScript SDK: {}", p.display());
+                } else {
+                    println!("{}", ts_code);
+                }
                 return;
             }
+
             match target.as_str() {
                 "native" | "c99" => {
-                    println!("{}", NativeCodegen::emit_c99(&module));
+                    let c99_code = NativeCodegen::emit_c99(&module);
+                    let wants_bin = compile_bin
+                        || output
+                            .as_ref()
+                            .and_then(|p| p.extension())
+                            .and_then(|e| e.to_str())
+                            .map(|ext| ext.eq_ignore_ascii_case("exe") || ext == "out")
+                            .unwrap_or(false);
+
+                    if wants_bin {
+                        let build_dir = out_dir.unwrap_or_else(|| PathBuf::from("build"));
+                        let c_path = build_dir.join(format!("{}.c", stem));
+                        write_utf8_no_bom(&c_path, &c99_code);
+                        let bin_path = output.unwrap_or_else(|| {
+                            if cfg!(windows) {
+                                build_dir.join(format!("{}.exe", stem))
+                            } else {
+                                build_dir.join(stem)
+                            }
+                        });
+                        compile_c99_with_clang(&c_path, &bin_path, &include_dirs, &lib_dirs, &link_libs, debug_symbols);
+                        println!(
+                            "[rtsc 1.4.0-rts] Compiled native AVX2 binary: {}",
+                            bin_path.display()
+                        );
+                    } else if let Some(out_path) = output {
+                        write_utf8_no_bom(&out_path, &c99_code);
+                        println!("[rtsc 1.4.0-rts] Emitted C99 source: {}", out_path.display());
+                    } else if let Some(dir) = out_dir {
+                        let p = dir.join(format!("{}.c", stem));
+                        write_utf8_no_bom(&p, &c99_code);
+                        println!("[rtsc 1.4.0-rts] Emitted C99 source: {}", p.display());
+                    } else {
+                        println!("{}", c99_code);
+                    }
                 }
                 "unreal" | "unreal-cpp" => {
-                    for artifact in UnrealCodegen::emit_unreal_actor(&module) {
-                        println!("// === FILE: {} ===\n{}", artifact.header_filename, artifact.header_code);
-                        println!("// === FILE: {} ===\n{}", artifact.source_filename, artifact.source_code);
+                    let artifacts = UnrealCodegen::emit_unreal_actor(&module);
+                    if let Some(dir) = out_dir.or_else(|| {
+                        output
+                            .as_ref()
+                            .and_then(|p| p.parent().map(|par| par.to_path_buf()))
+                    }) {
+                        for artifact in artifacts {
+                            let h_path = dir.join(&artifact.header_filename);
+                            let cpp_path = dir.join(&artifact.source_filename);
+                            write_utf8_no_bom(&h_path, &artifact.header_code);
+                            write_utf8_no_bom(&cpp_path, &artifact.source_code);
+                            println!(
+                                "[rtsc 1.4.0-rts] Emitted Unreal UHT files: {}, {}",
+                                h_path.display(),
+                                cpp_path.display()
+                            );
+                        }
+                    } else {
+                        for artifact in artifacts {
+                            println!(
+                                "// === FILE: {} ===\n{}",
+                                artifact.header_filename, artifact.header_code
+                            );
+                            println!(
+                                "// === FILE: {} ===\n{}",
+                                artifact.source_filename, artifact.source_code
+                            );
+                        }
                     }
                 }
                 "unity" | "unity-burst" => {
                     let out = UnityCodegen::emit_unity_bindings(&module);
-                    println!("// === RUST C-ABI PLUGIN ===\n{}", out.rust_ffi_code);
-                    println!("// === C# NATIVEARRAY WRAPPER ===\n{}", out.csharp_wrapper_code);
+                    if let Some(dir) = out_dir.or_else(|| {
+                        output
+                            .as_ref()
+                            .and_then(|p| p.parent().map(|par| par.to_path_buf()))
+                    }) {
+                        let rs_path = dir.join(format!("{}_unity_plugin.rs", stem));
+                        let cs_path = dir.join("RtscNativeBridge.cs");
+                        write_utf8_no_bom(&rs_path, &out.rust_ffi_code);
+                        write_utf8_no_bom(&cs_path, &out.csharp_wrapper_code);
+                        println!(
+                            "[rtsc 1.4.0-rts] Emitted Unity FFI files: {}, {}",
+                            rs_path.display(),
+                            cs_path.display()
+                        );
+                    } else {
+                        println!("// === RUST C-ABI PLUGIN ===\n{}", out.rust_ffi_code);
+                        println!("// === C# NATIVEARRAY WRAPPER ===\n{}", out.csharp_wrapper_code);
+                    }
                 }
                 other => {
-                    eprintln!("Unsupported target '{}'. Valid targets: native, unreal, unity", other);
+                    eprintln!(
+                        "Unsupported target '{}'. Valid targets: native, unreal, unity, ts-sdk",
+                        other
+                    );
                     process::exit(1);
                 }
             }
         }
+        Some(Commands::Run {
+            file,
+            debug_symbols,
+            json_diagnostics,
+            link_libs,
+            lib_dirs,
+            include_dirs,
+        }) => {
+            let file_str = file.to_string_lossy().replace('\\', "/");
+            if let Err(err) = fs::metadata(&file) {
+                eprintln!("Failed to read '{}': {}", file_str, err);
+                process::exit(1);
+            }
+
+            let (module_opt, report) = compile_and_check_project(&file);
+            if report.status != "ok" {
+                if json_diagnostics {
+                    println!("{}", report.to_json_pretty());
+                } else {
+                    eprintln!("{}", report.to_human_terminal());
+                }
+                process::exit(1);
+            }
+
+            let module = module_opt.expect("Valid module AST");
+            let c99_code = NativeCodegen::emit_c99(&module);
+            let stem = file
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("app");
+            let build_dir = PathBuf::from("build");
+            let c_path = build_dir.join(format!("{}.c", stem));
+            let bin_path = if cfg!(windows) {
+                build_dir.join(format!("{}.exe", stem))
+            } else {
+                build_dir.join(stem)
+            };
+
+            write_utf8_no_bom(&c_path, &c99_code);
+            compile_c99_with_clang(&c_path, &bin_path, &include_dirs, &lib_dirs, &link_libs, debug_symbols);
+
+            let run_status = Command::new(&bin_path).status().unwrap_or_else(|err| {
+                eprintln!("Failed to execute '{}': {}", bin_path.display(), err);
+                process::exit(1);
+            });
+
+            process::exit(run_status.code().unwrap_or(0));
+        }
         None => {
-            eprintln!("Usage: rtsc check <file.rts> [--json-diagnostics] | rtsc build <file.rts> --target=<native|unreal|unity> | rtsc --export-gbnf");
+            eprintln!("Usage: rtsc init [dir] | rtsc check <file.rts> | rtsc build <file.rts> [-o <out>] [--bin] | rtsc run <file.rts>");
             process::exit(1);
         }
     }
 }
-

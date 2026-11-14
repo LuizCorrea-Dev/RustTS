@@ -1,146 +1,146 @@
-# Guia Oficial de Instalação e Uso — RustTS (`rtsc v1.0.0-rts`)
+<p align="center">
+  <img src="./rustts_language_logo.png" alt="RustTS Logo" width="220">
+</p>
+
+# Guia Oficial de Instalação e Uso — RustTS (`rtsc v1.4.0-rts`)
 
 Bem-vindo ao **RustTS (`.rts`)**, o compilador determinístico de sistemas, motores em tempo real e controle físico de hardware baseado em **Capacidades (`cap`)**, **Arenas Escopadas ($O(1)$)** e geração nativa **SoA/AVX2**.
 
-Este guia é destinado a **usuários e desenvolvedores** que desejam instalar e utilizar o `rtsc` a partir do GitHub — sem precisar configurar nenhuma cadeia de compilação complexa para começar.
+Este guia cobre instalação via código-fonte (`v1.4.0-rts`), instaladores pré-compilados, manual completo da CLI `rtsc`, depuração `#line` e execução dos exemplos inclusos.
 
 ---
 
-## 1. Instalação Rápida (Binários Pré-Compilados)
+## 1. Instalação
 
-Os executáveis oficiais da release **`v1.0.0`** estão publicados na aba [GitHub Releases](https://github.com/LuizCorrea-Dev/RustTS/releases/tag/v1.0.0) e possuem **zero dependências externas** para executar análise semântica e transpilações.
+### A. Versão Atual `v1.4.0-rts` a Partir do Código-Fonte (Recomendado)
 
-### Windows (PowerShell)
-Abra o PowerShell e execute:
-```powershell
-irm https://raw.githubusercontent.com/LuizCorrea-Dev/RustTS/main/scripts/install.ps1 | iex
-```
-O instalador baixa automaticamente `rtsc-windows-x64.exe` para `%USERPROFILE%\.rtsc\bin\rtsc.exe` e adiciona essa pasta ao `PATH` do usuário.
-
-> **Dica:** Caso o terminal atual ainda não reconheça o comando `rtsc` imediatamente após instalar, feche e reabra o PowerShell.
-
-### Linux e macOS (Bash / Zsh)
-Execute no terminal:
-```bash
-curl -fsSL https://raw.githubusercontent.com/LuizCorrea-Dev/RustTS/main/scripts/install.sh | bash
-```
-O script instala o binário em `~/.rtsc/bin/rtsc` (`rtsc-linux-x64` ou `rtsc-macos-arm64`) com permissão de execução. Adicione ao seu perfil (`~/.bashrc` ou `~/.zshrc`):
-```bash
-export PATH="$HOME/.rtsc/bin:$PATH"
-```
-
-### Download Manual (GitHub Releases)
-Você também pode baixar o binário diretamente da página [Releases `v1.0.0`](https://github.com/LuizCorrea-Dev/RustTS/releases/tag/v1.0.0):
-- **Windows x64:** `rtsc-windows-x64.exe`
-- **Linux x64:** `rtsc-linux-x64`
-- **macOS (Apple Silicon ARM64):** `rtsc-macos-arm64`
-
-### Validar a Instalação
-```bash
-rtsc --version
-```
-Saída esperada:
-```text
-rtsc 1.0.0-rts
-```
-
----
-
-## 2. Compilar a Partir do Código-Fonte (Opcional)
-
-Se você clonou o repositório para estudar o compilador, contribuir ou gerar binários para outra plataforma, será necessário ter o toolchain **Rust (`cargo` / `rustc`)** instalado (ex.: via [rustup.rs](https://rustup.rs) ou `winget install Rustlang.Rustup` no Windows):
+Com o toolchain **Rust (`cargo` / `rustc`)** instalado (ex.: via [rustup.rs](https://rustup.rs) ou `winget install Rustlang.Rustup` no Windows):
 
 ```bash
 git clone https://github.com/LuizCorrea-Dev/RustTS.git
 cd RustTS
 
-# Executa os 13 testes unitários do compilador (TypeChecker, Match, Capacidades, Arenas e Codegen)
+# Executa os 22 testes unitários do compilador
 cargo test
 
 # Compila o executável otimizado (LTO fat, opt-level 3)
 cargo build --release
 
-# Instala globalmente em ~/.cargo/bin
+# Instala globalmente em ~/.cargo/bin (ou %USERPROFILE%\.cargo\bin)
 cargo install --path .
 ```
 
-### Requisito Opcional para Compilação de Código Nativo (`.c` → Binário AVX2)
-* Para rodar `rtsc check`, `--export-gbnf`, `--emit-ts-sdk`, `--target=unreal` e `--target=unity`, o `rtsc` **não precisa de nenhum compilador externo**.
-* Para compilar o código **C99** emitido por `--target=native` em um executável `.exe`/ELF ou DLL com vetorização **AVX2/FMA3**, utilize **LLVM/Clang** (ou GCC compatível):
+### B. Instaladores Pré-Compilados (GitHub Release [`v1.0.0`](https://github.com/LuizCorrea-Dev/RustTS/releases/tag/v1.0.0))
+
+Os binários pré-compilados da tag `v1.0.0` possuem **zero dependências externas** para análise semântica e transpilações:
+
+**Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/LuizCorrea-Dev/RustTS/main/scripts/install.ps1 | iex
+```
+
+**Linux e macOS (Bash / Zsh):**
+```bash
+curl -fsSL https://raw.githubusercontent.com/LuizCorrea-Dev/RustTS/main/scripts/install.sh | bash
+# Adicione ao perfil se necessário:
+export PATH="$HOME/.rtsc/bin:$PATH"
+```
+
+### Validar a Instalação
+```bash
+rtsc --version
+# Saída esperada na v1.4.0-rts: rtsc 1.4.0-rts
+```
+
+### Requisito Opcional para Execução Nativa (`rtsc run` e `--bin`)
+* Para rodar `rtsc check`, `--export-gbnf`, `--emit-ts-sdk`, `--emit-header`, `--target=unreal` e `--target=unity`, o `rtsc` **não precisa de compilador C externo**.
+* Para compilar e executar código nativo AVX2/FMA3 diretamente via `rtsc run` ou `rtsc build --bin`, utilize **LLVM/Clang** (localizado automaticamente no `PATH` ou no diretório LLVM do Visual Studio no Windows):
   * **Windows:** `winget install LLVM.LLVM` (ou LLVM incluso no Visual Studio Build Tools)
   * **Linux (Debian/Ubuntu):** `sudo apt install clang`
   * **macOS:** `xcode-select --install`
 
 ---
 
-## 3. Manual de Comandos do Compilador (`rtsc`)
+## 2. Manual de Comandos do Compilador (`rtsc 1.4.0-rts`)
 
-### 3.1. Validar Contratos, Tipos, Arenas e Capacidades (`rtsc check`)
-Executa verificação estática completa (códigos `RTS-E0301` a `RTS-E0900`):
-
+### 2.1. Criar Novo Projeto (`rtsc init`)
+Gera `rts.toml`, `.gitignore`, `src/main.rts` (com `pub fn main() -> i32`) e `build/`:
 ```bash
-# Saída legível para humanos no terminal:
+rtsc init meu_projeto
+```
+
+### 2.2. Validar Contratos, Tipos, Arenas e Múltiplos Módulos (`rtsc check`)
+Executa verificação estática completa (`RTS-E0101` a `RTS-E0900`), incluindo resolução recursiva de `import` em disco (`RTS-E0102`):
+```bash
 rtsc check examples/thermal_control.rts
-
-# Saída estruturada em JSON para pipelines de auto-correção por IA:
-rtsc check examples/thermal_control.rts --json-diagnostics
+rtsc check examples/kanori_zone_sim/src/main.rts --json-diagnostics
 ```
-Saída esperada em arquivos válidos:
+Saída esperada:
 ```text
-[rtsc 1.0.0-rts] OK: 0 capability violations, 0 transitive leaks, 0 capability forgeries, 0 arena escapes.
+[rtsc 1.4.0-rts] OK: 0 capability violations, 0 transitive leaks, 0 capability forgeries, 0 arena escapes.
 ```
 
-### 3.2. Gerar Código Nativo C99 + AVX2/SoA (`--target=native`)
-Transpila o módulo `.rts` para C99 com descritores SoA alinhados em cache line (`64 bytes`), *Strip-Mining* em L1d e laços vetorizados:
-
+### 2.3. Compilar e Executar Imediatamente (`rtsc run`)
+Transpila o projeto `.rts` (incluindo módulos importados) para C99 em `build/`, invoca o Clang e executa o binário nativo:
 ```bash
-rtsc build examples/ballistics_10k_benchmark.rts --target=native > ballistics_gen.c
+# Release otimizado (-O3 -mavx2 -mfma -Wall -Wextra -Werror)
+rtsc run examples/kanori_zone_sim/src/main.rts
+
+# Modo debug (-g -O0) com mapeamento `#line` para GDB / LLDB / Visual Studio
+rtsc run examples/kanori_zone_sim/src/main.rts -g
+
+# Linkando bibliotecas C externas (-l, -L, -I)
+rtsc run src/main.rts -l raylib -L ./libs -I ./include
 ```
 
-### 3.3. Gerar Atores C++ para Unreal Engine 5 (`--target=unreal`)
-Emite cabeçalho `.h` e implementação `.cpp` compatíveis com UHT (*Unreal Header Tool*):
-
+### 2.4. Gerar Código Nativo C99, Header `.h` e Binários (`rtsc build --target=native`)
 ```bash
-rtsc build examples/combat_unreal.rts --target=unreal > combat_unreal_ue5.cpp
+# Emitir .c e header ABI C/C++ (.h com #pragma once e extern "C") em diretório dedicado
+rtsc build examples/kanori_zone_sim/src/main.rts --out-dir build/kanori --emit-header
+
+# Compilar diretamente para executável AVX2
+rtsc build src/main.rts --bin -o build/app.exe
 ```
 
-### 3.4. Gerar Plugin Rust C-ABI + Wrapper C# Zero-Copy para Unity (`--target=unity`)
-Emite a ponte FFI `extern "C"` e o wrapper C# operando diretamente sobre `NativeArray<T>` sem Garbage Collector:
-
+### 2.5. Gerar Atores C++ para Unreal Engine 5 (`--target=unreal`)
+Emite pares `.h` e `.cpp` compatíveis com UHT (*Unreal Header Tool*):
 ```bash
-rtsc build examples/engine_physics.rts --target=unity > engine_physics_unity.txt
+rtsc build examples/combat_unreal.rts --target=unreal --out-dir build/unreal
 ```
 
-### 3.5. Gerar Cliente TypeScript Tipado para Frontend (`--emit-ts-sdk`)
-Gera contratos TypeScript seguros (`u64`/`i64` mapeados para `string` contra truncamento IEEE-754 e retornos `RtsResult<T, E>` sem `throw`):
-
+### 2.6. Gerar Plugin Rust C-ABI + Wrapper C# Zero-Copy para Unity (`--target=unity`)
+Emite `rtsc_plugin.rs` e `RtscNativeBridge.cs` operando sobre `NativeArray<T>`:
 ```bash
-rtsc build examples/telemetry_server.rts --emit-ts-sdk > telemetry_client_sdk.ts
+rtsc build examples/engine_physics.rts --target=unity --out-dir build/unity
 ```
 
-### 3.6. Exportar Gramática Formal GBNF (`--export-gbnf`)
-Exporta a gramática completa da versão `v1.0.0-rts` para *Constrained Decoding* em motores LLM (`llama.cpp`, `vLLM`):
+### 2.7. Gerar Cliente TypeScript Tipado (`--emit-ts-sdk`)
+```bash
+rtsc build examples/telemetry_server.rts --emit-ts-sdk -o build/telemetry_client_sdk.ts
+```
 
+### 2.8. Exportar Gramática Formal GBNF (`--export-gbnf`)
+Exporta a gramática completa da versão `v1.4.0-rts` para *Constrained Decoding* em motores LLM (`llama.cpp`, `vLLM`):
 ```bash
 rtsc --export-gbnf > rustts.gbnf
 ```
 
 ---
 
-## 4. Executando os Exemplos e Benchmarks Inclusos
-
-Os exemplos oficiais ficam na pasta `examples/` do repositório:
+## 3. Executando os Exemplos e Showcase Inclusos
 
 | Arquivo `.rts` | Domínio / Recurso Demonstrado |
 | :--- | :--- |
+| `examples/kanori_zone_sim/src/main.rts` | Showcase multi-arquivo `v1.4.0-rts` (`import`, `impl Struct`, `core.math`, `Option<f32>`, `extern "C" fn`, `[f32; 4]`, `while` + `continue`/`break`, `#line -g`) |
 | `examples/thermal_control.rts` | Hardware embarcado (`I2CBus`, `PWMPin`, `TryOp ?`, `match` exaustivo, `while`) |
 | `examples/ballistics_10k_benchmark.rts` | Simulação ECS de 10.000 projéteis com `FrameArena`, `ReadFrameArena` e Strip-Mining L1d |
 | `examples/engine_physics.rts` | Desdobramento vetorial `vec3` em colunas SoA + detecção de colisão |
 | `examples/combat_unreal.rts` | Gameplay / replicação direcionada ao backend Unreal Engine 5 |
 | `examples/telemetry_server.rts` | API de servidor com `SqlRead<T>`, `RequestArena` e geração `--emit-ts-sdk` |
 
-Para validar todos os exemplos via CLI:
+Execução do showcase multi-arquivo KANORI e checagem de exemplos:
 ```bash
+rtsc run examples/kanori_zone_sim/src/main.rts -g
 rtsc check examples/thermal_control.rts
 rtsc check examples/ballistics_10k_benchmark.rts
 rtsc check examples/engine_physics.rts
@@ -148,86 +148,28 @@ rtsc check examples/combat_unreal.rts
 rtsc check examples/telemetry_server.rts
 ```
 
-Para compilar e executar o benchmark de balística de 10.000 projéteis com **Clang** (x86_64 AVX2 + FMA3):
-
+Compilação manual dos harnesses de benchmark C99 com Clang (`-O3 -mavx2 -mfma`):
 ```bash
-clang -std=c11 -O3 -mavx2 -mfma -Wall -Wextra -Werror examples/ballistics_10k_benchmark.c -o ballistics_bench
-./ballistics_bench
-```
-
-Da mesma forma, os harnesses de física e controle térmico podem ser compilados e executados diretamente:
-```bash
-clang -std=c11 -O3 -mavx2 -mfma -Wall -Wextra -Werror examples/engine_physics_benchmark.c -o engine_physics_bench
-./engine_physics_bench
-
-clang -std=c11 -O3 -mavx2 -mfma -Wall -Wextra -Werror examples/thermal_control_benchmark.c -o thermal_control_bench
-./thermal_control_bench
+clang -std=c11 -O3 -mavx2 -mfma -Wall -Wextra -Werror examples/ballistics_10k_benchmark.c -o build/ballistics_bench
+clang -std=c11 -O3 -mavx2 -mfma -Wall -Wextra -Werror examples/engine_physics_benchmark.c -o build/engine_physics_bench
+clang -std=c11 -O3 -mavx2 -mfma -Wall -Wextra -Werror examples/thermal_control_benchmark.c -o build/thermal_control_bench
 ```
 
 ---
 
-## 5. Criando Seu Primeiro Projeto em RustTS
+## 4. Extensão VS Code
 
-1. Crie um arquivo chamado `meu_sensor.rts`:
-
-```rust
-module fabrica.meu_sensor;
-import core.hardware;
-import core.math;
-
-struct Limites {
-    max_temp: f32,
-}
-
-enum FalhaSensor {
-    Offline(u8),
-    Critico(f32),
-}
-
-pub fn monitorar(
-    lim: Limites,
-    i2c: cap I2CBus<0x48>,
-    cooler: cap PWMPin<4>
-) -> Result<f32, FalhaSensor> {
-    let bruto: u16 = i2c.read_register_u16(0x00)
-        .map_err(|_| FalhaSensor::Offline(0x48))?;
-
-    let temp: f32 = (bruto as f32) * 0.0625;
-    if temp > lim.max_temp {
-        cooler.set_duty(100);
-        return Err(FalhaSensor::Critico(temp));
-    }
-
-    let duty: u8 = math::clamp(temp, 20.0, 80.0) as u8;
-    cooler.set_duty(duty);
-    return Ok(temp);
-}
-```
-
-2. Verifique estaticamente tipos, capacidades e escopos de memória:
-```bash
-rtsc check meu_sensor.rts
-```
-Saída esperada:
-```text
-[rtsc 1.0.0-rts] OK: 0 capability violations, 0 transitive leaks, 0 capability forgeries, 0 arena escapes.
-```
-
-3. Gere o código C99 determinístico:
-```bash
-rtsc build meu_sensor.rts --target=native > meu_sensor.c
-```
+O pacote oficial de *syntax highlighting* TextMate (`.tmLanguage.json`) e configuração de linguagem para arquivos `.rts` está disponível em [`editors/vscode-rustts/`](./editors/vscode-rustts/package.json).
 
 ---
 
-## 6. Solução Rápida de Problemas
+## 5. Solução Rápida de Problemas
 
-- **`rtsc` não encontrado no Windows após rodar `install.ps1`:**
-  Feche e abra uma nova janela do PowerShell para recarregar o `PATH`, ou adicione manualmente `%USERPROFILE%\.rtsc\bin` às Variáveis de Ambiente do Usuário.
+- **`rtsc` não encontrado no Windows após rodar `install.ps1` ou `cargo install`:**
+  Feche e reabra o terminal para recarregar o `PATH`, ou garanta que `%USERPROFILE%\.cargo\bin` (ou `%USERPROFILE%\.rtsc\bin`) esteja nas Variáveis de Ambiente do Usuário.
 - **Erro de ExecutionPolicy no PowerShell ao rodar script local:**
-  O comando remoto `irm ... | iex` roda direto em memória; caso execute um arquivo `.ps1` baixado manualmente, rode antes na sessão:
-  `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`.
+  Caso execute um arquivo `.ps1` baixado manualmente, rode antes na sessão: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`.
 - **`rtsc` não encontrado no Linux/macOS após `install.sh`:**
-  Garanta que `~/.rtsc/bin` esteja no seu `PATH` (`export PATH="$HOME/.rtsc/bin:$PATH"`) e recarregue o shell (`source ~/.bashrc` ou `source ~/.zshrc`).
-- **`Invalid lexical token` na linha 1:1 ao criar arquivos pelo Windows PowerShell:**
-  Salve arquivos `.rts` em **UTF-8 sem BOM** (`UTF-8 without BOM`). No PowerShell 5.1, `Set-Content -Encoding UTF8` adiciona um BOM (`U+FEFF`) no início do arquivo; prefira editores como VS Code (UTF-8) ou `Out-File` / `[System.IO.File]::WriteAllText(..., [System.Text.UTF8Encoding]::new($false))`.
+  Garanta que `~/.rtsc/bin` esteja no `PATH` (`export PATH="$HOME/.rtsc/bin:$PATH"`) e recarregue o shell.
+- **Arquivos salvos com UTF-8 BOM no Windows:**
+  A partir da `v1.1.0-rts`, o `rtsc` remove o BOM `\u{FEFF}` automaticamente no lexer. Ainda assim, recomenda-se usar **UTF-8 sem BOM** para compatibilidade com ferramentas externas.

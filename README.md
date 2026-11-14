@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="./rustts_language_logo.png" alt="RustTS Logo" width="220">
+</p>
+
 # RustTS (`.rts`) — Deterministic Systems & Engine Language for Humans and AI
 
 [![Compiler: rtsc](https://img.shields.io/badge/compiler-rtsc%20(Rust%2FMLIR)-orange.svg)](#)
@@ -169,7 +173,18 @@ fn get_user_profile(
 
 ---
 
-## Instalação Rápida (`v1.0.0-rts`)
+## Instalação Rápida (`v1.4.0-rts`)
+
+**Via código-fonte (`v1.4.0-rts` — recomendado, requer Rust/Cargo):**
+```bash
+git clone https://github.com/LuizCorrea-Dev/RustTS.git
+cd RustTS
+cargo install --path .
+rtsc --version
+# rtsc 1.4.0-rts
+```
+
+**Instaladores pré-compilados (Release GitHub [`v1.0.0`](https://github.com/LuizCorrea-Dev/RustTS/releases/tag/v1.0.0)):**
 
 **Windows (PowerShell):**
 ```powershell
@@ -181,32 +196,36 @@ irm https://raw.githubusercontent.com/LuizCorrea-Dev/RustTS/main/scripts/install
 curl -fsSL https://raw.githubusercontent.com/LuizCorrea-Dev/RustTS/main/scripts/install.sh | bash
 ```
 
-Consulte o **[Guia Completo de Instalação e Uso (`INSTALACAO_E_USO.md`)](./INSTALACAO_E_USO.md)** para download manual em [Releases](https://github.com/LuizCorrea-Dev/RustTS/releases/tag/v1.0.0), compilação a partir do código-fonte, exemplos de benchmark e tutorial passo a passo.
+Consulte o **[Guia Completo de Instalação e Uso (`INSTALACAO_E_USO.md`)](./INSTALACAO_E_USO.md)** para detalhes da toolchain, compilação AVX2/Clang e tutorial passo a passo.
 
 ---
 
-## Interface de Linha de Comando (`rtsc`)
+## Interface de Linha de Comando (`rtsc 1.4.0-rts`)
 
-O compilador `rtsc` centraliza a validação, compilação cruzada e integração com motores e agentes de IA:
+O compilador `rtsc` centraliza criação de projetos, verificação, compilação nativa e depuração:
 
 ```bash
-# 1. Validar código com saída humana ou JSON estruturado (< 15ms)
+# 1. Criar novo projeto autônomo com `pub fn main()` e `rts.toml`
+rtsc init meu_projeto
+
+# 2. Compilar via LLVM/Clang e executar diretamente (use `-g` para símbolos `#line` + `-O0`)
+rtsc run examples/kanori_zone_sim/src/main.rts
+rtsc run examples/kanori_zone_sim/src/main.rts -g
+
+# 3. Validar código e projetos multi-arquivo com saída humana ou JSON (< 15ms)
 rtsc check examples/thermal_control.rts
 rtsc check examples/thermal_control.rts --json-diagnostics
 
-# 2. Gerar código C99 nativo (SoA + Strip-Mining L1d + AVX2/FMA3)
-rtsc build examples/ballistics_10k_benchmark.rts --target=native > ballistics_gen.c
+# 4. Gerar C99 AVX2/SoA, header C/C++ (`--emit-header`) ou binário (`--bin`), com linkagem externa (`-l/-L/-I`)
+rtsc build examples/kanori_zone_sim/src/main.rts --out-dir build/kanori --emit-header
+rtsc build src/main.rts --bin -o build/app.exe -l raylib -L ./lib -I ./include
 
-# 3. Transpilar módulo de Gameplay/GAS para Unreal Engine 5 (.h e .cpp UHT)
-rtsc build examples/combat_unreal.rts --target=unreal > combat_unreal_ue5.cpp
+# 5. Transpilar módulos Unreal Engine 5 (.h/.cpp UHT) e Unity (C-ABI + NativeArray<T>)
+rtsc build examples/combat_unreal.rts --target=unreal --out-dir build/unreal
+rtsc build examples/engine_physics.rts --target=unity --out-dir build/unity
 
-# 4. Gerar Plugin C-ABI + Wrapper C# Zero-Copy (NativeArray<T>) para Unity
-rtsc build examples/engine_physics.rts --target=unity > engine_physics_unity.txt
-
-# 5. Gerar SDK TypeScript tipado (Next.js/React) a partir de servidor .rts
-rtsc build examples/telemetry_server.rts --emit-ts-sdk > telemetry_client_sdk.ts
-
-# 6. Exportar a gramática formal GBNF para restringir geração de tokens em LLMs locais
+# 6. Gerar SDK TypeScript tipado (Next.js/React) e gramática GBNF para LLMs
+rtsc build examples/telemetry_server.rts --emit-ts-sdk -o build/telemetry_client_sdk.ts
 rtsc --export-gbnf > rustts.gbnf
 ```
 
@@ -239,22 +258,25 @@ Quando um agente de IA tenta violar uma regra de memória ou permissão de hardw
 
 ## Estrutura do Repositório e Documentação
 
-* [`INSTALACAO_E_USO.md`](./INSTALACAO_E_USO.md) — **Guia Oficial de Instalação e Uso:** Instalação em 1 linha (`install.ps1` / `install.sh`), binários de release, manual da CLI `rtsc` e solução de problemas.
-* [`INICIANDO_UM_PROJETO.md`](./INICIANDO_UM_PROJETO.md) — **Tutorial: Iniciando um Projeto com RustTS (`v1.0.0-rts`):** Estrutura de pastas, primeiro módulo `.rts`, conexão com host C99 (`main.c`) e compilação AVX2/FMA.
-* [`Guia_Interativo_e_Documentacao_RustTS.html`](./Guia_Interativo_e_Documentacao_RustTS.html) — **Guia Interativo & Documentação HTML:** Dashboard interativo com documentação completa da linguagem e Cheat Sheet.
+* [`INSTALACAO_E_USO.md`](./INSTALACAO_E_USO.md) — **Guia Oficial de Instalação e Uso (`v1.4.0-rts`):** Instalação, build via Cargo, manual da CLI `rtsc`, exemplos e solução de problemas.
+* [`INICIANDO_UM_PROJETO.md`](./INICIANDO_UM_PROJETO.md) — **Tutorial: Iniciando um Projeto com RustTS (`v1.4.0-rts`):** Fluxo com `rtsc init`, `pub fn main()`, `rtsc run [-g]`, projetos multi-arquivo (`import`), FFI e exportação `--emit-header`.
+* [`Guia_Interativo_e_Documentacao_RustTS.html`](./Guia_Interativo_e_Documentacao_RustTS.html) — **Guia Interativo & Documentação HTML:** Dashboard interativo com documentação completa da linguagem e Cheat Sheet (`v1.4.0-rts`).
 * [`CONTRIBUTING.md`](./CONTRIBUTING.md) — **Guia de Contribuição:** Mapa do compilador (`src/`), padrões de código, suíte `cargo test` e checklist para Pull Requests.
-* [`devlog.md`](./devlog.md) — **Devlog & Cronologia (`v0.1.0-rts` → `v1.0.0-rts`):** Histórico técnico completo de versões, auditorias, suíte `cargo test` (`13/13`) e benchmarks AVX2/SoA.
-* [`RustTS_guia.md`](./RustTS_guia.md) — **Constituição e Matriz de Regras da Linguagem:** Especificação completa de sintaxe, memória, capacidades, proibições e governança de evolução.
+* [`devlog.md`](./devlog.md) — **Devlog & Cronologia (`v0.1.0-rts` → `v1.4.0-rts`):** Histórico técnico completo de versões, auditorias, suíte `cargo test` (`22/22`) e benchmarks AVX2/SoA.
+* [`RustTS_guia.md`](./RustTS_guia.md) — **Matriz de Escopo Operacional e Domínios:** Regras de aplicação Tier 1 / Tier 2 / Tier 0 e integração com TypeScript SDK.
+* [`editors/vscode-rustts/`](./editors/vscode-rustts/package.json) — **Extensão Oficial VS Code:** Syntax highlighting TextMate e configuração de linguagem para arquivos `.rts`.
+* [`examples/kanori_zone_sim/`](./examples/kanori_zone_sim/src/main.rts) — **Showcase Multi-Arquivo KANORI:** Projeto integrado com `import`, `impl Struct`, `core.math`, `Option<T>`, `extern "C"` e `rtsc run -g`.
 * [`agenteRTS.md`](./agenteRTS.md) — **System Prompt do Agente Especialista:** Configuração de contexto para transformar LLMs em engenheiros de compiladores (`COMPILER-DEV`) e programadores nativos RustTS (`RTS-CODER`).
 ---
 
 ## Roadmap de Implementação (`rtsc`)
 
-- [x] **Fase 0:** Especificação formal da arquitetura, regras de escopo, sistema de Arenas e capacidades (`cap`).
-- [x] **Fase 1 (Front-End Core):** Lexer (`logos`), Parser recursivo, AST estrita e exportador de gramática GBNF (`rtsc --export-gbnf`).
-- [x] **Fase 2 (Análise Semântica):** *TypeChecker* (`RTS-E0301`), `match` exaustivo (`RTS-E0302`), *Capability Checker* (`RTS-E0402`–`E0405`), validador de escopo de Arenas (`Static`, `Level`, `Frame`, `Request`) e `--json-diagnostics`.
-- [x] **Fase 3 (Backends `v1.0.0-rts`):** Gerador C99 SIMD/SoA (`64B`, Strip-Mining L1d AVX2/FMA3), gerador Unreal Engine UHT (`.h`/`.cpp`), gerador Unity C-ABI + `NativeArray<T>` e gerador `--emit-ts-sdk`.
-- [ ] **Fase 4 (Próxima Fronteira):** Integração direta MLIR/LLVM, SPIR-V para shaders GPU e sandbox WASI com *Fuel Metering*.
+- [x] **Fase 1 (`v0.1.0` → `v1.0.0-rts`):** Front-end (`logos` + parser LL), GBNF, `TypeChecker` (`RTS-E0301`), `match` exaustivo (`RTS-E0302`), capacidades (`RTS-E0402`–`E0405`), arenas $O(1)$ (`RTS-E0501`) e codegen C99 AVX2/SoA, Unreal UHT, Unity C-ABI e TS SDK.
+- [x] **Fase 2 (`v1.1.0-rts`):** Autonomia da CLI (`rtsc init`, `rtsc run`, `-o`, `--out-dir`, `--bin`), remoção de UTF-8 BOM, `RTS_UNUSED`, `io::*` e entrypoint nativo `pub fn main()`.
+- [x] **Fase 3 (`v1.2.0-rts`):** Projetos multi-arquivo (`import` recursivo com detecção de ciclos e `RTS-E0102`), forward declarations C99, `Option<T>`, arrays `[T; N]` e `break`/`continue`.
+- [x] **Fase 4 (`v1.3.0-rts`):** FFI `extern "C" fn` blindado por `cap` com remoção zero-overhead, blocos `impl Struct`, biblioteca matemática `core.math` e flags `-l`, `-L`, `-I`.
+- [x] **Fase 5 (`v1.4.0-rts`):** Diretivas `#line` + flag `-g`/`--debug`, exportação de header C/C++ (`--emit-header`), extensão VS Code e showcase multi-arquivo `examples/kanori_zone_sim/` (`cargo test` **22/22 PASS**).
+- [ ] **Próxima Fronteira (`v2.0+`):** Backend direto MLIR/LLVM, SPIR-V para shaders GPU e sandbox WASI com *Fuel Metering*.
 
 ---
 

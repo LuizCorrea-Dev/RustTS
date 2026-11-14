@@ -1,4 +1,8 @@
-# RustTS (`rtsc`) — Devlog de Evolução Arquitetural, Versões e Testes (`v0.1.0-rts` → `v1.0.0-rts`)
+<p align="center">
+  <img src="./rustts_language_logo.png" alt="RustTS Logo" width="220">
+</p>
+
+# RustTS (`rtsc`) — Devlog de Evolução Arquitetural, Versões e Testes (`v0.1.0-rts` → `v1.4.0-rts`)
 
 Registro técnico cronológico da criação, auditorias de especificação, otimizações SIMD/memória, evolução semântica e validação em hardware real do compilador **RustTS (`rtsc`)**.
 
@@ -24,6 +28,10 @@ Registro técnico cronológico da criação, auditorias de especificação, otim
 | **`v0.8.0-rts`** | Generalização Nativa: `TryOp ?`, Enums & Hardware | `declared_enums`, lowering real de `?` e `.map_err`, fim de nomes mágicos (`_rts_pushed_*`), `I2CBus`/`PWMPin`/`MonotonicClock` | `thermal_control_benchmark.c`: `[HW CHECK 1..4 PASS]`; Ballistics Acoplado validado |
 | **`v0.9.0-rts`** | TypeChecker Estático `RTS-E0301` & `match` `RTS-E0302` | `find_user_push_counter`, layout `union { ok; err; } val;`, `math::clamp`, `Stmt::Match`→`switch` C99, testes `RTS-E0301`/`RTS-E0302` | Produtor **`7,727 µs/frame`**; Acoplado **`7,822 µs/frame`** (**`0,095 µs`** consumidor); `[HW CHECK 1..5 PASS]` |
 | **`v1.0.0-rts`** | Release 100%, Build Nativo & Distribuição GitHub | `while` + `import`, `Return`/`StructInit`/`Handle<T>`, `match` `Result`/`Option`, zero stubs Unity/Unreal, `cargo build --release` + CI/Installers | **`cargo test`: 13/13 PASS**; `rtsc check` 5/5; `[HW CHECK 1..6 PASS]`; Ballistics **`7,581 µs/frame`** (`0,758 ns/proj`) |
+| **`v1.1.0-rts`** | Autonomia da CLI & Driver Nativo (`Fase 2: 55%`) | Remoção de UTF-8 BOM no lexer, `RTS_UNUSED`, `pub fn main()` autônomo com capacidades raiz, `io::*`, `rtsc init`, `rtsc run` via Clang e `-o`/`--out-dir` | Compilação direta e execução autônoma sem `host/main.c` manual |
+| **`v1.2.0-rts`** | Projetos Multi-Arquivo & Gramática Completa (`Fase 3: 70%`) | Resolução recursiva de `import` (`RTS-E0102`), forward declarations C99, `Option<T>` em C99 (`Some`/`None`/`match`), `[T; N]`, `break`/`continue` | **`cargo test`: 18/18 PASS** + execução `rtsc run` com múltiplos arquivos `.rts` |
+| **`v1.3.0-rts`** | FFI Blindado por `cap`, `impl Struct` & `core.math` (`Fase 4: 85%`) | `extern "C" fn` com remoção zero-overhead de tokens `cap`, blocos `impl Struct`, 11 funções de `core.math` (`<math.h>`), flags `-l`/`-L`/`-I` | **`cargo test`: 20/20 PASS** + chamada real à `libc` (`puts`, `abs`) sob `-Wall -Wextra -Werror` |
+| **`v1.4.0-rts`** | Debugging `#line`, Header `.h`, VS Code & KANORI (`Fase 5: 100%`) | Diretivas `#line`, `-g`/`--debug` (`-g -O0`), `--emit-header` (`emit_c_header`), extensão `editors/vscode-rustts/`, showcase `examples/kanori_zone_sim/` | **`cargo test`: 22/22 PASS**; `rtsc 1.4.0-rts`; `rtsc run -g` e `rtsc check` 5/5 aprovados |
 
 ---
 
@@ -203,7 +211,7 @@ Elevação para o marco de 75% de maturidade com checagem estática rigorosa de 
 
 ## Etapa 12 — `v1.0.0-rts` (2026-11-12): Fechamento da Linguagem, Compilação Rust Nativa e Publicação GitHub
 
-Última etapa que fechou todas as pendências arquiteturais da auditoria `v0.9.0-rts`, validou o compilador diretamente via `cargo test` com toolchain Rust nativa e empacotou a distribuição oficial `v1.0.0`.
+Última etapa da Fase 1 que fechou todas as pendências arquiteturais da auditoria `v0.9.0-rts`, validou o compilador diretamente via `cargo test` com toolchain Rust nativa e empacotou a distribuição oficial `v1.0.0`.
 
 ### 12.1 Os 4 Pacotes de Fechamento no Compilador
 1. **Pacote 1 — Front-End ([src/lexer.rs](src/lexer.rs), [src/ast.rs](src/ast.rs), [src/parser.rs](src/parser.rs), [src/gbnf_exporter.rs](src/gbnf_exporter.rs)):**
@@ -219,15 +227,13 @@ Elevação para o marco de 75% de maturidade com checagem estática rigorosa de 
 
 ### 12.2 Compilação Nativa em Rust & Correções Descobertas no Primeiro `cargo test`
 Com a instalação da toolchain oficial via `winget install Rustlang.Rustup` (**`rustc 1.99.1 (58cf8f9c3 2026-10-13)`** / **`cargo 1.99.1`**), o compilador foi submetido pela primeira vez ao compilador Rust real, revelando e resolvendo 3 ajustes cirúrgicos:
-- **[Cargo.toml](Cargo.toml) (linha 4):** Ajuste da edição Rust para `edition = "2021"` compatível com o código e crates declaradas.
-- **[src/parser.rs](src/parser.rs) (linhas 329 e 806):** Resolução de empréstimos duplos (*borrow checker*) utilizando `.cloned()` antes do processamento de tokens/expressões.
-- **[src/sema.rs](src/sema.rs) (linha 1553):** Harmonização do mapeamento de compatibilidade para tipos parametrizados `Json<T>`.
+- **[Cargo.toml](Cargo.toml):** Ajuste da edição Rust para `edition = "2021"` compatível com o código e crates declaradas.
+- **[src/parser.rs](src/parser.rs):** Resolução de empréstimos duplos (*borrow checker*) utilizando `.cloned()` antes do processamento de tokens/expressões.
+- **[src/sema.rs](src/sema.rs):** Harmonização do mapeamento de compatibilidade para tipos parametrizados `Json<T>`.
 
 ### 12.3 Bateria Completa de Testes Executada (`v1.0.0-rts`)
 
 #### 1. Suíte Unitária Rust (`cargo test` — 13/13 PASS)
-Executado após as correções finais (`exit code 0`):
-
 1. `tests::test_rts_e0301_return_and_struct_field_type_mismatch` — **ok**
 2. `tests::test_rts_e0301_type_checker_rejects_incompatible_types` — **ok**
 3. `tests::test_rts_e0302_match_exhaustiveness_blocks_missing_enum_variant` — **ok**
@@ -244,17 +250,12 @@ Executado após as correções finais (`exit code 0`):
 
 #### 2. Build Release & Verificação CLI (`rtsc 1.0.0-rts`)
 - `cargo build --release`: gerou `target/release/rtsc.exe` (**`915.968 bytes`**) com `opt-level = 3`, `lto = "fat"`, `codegen-units = 1`, `panic = "abort"`, `strip = true`.
-- Instalado globalmente em `C:\Users\luizc\.cargo\bin\rtsc.exe` (`rtsc --version` → `rtsc 1.0.0-rts`).
-- `rtsc check` validado com **0 violações** nos **5 exemplos oficiais**:
-  - [examples/thermal_control.rts](examples/thermal_control.rts)
-  - [examples/ballistics_10k_benchmark.rts](examples/ballistics_10k_benchmark.rts)
-  - [examples/engine_physics.rts](examples/engine_physics.rts)
-  - [examples/combat_unreal.rts](examples/combat_unreal.rts)
-  - [examples/telemetry_server.rts](examples/telemetry_server.rts)
+- Instalado globalmente em `rtsc.exe` (`rtsc --version` → `rtsc 1.0.0-rts`).
+- `rtsc check` validado com **0 violações** nos **5 exemplos oficiais**: [examples/thermal_control.rts](examples/thermal_control.rts), [examples/ballistics_10k_benchmark.rts](examples/ballistics_10k_benchmark.rts), [examples/engine_physics.rts](examples/engine_physics.rts), [examples/combat_unreal.rts](examples/combat_unreal.rts) e [examples/telemetry_server.rts](examples/telemetry_server.rts).
 - Alvos secundários validados sem erros: `--export-gbnf`, `--emit-ts-sdk` ([examples/telemetry_client_sdk.ts](examples/telemetry_client_sdk.ts)), `--target=unreal`, `--target=unity` e `--target=native`.
 
 #### 3. Benchmarks e Verificações em Hardware / SIMD (`Clang 22.1.3`, `-std=c11 -O3 -mavx2 -mfma -Wall -Wextra -Werror`)
-- **Thermal Control (`examples/thermal_control_benchmark.exe`):** **`[HW CHECK 1..6 PASS]`** (cobrindo leituras I2C, propagação `?`, clamp térmico, `match` exaustivo de `HardwareFault`, atuação PWM e loop `while` determinístico).
+- **Thermal Control (`examples/thermal_control_benchmark.exe`):** **`[HW CHECK 1..6 PASS]`**.
 - **Engine Physics (`examples/engine_physics_benchmark.exe`):** **`[ENGINE_PHYSICS PASS] 1024 vec3 entities integrated via AVX2 SoA unrolling | Recorded Impacts: 512`**.
 - **Ballistics 10k (`examples/ballistics_10k_benchmark.exe`, 1.000 frames × 10.000 projéteis):**
   - Checagens funcionais e de invariância: **`[CHECK 0..3 PASS]`** (`267.620` impactos registrados = `2,68%` de taxa de colisão).
@@ -263,4 +264,99 @@ Executado após as correções finais (`exit code 0`):
 
 ### 12.4 Empacotamento e Distribuição Oficial no GitHub
 - Adicionados [.gitignore](.gitignore), instaladores multiplataforma [scripts/install.ps1](scripts/install.ps1) e [scripts/install.sh](scripts/install.sh), e workflow de release automatizado [.github/workflows/release.yml](.github/workflows/release.yml).
-- Repositório Git inicializado com **35 arquivos** (commit `6936687` na branch `main`) e tag anotada `v1.0.0` publicada em [https://github.com/LuizCorrea-Dev/RustTS.git](https://github.com/LuizCorrea-Dev/RustTS.git).
+- Repositório Git inicializado com **35 arquivos** (commit `6936687` na branch `main`) e tag anotada `v1.0.0` publicada em [LuizCorrea-Dev/RustTS](https://github.com/LuizCorrea-Dev/RustTS).
+
+---
+
+## Etapa 13 — `v1.1.0-rts`: Autonomia da CLI, Entrypoint `pub fn main()` e Driver Nativo Clang
+
+Fase 2 da evolução de produção ($40\% \rightarrow 55\%$), eliminando a criação manual de `host/main.c` e a invocação manual do compilador C.
+
+### Evoluções Implementadas
+1. **Sanitização de Fonte UTF-8 BOM ([src/lexer.rs](src/lexer.rs)):**
+   - `tokenize` passou a remover automaticamente o prefixo `\u{feff}` para compatibilidade com arquivos `.rts` salvos por editores Windows.
+2. **Entrypoint Nativo `pub fn main()` e Capacidades Raiz ([src/sema.rs](src/sema.rs), [src/codegen_native.rs](src/codegen_native.rs)):**
+   - Registro automático de tokens `cap` instanciados localmente dentro de `fn main` (`env.granted_specs`, `env.param_caps` e escopo de arena), permitindo repasse seguro para funções filhas.
+   - Emissão automática de `int main(void)` no C99 quando o módulo declara `pub fn main`, acompanhada da instanciação em stack de `rts_i2c_bus_t`, `rts_pwm_pin_t`, `rts_monotonic_clock_t` e `rts_arena_t`.
+3. **Intrínsecos de Console (`io::*`) & Proteção contra `-Werror`:**
+   - Adicionados `io::println`, `io::print_f32`, `io::print_i32` e `io::print_u32` via `<stdio.h>`.
+   - Funções auxiliares `static inline` do preâmbulo C99 marcadas com `RTS_UNUSED` (`__attribute__((unused))`) e variáveis não consumidas em braços `match` protegidas com `(void)<bind_var>;`.
+4. **Driver Nativo da CLI ([src/main.rs](src/main.rs)):**
+   - Novos comandos `rtsc init <dir>` (scaffolding de `rts.toml`, `src/main.rts`, `.gitignore` e `build/`) e `rtsc run <arquivo.rts>` (transpilação + localização automática do `clang` no `PATH` ou Visual Studio LLVM + compilação `-O3 -mavx2 -mfma -Wall -Wextra -Werror` + execução direta).
+   - Suporte a `-o`, `--out-dir` e `--bin` no `rtsc build` para emissão direta de `.c`, `.exe`, `.h`/`.cpp` (Unreal), `.rs`/`.cs` (Unity) e `_sdk.ts` em UTF-8 sem BOM.
+
+---
+
+## Etapa 14 — `v1.2.0-rts`: Projetos Multi-Arquivo (`import`), `Option<T>`, `[T; N]` e Controle de Loop
+
+Fase 3 da evolução de produção ($55\% \rightarrow 70\%$), habilitando organização modular em disco e completude das estruturas essenciais de controle.
+
+### Evoluções Implementadas
+1. **Loader Multi-Arquivo Topológico ([src/lib.rs](src/lib.rs), [src/main.rs](src/main.rs)):**
+   - Função `compile_and_check_project` com `load_module_recursive` resolvendo `import <mod>;` recursivamente no disco (`visited` + `visiting` para detecção de ciclos), mesclando as ASTs em ordem topológica e emitindo `RTS-E0102` (`ModuleResolutionError`) para módulos ausentes.
+2. **Forward Declarations C99 Automáticas ([src/codegen_native.rs](src/codegen_native.rs)):**
+   - Extração unificada de assinatura via `extract_fn_signature`, permitindo chamadas cruzadas entre funções de múltiplos módulos sem dependências de ordenação no C99.
+3. **Lowering Completo de `Option<T>` em C99:**
+   - Geração determinística de `typedef struct { bool is_some; <T> val; } rts_option_<T>_t;` e lowering de `Some(v)`, `None` e `match` sobre `Option<T>`.
+4. **Controle de Fluxo de Loop e Arrays Fixos ([src/lexer.rs](src/lexer.rs), [src/ast.rs](src/ast.rs), [src/parser.rs](src/parser.rs), [src/sema.rs](src/sema.rs), [src/gbnf_exporter.rs](src/gbnf_exporter.rs), backends):**
+   - Suporte completo a `break;` e `continue;` (validados apenas dentro de loops) e arrays fixos `[T; N]` / literais `[a, b, c]`.
+
+### Validação (`v1.2.0-rts`)
+- **`cargo test`:** **18/18** testes unitários aprovados (`test_v120_option_codegen_and_break_continue_and_fixed_arrays`, `test_rts_e0102_missing_imported_module_on_disk`, `test_v120_multi_file_import_resolution_and_cross_module_capabilities`).
+- **`rtsc run` multi-arquivo:** Validado com dois módulos `.rts` conectados via `import` executando nativamente.
+
+---
+
+## Etapa 15 — `v1.3.0-rts`: FFI `extern "C"` Blindado por Capacidades, `impl Struct` & `core.math`
+
+Fase 4 da evolução de produção ($70\% \rightarrow 85\%$), integrando chamadas nativas à ABI C, métodos em structs e funções matemáticas padrão.
+
+### Evoluções Implementadas
+1. **Zero-Overhead Capability-Guarded FFI ([src/lexer.rs](src/lexer.rs), [src/ast.rs](src/ast.rs), [src/parser.rs](src/parser.rs), [src/sema.rs](src/sema.rs), [src/codegen_native.rs](src/codegen_native.rs)):**
+   - Declarações `extern "C" fn` passam a exigir os tokens `cap` especificados em tempo de compilação (`RTS-E0403`) e removem automaticamente os parâmetros e argumentos `cap` fantasmas no C99 emitido (`extern int32_t puts(const char* s);`).
+2. **Métodos Nativos em `impl Struct`:**
+   - Blocos `impl NomeStruct` validados pelo `TypeChecker` (`skip(1)` para `self`) e baixados para funções C99 prefixadas (`{mod_prefix}_{metodo}(obj, ...)`).
+3. **Biblioteca Padrão `core.math` & Flags de Linkagem ([src/main.rs](src/main.rs)):**
+   - 11 funções matemáticas de `core.math` (`sin`, `cos`, `tan`, `sqrt`, `pow`, `floor`, `ceil`, `round`, `abs`, `clamp`, `lerp`) baixadas para `<math.h>`, preservando namespaces intrínsecos contra colisões com símbolos `extern "C"`.
+   - Correções adicionais de higiene no codegen nativo: rastreamento de `Expr::ArrayLit` em `collect_used_idents_in_expr`, emissão assinada de literais negativos `(-42)` em `Expr::Unary` e `(void)` automático para variáveis `_`.
+   - Novas flags `-l` (`--link-lib`), `-L` (`--lib-dir`) e `-I` (`--include-dir`) em `rtsc build` e `rtsc run`.
+
+### Validação (`v1.3.0-rts`)
+- **`cargo test`:** **20/20** testes unitários aprovados (`test_v130_extern_c_ffi_capability_guard_and_zero_overhead_stripping`, `test_v130_struct_impl_methods_and_core_math_stdlib`).
+- **Execução Nativa via `rtsc run`:** Binário compilado com Clang `-Wall -Wextra -Werror` executando `puts()` via `libc`, `abs(-42) = 42` e `osc.amostrar(0.5) = 8.41`.
+
+---
+
+## Etapa 16 — `v1.4.0-rts`: Source-Level Debugging (`#line`), Header `.h`, VS Code & Showcase KANORI
+
+Fase 5 final ($85\% \rightarrow 100\%$ da régua de maturidade), fechando debugging em nível de fonte `.rts`, interoperabilidade C/C++, suporte à IDE e prova multi-arquivo integrada.
+
+### Evoluções Implementadas
+1. **Source-Level Debugging Real (`#line` C99 + `-g` / `--debug`):**
+   - Adicionado `Stmt::span(&self) -> Span` em [src/ast.rs](src/ast.rs).
+   - [src/codegen_native.rs](src/codegen_native.rs) passa a emitir diretivas `#line <linha> "<modulo>.rts"` antes das funções e em cada instrução de `lower_stmt` (guardadas por `!ctx.in_strip_mined_pass1 && stmt_line > 0`).
+   - Flag `-g` / `--debug` adicionada em `rtsc build` e `rtsc run` ([src/main.rs](src/main.rs)), alternando o driver do Clang para `-g -O0` com símbolos de depuração mapeados ao `.rts`.
+2. **Exportação de Header C/C++ ABI (`--emit-header`):**
+   - Implementado `NativeCodegen::emit_c_header(module: &Module) -> String` emitindo `#pragma once`, bloco `extern "C"` e os protótipos apenas das funções `pub fn` via `extract_fn_signature`.
+3. **Unificação da Versão `1.4.0-rts`:**
+   - Atualização consistente de versão nos módulos [Cargo.toml](Cargo.toml), [src/diagnostics.rs](src/diagnostics.rs), [src/gbnf_exporter.rs](src/gbnf_exporter.rs), [src/codegen_native.rs](src/codegen_native.rs), [src/codegen_unreal.rs](src/codegen_unreal.rs), [src/codegen_unity.rs](src/codegen_unity.rs), [src/codegen_ts_sdk.rs](src/codegen_ts_sdk.rs) e [src/main.rs](src/main.rs).
+4. **Extensão Oficial VS Code ([editors/vscode-rustts/](editors/vscode-rustts/)):**
+   - Criados [editors/vscode-rustts/package.json](editors/vscode-rustts/package.json), [editors/vscode-rustts/language-configuration.json](editors/vscode-rustts/language-configuration.json) e gramática TextMate [editors/vscode-rustts/syntaxes/rustts.tmLanguage.json](editors/vscode-rustts/syntaxes/rustts.tmLanguage.json).
+5. **Showcase Multi-Arquivo KANORI ([examples/kanori_zone_sim/](examples/kanori_zone_sim/)):**
+   - [examples/kanori_zone_sim/src/anomaly_math.rts](examples/kanori_zone_sim/src/anomaly_math.rts) (`struct AnomalyZone`, `impl AnomalyZone`, `math::sqrt`, `math::clamp`, `math::lerp`, `Option<f32>`) integrado com [examples/kanori_zone_sim/src/main.rts](examples/kanori_zone_sim/src/main.rts) (`import anomaly_math`, `extern "C" fn puts`, `[f32; 4]`, `while` com `continue`/`break`, `match` sobre `Option<f32>` e `pub fn main() -> i32`).
+
+### Validação Final (`v1.4.0-rts` — 100% Roadmap)
+- **`cargo test`:** **22/22** testes unitários aprovados (`test_v140_line_directives_and_c_header_generation`, `test_v140_vscode_grammar_and_kanori_multi_file_showcase`).
+- **Instalação Global:** `cargo install --path .` concluído com `rtsc --version` reportando **`rtsc 1.4.0-rts`**.
+- **Execução com Debug & Exportação ABI:**
+  - `rtsc run examples/kanori_zone_sim/src/main.rts -g` compilado e executado com saída:
+    ```text
+    === [KANORI TELEMETRY] RustTS v1.4.0-rts (100% Roadmap) ===
+    [KANORI-ZONA] Setor seguro (fora do raio).
+    [KANORI-ZONA] Radiacao detectada (Sv/h): 125.00
+    [KANORI-ZONA] Radiacao detectada (Sv/h): 200.00
+    [KANORI-ALERTA] Limite critico atingido! Abortando varredura.
+    [KANORI-RESUMO] Carga acumulada de radiacao: 325.00
+    ```
+  - `rtsc build examples/kanori_zone_sim/src/main.rts --emit-header --out-dir build/kanori` gerou `build/kanori/main.h` e `build/kanori/main.c`.
+- **Regressão dos Exemplos (`rtsc check`):** Todos os 5 exemplos em `examples/*.rts` validados com `0 capability violations, 0 transitive leaks, 0 capability forgeries, 0 arena escapes`.

@@ -125,17 +125,52 @@ impl SymbolTable {
         let mut fn_return_types: HashMap<String, Option<TypeExpr>> = HashMap::new();
         let mut fn_param_types: HashMap<String, Vec<TypeExpr>> = HashMap::new();
 
-        // Intrínsecos matemáticos do Prelude (`math::clamp(f32, f32, f32) -> f32`)
-        fn_return_types.insert(
-            "math::clamp".to_string(),
-            Some(TypeExpr::Primitive(PrimitiveType::F32)),
-        );
+        // Intrínsecos matemáticos determinísticos do Prelude (`core.math` -> `<math.h>`)
+        let f32_ty = TypeExpr::Primitive(PrimitiveType::F32);
+        for unary_math in ["abs", "sqrt", "sin", "cos", "floor", "ceil"] {
+            let key = format!("math::{}", unary_math);
+            fn_return_types.insert(key.clone(), Some(f32_ty.clone()));
+            fn_param_types.insert(key, vec![f32_ty.clone()]);
+        }
+        for binary_math in ["min", "max", "atan2"] {
+            let key = format!("math::{}", binary_math);
+            fn_return_types.insert(key.clone(), Some(f32_ty.clone()));
+            fn_param_types.insert(key, vec![f32_ty.clone(), f32_ty.clone()]);
+        }
+        for ternary_math in ["clamp", "lerp"] {
+            let key = format!("math::{}", ternary_math);
+            fn_return_types.insert(key.clone(), Some(f32_ty.clone()));
+            fn_param_types.insert(key, vec![f32_ty.clone(), f32_ty.clone(), f32_ty.clone()]);
+        }
+
+        // Intrínsecos de I/O determinístico para CLI e telemetria (`io::println`, `io::print_f32`, `io::print_i32`, `io::print_u32`)
+        fn_return_types.insert("io::println".to_string(), None);
         fn_param_types.insert(
-            "math::clamp".to_string(),
+            "io::println".to_string(),
+            vec![TypeExpr::Primitive(PrimitiveType::Str)],
+        );
+        fn_return_types.insert("io::print_f32".to_string(), None);
+        fn_param_types.insert(
+            "io::print_f32".to_string(),
             vec![
+                TypeExpr::Primitive(PrimitiveType::Str),
                 TypeExpr::Primitive(PrimitiveType::F32),
-                TypeExpr::Primitive(PrimitiveType::F32),
-                TypeExpr::Primitive(PrimitiveType::F32),
+            ],
+        );
+        fn_return_types.insert("io::print_i32".to_string(), None);
+        fn_param_types.insert(
+            "io::print_i32".to_string(),
+            vec![
+                TypeExpr::Primitive(PrimitiveType::Str),
+                TypeExpr::Primitive(PrimitiveType::I32),
+            ],
+        );
+        fn_return_types.insert("io::print_u32".to_string(), None);
+        fn_param_types.insert(
+            "io::print_u32".to_string(),
+            vec![
+                TypeExpr::Primitive(PrimitiveType::Str),
+                TypeExpr::Primitive(PrimitiveType::U32),
             ],
         );
 
@@ -245,6 +280,31 @@ impl SymbolTable {
                         },
                     );
                 }
+                Item::ExternFn(ext) => {
+                    fn_return_types.insert(ext.name.clone(), ext.return_type.clone());
+                    fn_param_types.insert(
+                        ext.name.clone(),
+                        ext.params.iter().map(|p| p.ty.clone()).collect(),
+                    );
+                    let mut req_caps = Vec::new();
+                    let mut prov = HashMap::new();
+                    for p in &ext.params {
+                        if p.is_cap {
+                            if let Some(c) = &p.capability {
+                                req_caps.push(c.clone());
+                                prov.insert(c.to_string(), format!("extern fn {}", ext.name));
+                            }
+                        }
+                    }
+                    functions.insert(
+                        ext.name.clone(),
+                        FunctionSymbol {
+                            qualified_name: ext.name.clone(),
+                            required_caps: req_caps,
+                            cap_provenance: prov,
+                        },
+                    );
+                }
             }
         }
 
@@ -260,13 +320,36 @@ impl SymbolTable {
                     let mut inherited: Vec<(CapabilitySpec, String)> = Vec::new();
                     for callee in callees {
                         let normalized = callee.strip_prefix("self::").unwrap_or(callee);
-                        if let Some(callee_sym) = functions.get(normalized) {
+                        let resolved_sym = functions.get(normalized).or_else(|| {
+                            normalized.split_once("::").and_then(|(ns, short)| {
+                                if !matches!(
+                                    ns,
+                                    "io" | "math"
+                                        | "core"
+                                        | "time"
+                                        | "physics"
+                                        | "net"
+                                        | "fs"
+                                        | "I2CBus"
+                                        | "PWMPin"
+                                        | "MonotonicClock"
+                                        | "NetSocket"
+                                        | "FileSystem"
+                                        | "Handle"
+                                ) {
+                                    functions.get(short)
+                                } else {
+                                    None
+                                }
+                            })
+                        });
+                        if let Some(callee_sym) = resolved_sym {
                             for c in &callee_sym.required_caps {
                                 let chain = callee_sym
                                     .cap_provenance
                                     .get(&c.to_string())
                                     .cloned()
-                                    .unwrap_or_else(|| normalized.to_string());
+                                    .unwrap_or_else(|| callee_sym.qualified_name.clone());
                                 inherited.push((c.clone(), format!("{} -> {}", caller, chain)));
                             }
                         }
@@ -337,7 +420,9 @@ impl SymbolTable {
                 Stmt::Return { value: Some(v), .. } => {
                     Self::collect_callees_in_expr(v, out);
                 }
-                Stmt::Return { value: None, .. } => {}
+                Stmt::Return { value: None, .. }
+                | Stmt::Break { .. }
+                | Stmt::Continue { .. } => {}
             }
         }
     }
@@ -359,7 +444,13 @@ impl SymbolTable {
                     Self::collect_callees_in_expr(a, out);
                 }
             }
-            Expr::MethodCall { receiver, args, .. } => {
+            Expr::MethodCall {
+                receiver,
+                method,
+                args,
+                ..
+            } => {
+                out.push(method.clone());
                 Self::collect_callees_in_expr(receiver, out);
                 for a in args {
                     Self::collect_callees_in_expr(a, out);
@@ -390,6 +481,11 @@ impl SymbolTable {
             | Expr::ErrorMapClosure { body: inner, .. } => {
                 Self::collect_callees_in_expr(inner, out);
             }
+            Expr::ArrayLit { elements, .. } => {
+                for el in elements {
+                    Self::collect_callees_in_expr(el, out);
+                }
+            }
             _ => {}
         }
     }
@@ -416,6 +512,7 @@ impl SemanticAnalyzer {
                 Item::Struct(s) => self.check_struct(s),
                 Item::Enum(_e) => {}
                 Item::Function(f) => self.check_function(f, &sym_table),
+                Item::ExternFn(_) => {}
             }
         }
 
@@ -619,7 +716,7 @@ impl SemanticAnalyzer {
                 span,
                 ..
             } => {
-                // RTS-E0404: Bloqueia declaração de variável local com tipo `cap ...` forjado fora do entrypoint
+                // RTS-E0404: Bloqueia declaração de variável local com tipo `cap ...` forjado fora do entrypoint `main`
                 if let Some(TypeExpr::Capability(forged_cap)) = ty {
                     if func.name != "main" {
                         self.diagnostics.push(DiagnosticEntry {
@@ -629,13 +726,22 @@ impl SemanticAnalyzer {
                             span: *span,
                             ast_node: format!("LetStmt({}: cap {})", name, forged_cap),
                             message: format!(
-                                "Function '{}' attempted to forge capability token 'cap {}' in local variable '{}'. Capability tokens are linear/unforgeable and can only be passed from entrypoint parameters.",
+                                "Function '{}' attempted to forge capability token 'cap {}' in local variable '{}'. Capability tokens are linear/unforgeable and can only be instantiated inside the root 'main' entrypoint.",
                                 func.name, forged_cap, name
                             ),
                             deterministic_fixes: vec![
                                 DeterministicFix::remove_unauthorized_call_sealed(span.line_start),
                             ],
                         });
+                    } else {
+                        // Entrypoint `main` possui autoridade raiz para instanciar capacidades e repassá-las
+                        if let Some(scope) = FunctionCapabilityEnv::capability_arena_scope(forged_cap)
+                        {
+                            env.local_var_arena_scope
+                                .insert(name.clone(), (scope, forged_cap.to_string()));
+                        }
+                        env.param_caps.insert(name.clone(), forged_cap.clone());
+                        env.granted_specs.push((name.clone(), forged_cap.clone()));
                     }
                 }
 
@@ -895,6 +1001,7 @@ impl SemanticAnalyzer {
                     self.check_stmt(func, env, sym_table, s);
                 }
             }
+            Stmt::Break { .. } | Stmt::Continue { .. } => {}
             Stmt::Return { value, span } => {
                 if let Some(expr) = value {
                     self.check_expr(func, env, sym_table, expr);
@@ -989,6 +1096,19 @@ impl SemanticAnalyzer {
                             None => {
                                 min_scope = Some((s, lbl));
                             }
+                            _ => {}
+                        }
+                    }
+                }
+                min_scope
+            }
+            Expr::ArrayLit { elements, .. } => {
+                let mut min_scope: Option<(ArenaScope, String)> = None;
+                for el in elements {
+                    if let Some((s, lbl)) = self.infer_expr_arena_scope(env, el) {
+                        match &min_scope {
+                            Some((curr, _)) if s.rank() < curr.rank() => min_scope = Some((s, lbl)),
+                            None => min_scope = Some((s, lbl)),
                             _ => {}
                         }
                     }
@@ -1223,16 +1343,32 @@ impl SemanticAnalyzer {
                 }
                 // 3. Resolução Simbólica e Propagação Transitiva no Call Graph (`SymbolTable`)
                 else {
-                    let lookup_key = if namespace == "self" {
+                    let qualified_key = if namespace == "self" {
                         called_fn.clone()
                     } else {
                         format!("{}::{}", namespace, called_fn)
+                    };
+                    let is_builtin_ns = matches!(
+                        namespace.as_str(),
+                        "io" | "math" | "core" | "time" | "physics" | "net" | "fs"
+                    );
+                    let lookup_key = if sym_table.functions.contains_key(&qualified_key)
+                        || is_builtin_ns
+                        || namespace == "self"
+                    {
+                        qualified_key
+                    } else if sym_table.functions.contains_key(called_fn) {
+                        called_fn.clone()
+                    } else {
+                        qualified_key
                     };
 
                     if let Some(callee_sym) = sym_table.functions.get(&lookup_key) {
                         for req_cap in &callee_sym.required_caps {
                             if !env.satisfies_capability(req_cap) {
-                                let is_interprocedural = namespace == "self";
+                                let is_interprocedural = namespace == "self"
+                                    || (!is_builtin_ns
+                                        && sym_table.functions.contains_key(called_fn));
                                 let (code, category, ast_label, msg) = if is_interprocedural {
                                     let chain = callee_sym
                                         .cap_provenance
@@ -1440,6 +1576,58 @@ impl SemanticAnalyzer {
                     }
                 }
 
+                if let Some(callee_sym) = sym_table.functions.get(method) {
+                    for req_cap in &callee_sym.required_caps {
+                        if !env.satisfies_capability(req_cap) {
+                            let chain = callee_sym
+                                .cap_provenance
+                                .get(&req_cap.to_string())
+                                .cloned()
+                                .unwrap_or_else(|| method.clone());
+                            let fixes = Self::build_fixes_for_violation(
+                                func,
+                                "cap_token",
+                                req_cap,
+                                span.line_start,
+                            );
+                            self.diagnostics.push(DiagnosticEntry {
+                                error_code: "RTS-E0403".to_string(),
+                                category: DiagnosticCategory::TransitiveCapabilityViolation,
+                                file: self.file_path.clone(),
+                                span: *span,
+                                ast_node: format!("MethodCall({})", method),
+                                message: format!(
+                                    "Transitive capability violation in '{}': calling method '{}' requires capability 'cap {}' (call chain: {} -> {}), which is not granted in '{}'s signature.",
+                                    func.name, method, req_cap, func.name, chain, func.name
+                                ),
+                                deterministic_fixes: fixes,
+                            });
+                        }
+                    }
+                }
+                if let Some(param_tys) = sym_table.fn_param_types.get(method) {
+                    for (idx, (arg_expr, expected_ty)) in
+                        args.iter().zip(param_tys.iter().skip(1)).enumerate()
+                    {
+                        if let Some(actual_ty) = self.infer_expr_type(env, sym_table, arg_expr) {
+                            if !Self::types_compatible(expected_ty, &actual_ty) {
+                                self.diagnostics.push(DiagnosticEntry {
+                                    error_code: "RTS-E0301".to_string(),
+                                    category: DiagnosticCategory::TypeMismatch,
+                                    file: self.file_path.clone(),
+                                    span: *span,
+                                    ast_node: format!("MethodArg({}[{}])", method, idx),
+                                    message: format!(
+                                        "Type mismatch in method call '{}' inside '{}': argument #{} expected '{}', but found '{}'.",
+                                        method, func.name, idx + 1, expected_ty, actual_ty
+                                    ),
+                                    deterministic_fixes: vec![],
+                                });
+                            }
+                        }
+                    }
+                }
+
                 for arg in args {
                     self.check_expr(func, env, sym_table, arg);
                 }
@@ -1492,6 +1680,33 @@ impl SemanticAnalyzer {
             | Expr::TryOp { expr: inner, .. }
             | Expr::ErrorMapClosure { body: inner, .. } => {
                 self.check_expr(func, env, sym_table, inner);
+            }
+            Expr::ArrayLit { elements, span } => {
+                for el in elements {
+                    self.check_expr(func, env, sym_table, el);
+                }
+                if elements.len() > 1 {
+                    if let Some(first_ty) = self.infer_expr_type(env, sym_table, &elements[0]) {
+                        for el in &elements[1..] {
+                            if let Some(el_ty) = self.infer_expr_type(env, sym_table, el) {
+                                if !Self::types_compatible(&first_ty, &el_ty) {
+                                    self.diagnostics.push(DiagnosticEntry {
+                                        error_code: "RTS-E0301".to_string(),
+                                        category: DiagnosticCategory::TypeMismatch,
+                                        file: self.file_path.clone(),
+                                        span: *span,
+                                        ast_node: format!("ArrayLit({} vs {})", first_ty, el_ty),
+                                        message: format!(
+                                            "Homogeneous array literal elements required in '{}': expected '{}', found '{}'.",
+                                            func.name, first_ty, el_ty
+                                        ),
+                                        deterministic_fixes: vec![],
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
             }
             Expr::IntLit(_, _)
             | Expr::FloatLit(_, _)
@@ -1560,9 +1775,18 @@ impl SemanticAnalyzer {
             {
                 Self::types_compatible(other, &generics[0])
             }
+            (TypeExpr::Array(a, n1), TypeExpr::Array(b, n2)) => {
+                n1 == n2 && Self::types_compatible(a, b)
+            }
             (TypeExpr::Option(a), TypeExpr::Option(b)) => Self::types_compatible(a, b),
             (TypeExpr::Result(ok1, err1), TypeExpr::Result(ok2, err2)) => {
                 Self::types_compatible(ok1, ok2) && Self::types_compatible(err1, err2)
+            }
+            (TypeExpr::Capability(c1), TypeExpr::Capability(c2)) => {
+                c1.kind == c2.kind
+                    && (c1.generic_arg == c2.generic_arg
+                        || c1.generic_arg.is_none()
+                        || c2.generic_arg.is_none())
             }
             _ => false,
         }
@@ -1635,6 +1859,11 @@ impl SemanticAnalyzer {
                 }
             }
             Expr::Index { receiver, .. } => {
+                if let Some(TypeExpr::Array(inner, _)) =
+                    self.infer_expr_type(env, sym_table, receiver)
+                {
+                    return Some(*inner);
+                }
                 if let Some(root) = Self::extract_root_receiver(receiver) {
                     if let Some(cap) = env.param_caps.get(&root) {
                         if let Some(CapGenericArg::TypeName(elem_ty)) = &cap.generic_arg {
@@ -1689,13 +1918,25 @@ impl SemanticAnalyzer {
                     Box::new(TypeExpr::Primitive(PrimitiveType::U8)),
                     Box::new(TypeExpr::Primitive(PrimitiveType::U8)),
                 )),
-                _ => None,
+                _ => sym_table.fn_return_types.get(method).cloned().flatten(),
             },
             Expr::StaticCall {
                 namespace,
                 func: called_fn,
+                args,
                 ..
             } => {
+                if Self::is_unforgeable_capability_domain(namespace) && called_fn == "new" {
+                    let generic_arg = args.first().and_then(|a| match a {
+                        Expr::IntLit(v, _) => Some(CapGenericArg::HardwareAddress(*v)),
+                        Expr::Ident(tname, _) => Some(CapGenericArg::TypeName(tname.clone())),
+                        _ => None,
+                    });
+                    return Some(TypeExpr::Capability(CapabilitySpec::from_name_and_arg(
+                        namespace,
+                        generic_arg,
+                    )));
+                }
                 if sym_table.enums.contains_key(namespace) {
                     return Some(TypeExpr::Named {
                         name: namespace.clone(),
@@ -1708,10 +1949,24 @@ impl SemanticAnalyzer {
                         generics: vec![],
                     })));
                 }
-                let lookup_key = if namespace == "self" {
+                let qualified_key = if namespace == "self" {
                     called_fn.clone()
                 } else {
                     format!("{}::{}", namespace, called_fn)
+                };
+                let is_builtin_ns = matches!(
+                    namespace.as_str(),
+                    "io" | "math" | "core" | "time" | "physics" | "net" | "fs"
+                );
+                let lookup_key = if sym_table.fn_return_types.contains_key(&qualified_key)
+                    || is_builtin_ns
+                    || namespace == "self"
+                {
+                    qualified_key
+                } else if sym_table.fn_return_types.contains_key(called_fn) {
+                    called_fn.clone()
+                } else {
+                    qualified_key
                 };
                 sym_table.fn_return_types.get(&lookup_key).cloned().flatten()
             }
@@ -1783,6 +2038,13 @@ impl SemanticAnalyzer {
                     }
                 }
             },
+            Expr::ArrayLit { elements, .. } => {
+                let elem_ty = elements
+                    .first()
+                    .and_then(|e| self.infer_expr_type(env, sym_table, e))
+                    .unwrap_or(TypeExpr::Primitive(PrimitiveType::F32));
+                Some(TypeExpr::Array(Box::new(elem_ty), elements.len()))
+            }
             _ => None,
         }
     }

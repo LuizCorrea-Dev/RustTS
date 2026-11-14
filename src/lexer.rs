@@ -87,12 +87,20 @@ pub enum TokenKind {
     KwFor,
     #[token("while")]
     KwWhile,
+    #[token("break")]
+    KwBreak,
+    #[token("continue")]
+    KwContinue,
     #[token("in")]
     KwIn,
     #[token("match")]
     KwMatch,
     #[token("import")]
     KwImport,
+    #[token("extern")]
+    KwExtern,
+    #[token("impl")]
+    KwImpl,
     #[token("as")]
     KwAs,
 
@@ -293,7 +301,9 @@ pub struct LexError {
 }
 
 /// Executa a análise léxica de um arquivo `.rts` convertendo bytes em `Token`s com `Span` de linha e coluna.
-pub fn tokenize(source: &str) -> Result<Vec<Token>, Vec<LexError>> {
+/// Remove automaticamente o UTF-8 BOM (`\u{FEFF}`) caso o arquivo tenha sido salvo por editores Windows.
+pub fn tokenize(raw_source: &str) -> Result<Vec<Token>, Vec<LexError>> {
+    let source = raw_source.strip_prefix('\u{feff}').unwrap_or(raw_source);
     let mut lexer = TokenKind::lexer(source);
     let mut tokens = Vec::new();
     let mut errors = Vec::new();

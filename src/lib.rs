@@ -9,56 +9,207 @@ pub mod lexer;
 pub mod parser;
 pub mod sema;
 
-use ast::Module;
+use ast::{Item, Module};
 use diagnostics::{CompilerDiagnosticsReport, DiagnosticCategory, DiagnosticEntry};
-use lexer::tokenize;
+use lexer::{tokenize, Span};
 use parser::Parser;
 use sema::SemanticAnalyzer;
+use std::collections::HashSet;
+use std::fs;
+use std::path::{Path, PathBuf};
 
-/// Pipeline completo de validação (`rtsc check`) de um arquivo `.rts`
-pub fn compile_and_check(source: &str, file_path: &str) -> (Option<Module>, CompilerDiagnosticsReport) {
-    let tokens = match tokenize(source) {
-        Ok(t) => t,
-        Err(lex_errs) => {
-            let entries = lex_errs
-                .into_iter()
-                .map(|e| DiagnosticEntry {
-                    error_code: "RTS-E0101".to_string(),
-                    category: DiagnosticCategory::SyntaxError,
-                    file: file_path.to_string(),
-                    span: e.span,
-                    ast_node: "LexerToken".to_string(),
-                    message: e.message,
-                    deterministic_fixes: vec![],
-                })
-                .collect();
-            return (None, CompilerDiagnosticsReport::from_diagnostics(entries));
-        }
-    };
-
-    let mut parser = Parser::new(tokens);
-    let module = match parser.parse_module() {
-        Ok(m) => m,
-        Err(parse_err) => {
-            let entry = DiagnosticEntry {
-                error_code: "RTS-E0201".to_string(),
+fn parse_module_only(source: &str, file_path: &str) -> Result<Module, Vec<DiagnosticEntry>> {
+    let tokens = tokenize(source).map_err(|lex_errs| {
+        lex_errs
+            .into_iter()
+            .map(|e| DiagnosticEntry {
+                error_code: "RTS-E0101".to_string(),
                 category: DiagnosticCategory::SyntaxError,
                 file: file_path.to_string(),
-                span: parse_err.span,
-                ast_node: "ParserNode".to_string(),
-                message: parse_err.message,
+                span: e.span,
+                ast_node: "LexerToken".to_string(),
+                message: e.message,
                 deterministic_fixes: vec![],
-            };
-            return (
-                None,
-                CompilerDiagnosticsReport::from_diagnostics(vec![entry]),
-            );
-        }
+            })
+            .collect::<Vec<_>>()
+    })?;
+
+    let mut parser = Parser::new(tokens);
+    parser.parse_module().map_err(|parse_err| {
+        vec![DiagnosticEntry {
+            error_code: "RTS-E0201".to_string(),
+            category: DiagnosticCategory::SyntaxError,
+            file: file_path.to_string(),
+            span: parse_err.span,
+            ast_node: "ParserNode".to_string(),
+            message: parse_err.message,
+            deterministic_fixes: vec![],
+        }]
+    })
+}
+
+/// Pipeline completo de validação (`rtsc check`) de um módulo em string (single-file / in-memory)
+pub fn compile_and_check(source: &str, file_path: &str) -> (Option<Module>, CompilerDiagnosticsReport) {
+    let module = match parse_module_only(source, file_path) {
+        Ok(m) => m,
+        Err(entries) => return (None, CompilerDiagnosticsReport::from_diagnostics(entries)),
     };
 
     let analyzer = SemanticAnalyzer::new(file_path);
     let report = analyzer.analyze_module(&module);
     (Some(module), report)
+}
+
+fn resolve_import_path(entry_dir: &Path, current_file: &Path, imp_path: &[String]) -> Option<PathBuf> {
+    if imp_path.is_empty() {
+        return None;
+    }
+    let rel_nested = PathBuf::from(format!("{}.rts", imp_path.join("/")));
+    let short_file = imp_path.last().map(|s| PathBuf::from(format!("{}.rts", s)));
+    let current_dir = current_file.parent().unwrap_or(entry_dir);
+
+    let mut candidates = Vec::new();
+    candidates.push(current_dir.join(&rel_nested));
+    candidates.push(entry_dir.join(&rel_nested));
+    if let Some(short) = &short_file {
+        candidates.push(current_dir.join(short));
+        candidates.push(entry_dir.join(short));
+    }
+    if let Some(entry_parent) = entry_dir.parent() {
+        candidates.push(entry_parent.join(&rel_nested));
+        candidates.push(entry_parent.join("src").join(&rel_nested));
+    }
+
+    candidates.into_iter().find(|p| p.is_file())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn load_module_recursive(
+    entry_dir: &Path,
+    file_path: &Path,
+    visited: &mut HashSet<PathBuf>,
+    visiting: &mut HashSet<PathBuf>,
+    merged_items: &mut Vec<Item>,
+    entry_module_out: &mut Option<Module>,
+    is_entry: bool,
+    errors: &mut Vec<DiagnosticEntry>,
+) {
+    let canon = fs::canonicalize(file_path).unwrap_or_else(|_| file_path.to_path_buf());
+    if visited.contains(&canon) || visiting.contains(&canon) {
+        return;
+    }
+    visiting.insert(canon.clone());
+
+    let file_str = file_path.to_string_lossy().replace('\\', "/");
+    let source = match fs::read_to_string(file_path) {
+        Ok(s) => s,
+        Err(err) => {
+            errors.push(DiagnosticEntry {
+                error_code: "RTS-E0102".to_string(),
+                category: DiagnosticCategory::ModuleResolutionError,
+                file: file_str,
+                span: Span::new(1, 1, 1, 1, 0, 0),
+                ast_node: "ModuleFile".to_string(),
+                message: format!("Failed to read module '{}': {}", file_path.display(), err),
+                deterministic_fixes: vec![],
+            });
+            visiting.remove(&canon);
+            return;
+        }
+    };
+
+    let module = match parse_module_only(&source, &file_str) {
+        Ok(m) => m,
+        Err(mut parse_errs) => {
+            errors.append(&mut parse_errs);
+            visiting.remove(&canon);
+            return;
+        }
+    };
+
+    for imp in &module.imports {
+        if imp.first().map(|s| s.as_str()) == Some("core") {
+            continue;
+        }
+        match resolve_import_path(entry_dir, file_path, imp) {
+            Some(dep_path) => {
+                load_module_recursive(
+                    entry_dir,
+                    &dep_path,
+                    visited,
+                    visiting,
+                    merged_items,
+                    entry_module_out,
+                    false,
+                    errors,
+                );
+            }
+            None => {
+                errors.push(DiagnosticEntry {
+                    error_code: "RTS-E0102".to_string(),
+                    category: DiagnosticCategory::ModuleResolutionError,
+                    file: file_str.clone(),
+                    span: Span::new(1, 1, 1, 1, 0, 0),
+                    ast_node: format!("ImportDecl({})", imp.join(".")),
+                    message: format!(
+                        "Imported module '{}' could not be resolved on disk (expected '{}.rts' relative to '{}' or '{}').",
+                        imp.join("."),
+                        imp.join("/"),
+                        file_path.parent().unwrap_or(entry_dir).display(),
+                        entry_dir.display()
+                    ),
+                    deterministic_fixes: vec![],
+                });
+            }
+        }
+    }
+
+    visiting.remove(&canon);
+    visited.insert(canon);
+
+    merged_items.extend(module.items.clone());
+    if is_entry {
+        *entry_module_out = Some(module);
+    }
+}
+
+/// Pipeline multi-arquivo real em disco (`v1.2.0-rts`): resolve `import ...;` recursivamente,
+/// mescla ASTs em ordem topológica para inlining/codegen C99 e valida capacidades cross-module.
+pub fn compile_and_check_project(entry_file: &Path) -> (Option<Module>, CompilerDiagnosticsReport) {
+    let entry_str = entry_file.to_string_lossy().replace('\\', "/");
+    let entry_dir = entry_file.parent().unwrap_or_else(|| Path::new("."));
+    let mut visited = HashSet::new();
+    let mut visiting = HashSet::new();
+    let mut merged_items = Vec::new();
+    let mut entry_module_opt = None;
+    let mut errors = Vec::new();
+
+    load_module_recursive(
+        entry_dir,
+        entry_file,
+        &mut visited,
+        &mut visiting,
+        &mut merged_items,
+        &mut entry_module_opt,
+        true,
+        &mut errors,
+    );
+
+    if !errors.is_empty() {
+        return (None, CompilerDiagnosticsReport::from_diagnostics(errors));
+    }
+
+    let mut merged_module = match entry_module_opt {
+        Some(m) => m,
+        None => {
+            return (None, CompilerDiagnosticsReport::from_diagnostics(errors));
+        }
+    };
+    merged_module.items = merged_items;
+
+    let analyzer = SemanticAnalyzer::new(&entry_str);
+    let report = analyzer.analyze_module(&merged_module);
+    (Some(merged_module), report)
 }
 
 #[cfg(test)]
@@ -458,5 +609,405 @@ pub fn supervise_sensor(max_retries: u32, raw: u16) -> Result<f32, HardwareFault
         assert!(c99.contains("if (_rts_match_1.is_ok)"));
         assert!(c99.contains("const float temp = _rts_match_1.val.ok;"));
         assert!(c99.contains("const HardwareFault_t fault = _rts_match_1.val.err;"));
+    }
+
+    #[test]
+    fn test_v110_utf8_bom_stripping_in_lexer() {
+        let bom_rts = "\u{feff}module test.bom;\npub fn ok_fn() -> u32 { return 42; }\n";
+        let (module_opt, report) = compile_and_check(bom_rts, "src/test/bom.rts");
+        assert!(module_opt.is_some());
+        assert_eq!(report.status, "ok");
+    }
+
+    #[test]
+    fn test_v110_autonomous_main_entrypoint_and_root_capabilities() {
+        let standalone_rts = r#"
+module app.standalone;
+import core.hardware;
+import core.math;
+
+struct Limites {
+    max_temp: f32,
+}
+
+enum FalhaSensor {
+    Offline(u8),
+    Critico(f32),
+}
+
+pub fn monitorar(
+    lim: Limites,
+    i2c: cap I2CBus<0x48>,
+    cooler: cap PWMPin<4>
+) -> Result<f32, FalhaSensor> {
+    let bruto: u16 = i2c.read_register_u16(0x00)
+        .map_err(|_| FalhaSensor::Offline(0x48))?;
+    let temp: f32 = (bruto as f32) * 0.0625;
+    if temp > lim.max_temp {
+        cooler.set_duty(100);
+        return Err(FalhaSensor::Critico(temp));
+    }
+    cooler.set_duty(50);
+    return Ok(temp);
+}
+
+pub fn main() -> i32 {
+    let lim: Limites = Limites { max_temp: 85.0 };
+    let i2c: cap I2CBus<0x48> = I2CBus::new(0x48);
+    let cooler: cap PWMPin<4> = PWMPin::new(4);
+    let res: Result<f32, FalhaSensor> = self::monitorar(lim, i2c, cooler);
+    match res {
+        Ok(t) => {
+            io::print_f32("Temp: ", t);
+            return 0;
+        },
+        Err(_) => {
+            io::println("Fault!");
+            return 1;
+        },
+    }
+}
+"#;
+        let (module_opt, report) = compile_and_check(standalone_rts, "src/app/main.rts");
+        assert_eq!(report.status, "ok", "Diagnostics: {:?}", report.diagnostics);
+        let c99 = codegen_native::NativeCodegen::emit_c99(module_opt.as_ref().unwrap());
+        assert!(c99.contains("rts_i2c_bus_t _i2c_storage = { .device_address = 72u"));
+        assert!(c99.contains("rts_pwm_pin_t _cooler_storage = { .channel = 4u"));
+        assert!(c99.contains("int main(void) {\n    return (int)app_standalone_main();\n}"));
+    }
+
+    #[test]
+    fn test_v120_option_codegen_and_break_continue_and_fixed_arrays() {
+        let rts = r#"
+module app.v120_features;
+import core.io;
+
+struct Filtro {
+    pesos: [f32; 3],
+}
+
+fn buscar_leitura(ativa: bool) -> Option<f32> {
+    if ativa {
+        return Some(42.5);
+    }
+    return None;
+}
+
+pub fn main() -> i32 {
+    let f: Filtro = Filtro { pesos: [1.0, 2.0, 3.0] };
+    let local_arr: [f32; 2] = [f.pesos[0], f.pesos[2]];
+    let mut i: u32 = 0;
+    let mut acc: f32 = 0.0;
+    while i < 5 {
+        i = i + 1;
+        if i == 2 {
+            continue;
+        }
+        if i == 4 {
+            break;
+        }
+        acc = acc + local_arr[0];
+    }
+
+    let opt: Option<f32> = self::buscar_leitura(true);
+    match opt {
+        Some(v) => {
+            io::print_f32("Valor=", v + acc);
+            return 0;
+        },
+        None => {
+            io::println("Vazio");
+            return 1;
+        },
+    }
+}
+"#;
+        let (module_opt, report) = compile_and_check(rts, "src/v120_features.rts");
+        assert_eq!(report.status, "ok", "Diagnostics: {:?}", report.diagnostics);
+        let c99 = codegen_native::NativeCodegen::emit_c99(module_opt.as_ref().unwrap());
+        assert!(c99.contains("rts_option_float_t;"), "C99 missing Option typedef:\n{}", c99);
+        assert!(c99.contains("float pesos[3];"), "C99 missing struct array field:\n{}", c99);
+        assert!(c99.contains("float local_arr[2] ="), "C99 missing local array:\n{}", c99);
+        assert!(c99.contains("break;"), "C99 missing break");
+        assert!(c99.contains("continue;"), "C99 missing continue");
+        assert!(c99.contains(".is_some = true"), "C99 missing Some constructor");
+        assert!(c99.contains(".is_some = false"), "C99 missing None constructor");
+        assert!(c99.contains("if (_rts_match_1.is_some)"), "C99 missing Option match");
+    }
+
+    #[test]
+    fn test_v120_multi_file_import_resolution_and_cross_module_capabilities() {
+        let base = std::env::temp_dir().join("rustts_v120_multifile_test");
+        let _ = fs::remove_dir_all(&base);
+        let src_dir = base.join("src");
+        let sensores_dir = src_dir.join("sensores");
+        fs::create_dir_all(&sensores_dir).unwrap();
+
+        fs::write(
+            sensores_dir.join("termico.rts"),
+            r#"
+module sensores.termico;
+import core.hardware;
+
+pub fn ler_celsius(i2c: cap I2CBus<0x48>) -> Result<f32, u8> {
+    let raw: u16 = i2c.read_register_u16(0x00)?;
+    return Ok((raw as f32) * 0.0625);
+}
+"#,
+        )
+        .unwrap();
+
+        let main_ok = src_dir.join("main.rts");
+        fs::write(
+            &main_ok,
+            r#"
+module app.main;
+import core.hardware;
+import core.io;
+import sensores.termico;
+
+pub fn executar(i2c: cap I2CBus<0x48>) -> Result<f32, u8> {
+    let t: f32 = termico::ler_celsius(i2c)?;
+    return Ok(t);
+}
+
+pub fn main() -> i32 {
+    let i2c: cap I2CBus<0x48> = I2CBus::new(0x48);
+    let r: Result<f32, u8> = self::executar(i2c);
+    match r {
+        Ok(v) => {
+            io::print_f32("T=", v);
+            return 0;
+        },
+        Err(_) => {
+            return 1;
+        },
+    }
+}
+"#,
+        )
+        .unwrap();
+
+        let (mod_ok, rep_ok) = compile_and_check_project(&main_ok);
+        assert_eq!(rep_ok.status, "ok", "Diagnostics: {:?}", rep_ok.diagnostics);
+        let c99 = codegen_native::NativeCodegen::emit_c99(mod_ok.as_ref().unwrap());
+        assert!(c99.contains("app_main_ler_celsius(i2c)"), "Cross-module call prefix mismatch:\n{}", c99);
+
+        // Now omit `i2c` cap in caller signature and verify cross-module RTS-E0403!
+        let main_bad = src_dir.join("main_bad.rts");
+        fs::write(
+            &main_bad,
+            r#"
+module app.main_bad;
+import sensores.termico;
+
+pub fn violacao_cruzada() -> Result<f32, u8> {
+    let i2c: cap I2CBus<0x48> = I2CBus::new(0x48);
+    let t: f32 = termico::ler_celsius(i2c)?;
+    return Ok(t);
+}
+"#,
+        )
+        .unwrap();
+
+        let (_mod_bad, rep_bad) = compile_and_check_project(&main_bad);
+        assert_eq!(rep_bad.status, "error");
+        assert!(
+            rep_bad
+                .diagnostics
+                .iter()
+                .any(|d| d.error_code == "RTS-E0403" || d.error_code == "RTS-E0404"),
+            "Expected cross-module capability violation, got: {:?}",
+            rep_bad.diagnostics
+        );
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn test_rts_e0102_missing_imported_module_on_disk() {
+        let base = std::env::temp_dir().join("rustts_v120_missing_import");
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        let entry = base.join("main.rts");
+        fs::write(
+            &entry,
+            r#"
+module app.missing_test;
+import sensores.inexistente;
+
+pub fn main() -> i32 {
+    return 0;
+}
+"#,
+        )
+        .unwrap();
+
+        let (_mod_opt, report) = compile_and_check_project(&entry);
+        assert_eq!(report.status, "error");
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|d| d.error_code == "RTS-E0102"
+                    && d.category == DiagnosticCategory::ModuleResolutionError),
+            "Expected RTS-E0102, got: {:?}",
+            report.diagnostics
+        );
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn test_v130_extern_c_ffi_capability_guard_and_zero_overhead_stripping() {
+        let valid_ffi_rts = r#"
+module app.v130_ffi;
+
+extern "C" fn puts(s: str, console: cap GPIOPin<1>) -> i32;
+extern "C" fn abs(x: i32) -> i32;
+
+fn saudar(pin: cap GPIOPin<1>) -> i32 {
+    let rc: i32 = puts("hello", pin);
+    let val: i32 = abs(-42);
+    return rc + val;
+}
+"#;
+        let (mod_ok, rep_ok) = compile_and_check(valid_ffi_rts, "src/v130_ffi.rts");
+        assert_eq!(rep_ok.status, "ok", "Diagnostics: {:?}", rep_ok.diagnostics);
+        let c99 = codegen_native::NativeCodegen::emit_c99(mod_ok.as_ref().unwrap());
+        assert!(
+            c99.contains("extern int32_t puts(const char* s);"),
+            "FFI prototype should strip phantom cap param:\n{}",
+            c99
+        );
+        assert!(
+            c99.contains("puts(\"hello\")"),
+            "FFI call should strip phantom cap argument:\n{}",
+            c99
+        );
+        assert!(c99.contains("abs((-42u))") || c99.contains("abs("));
+
+        let invalid_ffi_rts = r#"
+module app.v130_ffi_bad;
+
+extern "C" fn puts(s: str, console: cap GPIOPin<1>) -> i32;
+
+fn violar(fake_pin: i32) -> i32 {
+    let dummy: cap GPIOPin<1> = fake_pin;
+    return puts("nope", dummy);
+}
+"#;
+        let (_mod_bad, rep_bad) = compile_and_check(invalid_ffi_rts, "src/v130_ffi_bad.rts");
+        assert_eq!(rep_bad.status, "error");
+        assert!(
+            rep_bad
+                .diagnostics
+                .iter()
+                .any(|d| d.error_code == "RTS-E0403"),
+            "Expected RTS-E0403 for unauthorized FFI call, got: {:?}",
+            rep_bad.diagnostics
+        );
+    }
+
+    #[test]
+    fn test_v130_struct_impl_methods_and_core_math_stdlib() {
+        let rts = r#"
+module app.v130;
+import core.math;
+
+struct Oscilador {
+    freq: f32,
+    amp: f32,
+}
+
+impl Oscilador {
+    pub fn amostrar(self: Oscilador, t: f32) -> f32 {
+        return math::lerp(0.0, self.amp, math::abs(math::sin(t * self.freq)));
+    }
+}
+
+pub fn main() -> i32 {
+    let osc: Oscilador = Oscilador { freq: 2.0, amp: 10.0 };
+    let v: f32 = osc.amostrar(0.5);
+    if v > 0.0 {
+        return 0;
+    }
+    return 1;
+}
+"#;
+        let (mod_ok, report) = compile_and_check(rts, "src/v130_impl.rts");
+        assert_eq!(report.status, "ok", "Diagnostics: {:?}", report.diagnostics);
+        let c99 = codegen_native::NativeCodegen::emit_c99(mod_ok.as_ref().unwrap());
+        assert!(c99.contains("math_lerp(0.0f"), "Missing math_lerp:\n{}", c99);
+        assert!(c99.contains("math_abs(math_sin("), "Missing math_abs/math_sin:\n{}", c99);
+        assert!(
+            c99.contains("app_v130_amostrar(osc, 0.5f)"),
+            "Missing impl method call lowering:\n{}",
+            c99
+        );
+    }
+
+    #[test]
+    fn test_v140_line_directives_and_c_header_generation() {
+        let rts = r#"
+module app.v140;
+
+pub fn somar_seguro(a: f32, b: f32) -> f32 {
+    let soma: f32 = a + b;
+    return soma;
+}
+
+fn privada(x: i32) -> i32 {
+    return x * 2;
+}
+"#;
+        let (mod_ok, report) = compile_and_check(rts, "src/v140_debug.rts");
+        assert_eq!(report.status, "ok", "Diagnostics: {:?}", report.diagnostics);
+        let module = mod_ok.as_ref().unwrap();
+
+        let c99 = codegen_native::NativeCodegen::emit_c99(module);
+        assert!(
+            c99.contains("#line ") && c99.contains("app/v140.rts\""),
+            "Missing #line source-level debug directives:\n{}",
+            c99
+        );
+
+        let header = codegen_native::NativeCodegen::emit_c_header(module);
+        assert!(header.contains("#pragma once"), "Missing #pragma once");
+        assert!(header.contains("extern \"C\""), "Missing extern \"C\"");
+        assert!(
+            header.contains("float app_v140_somar_seguro(float a, float b);"),
+            "Missing public prototype in C header:\n{}",
+            header
+        );
+        assert!(
+            !header.contains("privada"),
+            "Private function leaked into public C header:\n{}",
+            header
+        );
+    }
+
+    #[test]
+    fn test_v140_vscode_grammar_and_kanori_multi_file_showcase() {
+        let grammar_path = Path::new("editors/vscode-rustts/syntaxes/rustts.tmLanguage.json");
+        let pkg_path = Path::new("editors/vscode-rustts/package.json");
+        assert!(grammar_path.exists(), "VS Code TextMate grammar missing");
+        assert!(pkg_path.exists(), "VS Code package.json missing");
+        let grammar_str = fs::read_to_string(grammar_path).unwrap();
+        assert!(grammar_str.contains("source.rustts"));
+        assert!(grammar_str.contains("@[a-zA-Z_]"));
+
+        let kanori_main = Path::new("examples/kanori_zone_sim/src/main.rts");
+        assert!(kanori_main.exists(), "KANORI showcase main.rts missing");
+        let (mod_ok, report) = compile_and_check_project(kanori_main);
+        assert_eq!(
+            report.status, "ok",
+            "KANORI multi-file showcase diagnostics: {:?}",
+            report.diagnostics
+        );
+        let c99 = codegen_native::NativeCodegen::emit_c99(mod_ok.as_ref().unwrap());
+        assert!(c99.contains("kanori_avaliar_setor"));
+        assert!(c99.contains("math_sqrt"));
+        assert!(c99.contains("int main(void)"));
     }
 }

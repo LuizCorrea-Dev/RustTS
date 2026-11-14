@@ -1,11 +1,12 @@
 use crate::lexer::Span;
 use serde::{Deserialize, Serialize};
 
-pub const COMPILER_VERSION: &str = "1.0.0-rts";
+pub const COMPILER_VERSION: &str = "1.4.0-rts";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DiagnosticCategory {
     SyntaxError,
+    ModuleResolutionError,
     CapabilityViolation,
     TransitiveCapabilityViolation,
     CapabilityForgeryAttempt,

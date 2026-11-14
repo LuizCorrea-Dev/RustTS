@@ -1,0 +1,30 @@
+module anomaly_math;
+import core.math;
+
+struct AnomalyZone {
+    center_x: f32,
+    center_y: f32,
+    radius: f32,
+    intensity: f32,
+}
+
+impl AnomalyZone {
+    pub fn intensidade_em(self: AnomalyZone, px: f32, py: f32) -> f32 {
+        let dx: f32 = px - self.center_x;
+        let dy: f32 = py - self.center_y;
+        let dist: f32 = math::sqrt((dx * dx) + (dy * dy));
+        if dist >= self.radius {
+            return 0.0;
+        }
+        let norm: f32 = math::clamp(1.0 - (dist / self.radius), 0.0, 1.0);
+        return math::lerp(0.0, self.intensity, norm);
+    }
+}
+
+pub fn detectar_anomalia(zone: AnomalyZone, px: f32, py: f32) -> Option<f32> {
+    let rad: f32 = zone.intensidade_em(px, py);
+    if rad <= 0.0 {
+        return None;
+    }
+    return Some(rad);
+}

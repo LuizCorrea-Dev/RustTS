@@ -1,0 +1,83 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "RustTS",
+  "scopeName": "source.rustts",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#attributes" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#capabilities" },
+    { "include": "#functions" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.double-slash.rustts", "match": "//.*$" },
+        { "name": "comment.block.rustts", "begin": "/\\*", "end": "\\*/" }
+      ]
+    },
+    "attributes": {
+      "patterns": [
+        { "name": "meta.attribute.rustts", "match": "@[a-zA-Z_][a-zA-Z0-9_]*" }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.rustts",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        { "name": "constant.character.escape.rustts", "match": "\\\\." }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        { "name": "constant.numeric.hex.rustts", "match": "\\b0x[0-9a-fA-F]+\\b" },
+        { "name": "constant.numeric.float.rustts", "match": "\\b[0-9]+\\.[0-9]+\\b" },
+        { "name": "constant.numeric.integer.rustts", "match": "\\b[0-9]+\\b" }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.rustts",
+          "match": "\\b(if|else|match|while|for|in|break|continue|return|as)\\b"
+        },
+        {
+          "name": "keyword.declaration.rustts",
+          "match": "\\b(module|import|pub|fn|extern|struct|component|enum|impl|let|mut|arena)\\b"
+        },
+        {
+          "name": "constant.language.rustts",
+          "match": "\\b(true|false|Some|None|Ok|Err|self)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "storage.type.primitive.rustts",
+          "match": "\\b(i8|i16|i32|i64|u8|u16|u32|u64|usize|f32|f64|fix32|bool|str|Vec2|Vec3|Vec4|Quat|Mat3|Mat4|SoA|Result|Option|Handle)\\b"
+        }
+      ]
+    },
+    "capabilities": {
+      "patterns": [
+        {
+          "name": "storage.modifier.capability.rustts",
+          "match": "\\b(cap|I2CBus|SPIBus|PWMPin|GPIOOut|GPIOIn|StdIO|NetSocket|AudioBus|FrameArena|ReadFrameArena|AllocArena|ECSWorld|World)\\b"
+        }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        {
+          "name": "entity.name.function.rustts",
+          "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*(?=\\s*\\()"
+        }
+      ]
+    }
+  }
+}

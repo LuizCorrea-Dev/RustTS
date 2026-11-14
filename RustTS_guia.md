@@ -1,6 +1,10 @@
+<p align="center">
+  <img src="./rustts_language_logo.png" alt="RustTS Logo" width="220">
+</p>
+
 ---
 
-## Apêndice A: Matriz de Escopo Operacional e Domínios de Aplicação (Guia Oficial para Devs e IAs)
+## Apêndice A: Matriz de Escopo Operacional e Domínios de Aplicação (`rtsc v1.4.0-rts` — Guia Oficial para Devs e IAs)
 
 A **RustTS (`.rts`)** **não é uma linguagem de propósito geral ("canivete suíço")**. Ela foi projetada especificamente para sistemas determinísticos de alta performance, controle estrito de memória sem *Garbage Collector* e segurança baseada em capacidades (`cap`). 
 
@@ -54,8 +58,8 @@ A RustTS **só pode ser executada no navegador** quando o navegador atua exclusi
 Quando um projeto exigir uma aplicação completa (Backend + Interface Web tradicional com telas, formulários, tabelas e roteamento no navegador), a arquitetura **deve** ser dividida da seguinte forma:
 
 1. **No Backend / Core (`.rts`):** Escreva toda a API, regras de negócio, validação, acesso a banco de dados e processamento pesado em **RustTS**.
-2. **Na Ponte de Compilação (`--emit-ts-sdk`):** Execute o compilador `rtsc` com a flag de exportação de contrato:
+2. **Na Ponte de Compilação (`--emit-ts-sdk`):** Execute o compilador `rtsc` com a flag de exportação de contrato (`-o` ou `--out-dir`):
    ```bash
-   rtsc build src/server.rts --target=native-server --emit-ts-sdk ./web-app/src/sdk/
+   rtsc build src/server.rts --emit-ts-sdk --out-dir ./web-app/src/sdk/
    ```
 3. **No Frontend Web (`.ts` / `.tsx`):** O compilador `rtsc` gerará automaticamente um cliente TypeScript 100% tipado (`client.ts`) refletindo todas as `struct`, `enum` e rotas do servidor RustTS. Utilize **TypeScript + Next.js / React + Tailwind CSS** para construir a interface visual consumindo esse SDK gerado.

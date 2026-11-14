@@ -19,6 +19,7 @@ pub enum Item {
     Struct(StructDecl),
     Enum(EnumDecl),
     Function(FnDecl),
+    ExternFn(ExternFnDecl),
 }
 
 /// Atributos declarativos fixos do compilador (proíbe macros procedurais arbitrárias)
@@ -86,6 +87,19 @@ pub struct FnDecl {
     pub params: Vec<FnParam>,
     pub return_type: Option<TypeExpr>,
     pub body: Vec<Stmt>,
+    pub span: Span,
+}
+
+/// Declaração FFI C-ABI (`extern "C" fn nome(args..., cap_fantasma: cap Dominio) -> Ret;`)
+/// Os parâmetros `cap` impõem verificação estática de autoridade sem alterar a ABI C real!
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExternFnDecl {
+    pub attributes: Vec<Attribute>,
+    pub is_pub: bool,
+    pub abi: String,
+    pub name: String,
+    pub params: Vec<FnParam>,
+    pub return_type: Option<TypeExpr>,
     pub span: Span,
 }
 
@@ -311,6 +325,8 @@ pub enum MathType {
 pub enum TypeExpr {
     Primitive(PrimitiveType),
     Math(MathType),
+    /// `[T; N]` — Array contíguo de tamanho fixo na stack/struct (Zero Heap Allocation)
+    Array(Box<TypeExpr>, usize),
     /// `Option<T>` — Substituto seguro para `null`/`undefined`
     Option(Box<TypeExpr>),
     /// `Result<T, E>` — Substituto seguro e explícito para `try/catch/throw`
@@ -359,6 +375,7 @@ impl fmt::Display for TypeExpr {
                 };
                 write!(f, "{}", s)
             }
+            TypeExpr::Array(inner, len) => write!(f, "[{}; {}]", inner, len),
             TypeExpr::Option(inner) => write!(f, "Option<{}>", inner),
             TypeExpr::Result(ok, err) => write!(f, "Result<{}, {}>", ok, err),
             TypeExpr::Handle(inner) => write!(f, "Handle<{}>", inner),
@@ -413,6 +430,12 @@ pub enum Stmt {
         body: Vec<Stmt>,
         span: Span,
     },
+    Break {
+        span: Span,
+    },
+    Continue {
+        span: Span,
+    },
     Return {
         value: Option<Expr>,
         span: Span,
@@ -421,6 +444,23 @@ pub enum Stmt {
         expr: Expr,
         span: Span,
     },
+}
+
+impl Stmt {
+    pub fn span(&self) -> Span {
+        match self {
+            Stmt::Let { span, .. }
+            | Stmt::Assign { span, .. }
+            | Stmt::If { span, .. }
+            | Stmt::Match { span, .. }
+            | Stmt::ForRange { span, .. }
+            | Stmt::While { span, .. }
+            | Stmt::Break { span }
+            | Stmt::Continue { span }
+            | Stmt::Return { span, .. }
+            | Stmt::ExprStmt { span, .. } => *span,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -540,6 +580,11 @@ pub enum Expr {
         body: Box<Expr>,
         span: Span,
     },
+    /// Inicialização de Array Fixo: ex: `[10.0, 20.0, 30.0]`
+    ArrayLit {
+        elements: Vec<Expr>,
+        span: Span,
+    },
 }
 
 impl Expr {
@@ -560,7 +605,8 @@ impl Expr {
             | Expr::Binary { span: s, .. }
             | Expr::Cast { span: s, .. }
             | Expr::TryOp { span: s, .. }
-            | Expr::ErrorMapClosure { span: s, .. } => *s,
+            | Expr::ErrorMapClosure { span: s, .. }
+            | Expr::ArrayLit { span: s, .. } => *s,
         }
     }
 }

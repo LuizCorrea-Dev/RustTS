@@ -46,7 +46,12 @@ impl Parser {
 
         let mut items = Vec::new();
         while !self.is_at_end() {
-            items.push(self.parse_item()?);
+            if self.check(&TokenKind::KwImpl) {
+                let mut impl_methods = self.parse_impl_block()?;
+                items.append(&mut impl_methods);
+            } else {
+                items.push(self.parse_item()?);
+            }
         }
 
         let end_span = self.previous_span();
@@ -65,17 +70,107 @@ impl Parser {
             Ok(Item::Struct(self.parse_struct(attributes)?))
         } else if self.check(&TokenKind::KwEnum) {
             Ok(Item::Enum(self.parse_enum()?))
+        } else if self.check(&TokenKind::KwExtern)
+            || (self.check(&TokenKind::KwPub) && self.peek_next_is_extern())
+        {
+            Ok(Item::ExternFn(self.parse_extern_fn(attributes)?))
         } else if self.check(&TokenKind::KwPub) || self.check(&TokenKind::KwFn) {
             Ok(Item::Function(self.parse_fn(attributes)?))
         } else {
             Err(ParseError {
                 message: format!(
-                    "Expected 'struct', 'enum', 'pub fn', or 'fn', found '{}'",
+                    "Expected 'struct', 'enum', 'impl', 'extern', 'pub fn', or 'fn', found '{}'",
                     self.peek_lexeme()
                 ),
                 span: self.current_span(),
             })
         }
+    }
+
+    fn peek_next_is_extern(&self) -> bool {
+        matches!(
+            self.tokens.get(self.pos + 1).map(|t| &t.kind),
+            Some(TokenKind::KwExtern)
+        )
+    }
+
+    fn parse_extern_fn(&mut self, attributes: Vec<Attribute>) -> Result<ExternFnDecl, ParseError> {
+        let start = self.current_span();
+        let is_pub = self.match_token(&TokenKind::KwPub);
+        self.expect(&TokenKind::KwExtern)?;
+        let abi = if let Some(TokenKind::StringLit(s)) = self.peek_kind() {
+            let a = s.clone();
+            self.advance();
+            a
+        } else {
+            "C".to_string()
+        };
+        self.expect(&TokenKind::KwFn)?;
+        let name = self.expect_ident()?;
+        self.expect(&TokenKind::LParen)?;
+
+        let mut params = Vec::new();
+        while !self.check(&TokenKind::RParen) && !self.is_at_end() {
+            let p_start = self.current_span();
+            let p_name = self.expect_ident()?;
+            self.expect(&TokenKind::Colon)?;
+            let is_cap = self.match_token(&TokenKind::KwCap);
+            let (ty, capability) = if is_cap {
+                let cap = self.parse_capability_spec()?;
+                (TypeExpr::Capability(cap.clone()), Some(cap))
+            } else {
+                (self.parse_type_expr()?, None)
+            };
+            let p_end = self.previous_span();
+            params.push(FnParam {
+                name: p_name,
+                is_cap,
+                ty,
+                capability,
+                span: p_start.merge(p_end),
+            });
+            let _ = self.match_token(&TokenKind::Comma);
+        }
+        self.expect(&TokenKind::RParen)?;
+
+        let return_type = if self.match_token(&TokenKind::Arrow) {
+            Some(self.parse_type_expr()?)
+        } else {
+            None
+        };
+
+        let end = self.expect(&TokenKind::Semicolon)?.span;
+        Ok(ExternFnDecl {
+            attributes,
+            is_pub,
+            abi,
+            name,
+            params,
+            return_type,
+            span: start.merge(end),
+        })
+    }
+
+    fn parse_impl_block(&mut self) -> Result<Vec<Item>, ParseError> {
+        self.expect(&TokenKind::KwImpl)?;
+        let target_struct = self.expect_ident()?;
+        self.expect(&TokenKind::LBrace)?;
+        let mut methods = Vec::new();
+        while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
+            let mut attrs = self.parse_attributes()?;
+            if !attrs
+                .iter()
+                .any(|a| matches!(a, Attribute::UnrealImpl { .. }))
+            {
+                attrs.push(Attribute::UnrealImpl {
+                    target_struct: target_struct.clone(),
+                });
+            }
+            let func = self.parse_fn(attrs)?;
+            methods.push(Item::Function(func));
+        }
+        self.expect(&TokenKind::RBrace)?;
+        Ok(methods)
     }
 
     fn parse_attributes(&mut self) -> Result<Vec<Attribute>, ParseError> {
@@ -325,6 +420,28 @@ impl Parser {
             let cap = self.parse_capability_spec()?;
             return Ok(TypeExpr::Capability(cap));
         }
+        if self.match_token(&TokenKind::LBracket) {
+            let inner = self.parse_type_expr()?;
+            self.expect(&TokenKind::Semicolon)?;
+            let tok = self.advance().cloned().ok_or_else(|| ParseError {
+                span: self.current_span(),
+                message: "Unexpected EOF in fixed array length `[T; N]`".to_string(),
+            })?;
+            let len = match tok.kind {
+                TokenKind::IntLit(n) => n as usize,
+                _ => {
+                    return Err(ParseError {
+                        span: tok.span,
+                        message: format!(
+                            "Expected fixed integer array length `[T; N]`, found {:?}",
+                            tok.kind
+                        ),
+                    });
+                }
+            };
+            self.expect(&TokenKind::RBracket)?;
+            return Ok(TypeExpr::Array(Box::new(inner), len));
+        }
 
         let eof_span = self.current_span();
         let tok = self.advance().cloned().ok_or_else(|| ParseError {
@@ -515,6 +632,20 @@ impl Parser {
             return Ok(Stmt::While {
                 condition,
                 body,
+                span: start.merge(end),
+            });
+        }
+        if self.match_token(&TokenKind::KwBreak) {
+            self.expect(&TokenKind::Semicolon)?;
+            let end = self.previous_span();
+            return Ok(Stmt::Break {
+                span: start.merge(end),
+            });
+        }
+        if self.match_token(&TokenKind::KwContinue) {
+            self.expect(&TokenKind::Semicolon)?;
+            let end = self.previous_span();
+            return Ok(Stmt::Continue {
                 span: start.merge(end),
             });
         }
@@ -797,6 +928,21 @@ impl Parser {
             });
         }
 
+        if self.match_token(&TokenKind::LBracket) {
+            let mut elements = Vec::new();
+            while !self.check(&TokenKind::RBracket) && !self.is_at_end() {
+                elements.push(self.parse_expr()?);
+                if !self.match_token(&TokenKind::Comma) {
+                    break;
+                }
+            }
+            self.expect(&TokenKind::RBracket)?;
+            let end = self.previous_span();
+            return Ok(Expr::ArrayLit {
+                elements,
+                span: start.merge(end),
+            });
+        }
         if self.match_token(&TokenKind::LParen) {
             let inner = self.parse_expr()?;
             self.expect(&TokenKind::RParen)?;

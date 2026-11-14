@@ -4,7 +4,7 @@
 pub fn export_rustts_gbnf() -> &'static str {
     r#"# ==============================================================================
 # RustTS (.rts) Official Formal Grammar for Constrained LLM Decoding (GBNF)
-# Compiler: rtsc 1.0.0-rts | Specification: RustTS_guia.md (One Canonical Way)
+# Compiler: rtsc 1.4.0-rts | Specification: RustTS_guia.md (One Canonical Way)
 # ==============================================================================
 
 root            ::= ws module-decl? (import-decl)* (item ws)*
@@ -13,7 +13,9 @@ module-decl     ::= "module" ws1 module-path ws ";" ws
 import-decl     ::= "import" ws1 module-path ws ";" ws
 module-path     ::= ident ("." ident)*
 
-item            ::= attribute-list (struct-decl | enum-decl | fn-decl)
+item            ::= attribute-list (struct-decl | enum-decl | extern-fn-decl | impl-decl | fn-decl)
+extern-fn-decl  ::= ("pub" ws1)? "extern" (ws1 string-lit)? ws1 "fn" ws1 ident ws "(" ws param-list? ws ")" (ws "->" ws type-expr)? ws ";"
+impl-decl       ::= "impl" ws1 ident ws "{" ws (attribute-list fn-decl ws)* "}"
 
 attribute-list  ::= (attribute ws)*
 attribute       ::= "@component"
@@ -51,6 +53,7 @@ cap-domain      ::= "I2CBus" | "I2CRead" | "I2CPort" | "PWMPin" | "PWMWrite"
 
 type-expr       ::= primitive-type
                   | math-type
+                  | "[" ws type-expr ws ";" ws int-lit ws "]"
                   | "Option" ws "<" ws type-expr ws ">"
                   | "Result" ws "<" ws type-expr ws "," ws type-expr ws ">"
                   | "Handle" ws "<" ws type-expr ws ">"
@@ -70,6 +73,8 @@ stmt            ::= let-stmt
                   | match-stmt
                   | for-stmt
                   | while-stmt
+                  | "break" ws ";"
+                  | "continue" ws ";"
                   | assign-or-expr-stmt
 
 let-stmt        ::= "let" ws1 ("mut" ws1)? ident (ws ":" ws type-expr)? ws "=" ws expr ws ";"
@@ -105,6 +110,7 @@ primary-expr    ::= "|" ws ident ws "|" ws expr
                   | ident "::" ident (ws "(" ws arg-list? ws ")")?
                   | ident ws "{" ws field-init-list? ws "}"
                   | ident (ws "(" ws arg-list? ws ")")?
+                  | "[" ws (expr (ws "," ws expr)*)? ws "]"
                   | "(" ws expr ws ")"
 
 arg-list        ::= expr (ws "," ws expr)*

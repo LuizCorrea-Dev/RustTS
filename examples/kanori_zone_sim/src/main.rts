@@ -1,0 +1,52 @@
+module kanori;
+import core.io;
+import anomaly_math;
+
+extern "C" fn puts(s: str, io: cap StdIO) -> i32;
+
+pub fn avaliar_setor(zone: AnomalyZone, dist_x: f32, io: cap StdIO) -> f32 {
+    let res: Option<f32> = detectar_anomalia(zone, dist_x, 0.0);
+    match res {
+        Some(rad) => {
+            io::print_f32("[KANORI-ZONA] Radiacao detectada (Sv/h): ", rad);
+            return rad;
+        }
+        None => {
+            puts("[KANORI-ZONA] Setor seguro (fora do raio).", io);
+            return 0.0;
+        }
+    }
+}
+
+pub fn main() -> i32 {
+    let io: cap StdIO = StdIO::new();
+    puts("=== [KANORI TELEMETRY] RustTS v1.4.0-rts (100% Roadmap) ===", io);
+
+    let reator: AnomalyZone = AnomalyZone {
+        center_x: 0.0,
+        center_y: 0.0,
+        radius: 100.0,
+        intensity: 250.0,
+    };
+
+    let mut total_rad: f32 = 0.0;
+    let amostras: [f32; 4] = [150.0, 50.0, 20.0, 10.0];
+    let mut i: usize = 0;
+
+    while i < 4 {
+        let d: f32 = amostras[i];
+        i = i + 1;
+        let r: f32 = avaliar_setor(reator, d, io);
+        if r <= 0.0 {
+            continue;
+        }
+        total_rad = total_rad + r;
+        if total_rad > 300.0 {
+            puts("[KANORI-ALERTA] Limite critico atingido! Abortando varredura.", io);
+            break;
+        }
+    }
+
+    io::print_f32("[KANORI-RESUMO] Carga acumulada de radiacao: ", total_rad);
+    return 0;
+}
