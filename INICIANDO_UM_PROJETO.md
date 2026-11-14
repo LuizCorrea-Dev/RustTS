@@ -183,9 +183,10 @@ rtsc check src/main.rts
 *(Para integração com agentes de IA e auto-correção determinística, adicione `--json-diagnostics`).*
 
 ### 2. Compilar e Executar Nativamente (`rtsc run`)
-Transpila todos os arquivos `.rts` para C99 SIMD, invoca o `clang -O3 -mavx2 -mfma` automaticamente e executa o binário:
+Transpila todos os arquivos `.rts` (via C99 SIMD ou diretamente via LLVM IR com `--llvm`), invoca o `clang -O3 -mavx2 -mfma` automaticamente e executa o binário:
 ```bash
 rtsc run src/main.rts
+rtsc run src/main.rts --llvm
 ```
 
 ### 3. Depuração Source-Level linha a linha (`rtsc run -g`)
@@ -196,27 +197,38 @@ rtsc run src/main.rts -g
 
 ---
 
-## Passo 5 — Compilar para Motores de Jogos, C/C++ e Web SDK (`rtsc build`)
+## Passo 5 — Compilar para CPU (LLVM/MLIR/C99), GPU (WGSL/SPIR-V), Sandbox WASI, Motores de Jogos e Web SDK (`rtsc build`)
 
 O mesmo código `.rts` pode ser exportado para qualquer alvo suportado pelo compilador:
 
 ```bash
-# 1. Binário Nativo Stand-Alone (.exe / ELF) + Código C99:
+# 1. Binário Nativo Stand-Alone (.exe / ELF) via C99 ou Direto via LLVM IR (.ll):
 rtsc build src/main.rts --bin --out-dir build
+rtsc build src/main.rts --target llvm-ir --bin -o build/app_llvm.exe
+rtsc build src/main.rts --target mlir -o build/app.mlir
 
 # 2. Biblioteca Nativa + Header C/C++ (.h) para linkar com C, C++ ou Rust:
 rtsc build src/main.rts --emit-header --out-dir build
 
-# 3. Linkagem direta com bibliotecas C externas (ex: Raylib, SDL2, OpenGL):
+# 3. Shaders GPU Compute (@gpu_kernel): WebGPU (.wgsl) e Vulkan/DX12 SPIR-V 1.5 (.spvasm / .spv):
+rtsc build examples/kanori_gpu_wasi_sim/src/gpu_radiation.rts --target wgsl -o build/gpu_radiation.wgsl
+rtsc build examples/kanori_gpu_wasi_sim/src/gpu_radiation.rts --target spirv -o build/gpu_radiation.spvasm
+rtsc build examples/kanori_gpu_wasi_sim/src/gpu_radiation.rts --target spv -o build/gpu_radiation.spv
+
+# 4. Sandbox WASI Determinística com Fuel Metering (.wat e binário .wasm):
+rtsc build examples/kanori_gpu_wasi_sim/src/sandbox_agent.rts --target wasi --fuel-limit 75000 -o build/agent.wat
+rtsc build examples/kanori_gpu_wasi_sim/src/sandbox_agent.rts --target wasm --fuel-limit 75000 -o build/agent.wasm
+
+# 5. Linkagem direta com bibliotecas C externas (ex: Raylib, SDL2, OpenGL):
 rtsc run src/main.rts -l raylib -l opengl32 -l gdi32 -l winmm
 
-# 4. Unreal Engine 5 (gera A<Actor>.h e A<Actor>.cpp com macros UCLASS/UPROPERTY):
+# 6. Unreal Engine 5 (gera A<Actor>.h e A<Actor>.cpp com macros UCLASS/UPROPERTY):
 rtsc build examples/combat_unreal.rts --target unreal --out-dir build/unreal
 
-# 5. Unity Engine (gera plugin C-ABI em Rust + wrapper C# zero-copy com NativeArray<T>):
+# 7. Unity Engine (gera plugin C-ABI em Rust + wrapper C# zero-copy com NativeArray<T>):
 rtsc build examples/engine_physics.rts --target unity --out-dir build/unity
 
-# 6. TypeScript SDK (gera cliente tipado com proteção de 64 bits e RtsResult<T, E>):
+# 8. TypeScript SDK (gera cliente tipado com proteção de 64 bits e RtsResult<T, E>):
 rtsc build examples/telemetry_server.rts --emit-ts-sdk -o build/telemetry_client_sdk.ts
 ```
 
@@ -225,6 +237,7 @@ rtsc build examples/telemetry_server.rts --emit-ts-sdk -o build/telemetry_client
 ## Próximos Passos e Exemplos Prontos no Repositório
 
 Explore a pasta [`examples/`](./examples/) para ver projetos reais em funcionamento:
+- [`examples/kanori_gpu_wasi_sim/src/main.rts`](./examples/kanori_gpu_wasi_sim/src/main.rts) — **Showcase Heterogêneo `v2.0.0-rts`** unificando CPU (`--llvm`), GPU Compute (`@gpu_kernel` $\rightarrow$ `wgsl`/`spirv`) e Sandbox WASI (`--fuel-limit`).
 - [`examples/kanori_zone_sim/src/main.rts`](./examples/kanori_zone_sim/src/main.rts) — Simulação multi-arquivo de zonas térmicas e risco ecológico (**KANORI**).
 - [`examples/ballistics_10k_benchmark.rts`](./examples/ballistics_10k_benchmark.rts) — Simulação física SIMD AVX2 de 10.000 projéteis a **$7,58\text{ }\mu\text{s/frame}$**.
 - [`examples/thermal_control.rts`](./examples/thermal_control.rts) — Controle de hardware embarcados (`I2CBus<0x48>`, `PWMPin<0>`, `MonotonicClock`) com falha segura.

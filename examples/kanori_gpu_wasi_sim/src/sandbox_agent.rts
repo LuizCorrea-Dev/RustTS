@@ -6,8 +6,8 @@ pub fn decidir_evacuacao_agente(
     incremento_por_tick: float,
     ticks_simulacao: int
 ) -> int {
-    let acumulado: float = dose_inicial;
-    let passo: int = 0;
+    let mut acumulado: float = dose_inicial;
+    let mut passo: int = 0;
     while passo < ticks_simulacao {
         acumulado = acumulado + incremento_por_tick;
         passo = passo + 1;

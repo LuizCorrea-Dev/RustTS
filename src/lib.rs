@@ -1468,8 +1468,8 @@ pub fn avaliar_regra_mod(
     iteracoes: i32,
     ganho: f32
 ) -> f32 {
-    let acc: f32 = 0.0;
-    let i: i32 = 0;
+    let mut acc: f32 = 0.0;
+    let mut i: i32 = 0;
     while i < iteracoes {
         acc = acc + ganho;
         i = i + 1;
@@ -1498,7 +1498,16 @@ pub fn avaliar_regra_mod(
 module sandbox.sim;
 
 @sealed_sig
-pub fn step_agent(clock: cap MonotonicClock) -> i32 {
+pub fn step_agent(clock: cap MonotonicClock, dose_inicial: f32, ganho: f32, ticks: i32) -> i32 {
+    let mut acumulado: f32 = dose_inicial;
+    let mut passo: i32 = 0;
+    while passo < ticks {
+        acumulado = acumulado + ganho;
+        passo = passo + 1;
+        if acumulado > 300.0 {
+            return 1;
+        }
+    }
     return 0;
 }
 "#;
@@ -1506,9 +1515,20 @@ pub fn step_agent(clock: cap MonotonicClock) -> i32 {
         assert_eq!(report.status, "ok", "{}", report.to_human_terminal());
         let module = module_opt.expect("Valid module AST");
         let wasm = codegen_wasi::WasiCodegen::emit_wasm_binary(&module, 100_000);
-        assert!(wasm.len() >= 64);
+        assert!(wasm.len() >= 100);
         assert_eq!(&wasm[0..4], &[0x00, 0x61, 0x73, 0x6D]); // "\0asm"
         assert_eq!(&wasm[4..8], &[0x01, 0x00, 0x00, 0x00]); // version 1
+        // Verifica assinatura binária real na Type Section: func (f32, f32, i32) -> (i32)
+        let expected_sig = [0x60, 0x03, 0x7D, 0x7D, 0x7F, 0x01, 0x7F];
+        assert!(
+            wasm.windows(expected_sig.len())
+                .any(|w| w == expected_sig),
+            "Type Section do .wasm deve conter a assinatura real (f32, f32, i32) -> i32"
+        );
+        // Verifica opcodes reais do loop e aritmética f32/i32 na Code Section
+        assert!(wasm.contains(&0x92)); // f32.add
+        assert!(wasm.contains(&0x5E)); // f32.gt
+        assert!(wasm.contains(&0x48)); // i32.lt_s
     }
 
     #[test]
@@ -1552,6 +1572,36 @@ pub fn step_agent(clock: cap MonotonicClock) -> i32 {
         assert!(wat.contains("(func $decidir_evacuacao_agente (export \"decidir_evacuacao_agente\")"));
         let wasm_bin = codegen_wasi::WasiCodegen::emit_wasm_binary(&module, 75_000);
         assert_eq!(&wasm_bin[0..4], &[0x00, 0x61, 0x73, 0x6D]);
+        let expected_agent_sig = [0x60, 0x03, 0x7D, 0x7D, 0x7F, 0x01, 0x7F];
+        assert!(
+            wasm_bin
+                .windows(expected_agent_sig.len())
+                .any(|w| w == expected_agent_sig),
+            "O binário .wasm de kanori_gpu_wasi_sim deve codificar (f32, f32, i32) -> i32 para decidir_evacuacao_agente"
+        );
+    }
+
+    #[test]
+    fn test_v200_immutable_let_reassignment_blocked_by_sema() {
+        let src = r#"
+module safety.immutability;
+
+@sealed_sig
+pub fn tentar_mutar_let_imutavel(dose_inicial: f32) -> f32 {
+    let acumulado: f32 = dose_inicial;
+    acumulado = acumulado + 10.0;
+    return acumulado;
+}
+"#;
+        let (_module_opt, report) = compile_and_check(src, "test_immutable_let.rts");
+        assert_eq!(report.status, "error");
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|d| d.error_code == "RTS-E0405" && d.message.contains("Cannot reassign immutable local variable 'acumulado'")),
+            "Esperado erro RTS-E0405 ao reatribuir variável local declarada sem 'mut'"
+        );
     }
 
     #[test]

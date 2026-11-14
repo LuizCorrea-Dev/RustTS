@@ -4,7 +4,7 @@
 
 ---
 
-## Apêndice A: Matriz de Escopo Operacional e Domínios de Aplicação (`rtsc v1.5.0-rts` — Guia Oficial para Devs e IAs)
+## Apêndice A: Matriz de Escopo Operacional e Domínios de Aplicação (`rtsc v2.0.0-rts` — Guia Oficial para Devs e IAs)
 
 A **RustTS (`.rts`)** **não é uma linguagem de propósito geral ("canivete suíço")**. Ela foi projetada especificamente para sistemas determinísticos de alta performance, controle estrito de memória sem *Garbage Collector* e segurança baseada em capacidades (`cap`). 
 

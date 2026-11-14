@@ -65,126 +65,162 @@ A RustTS **não é um "canivete suíço"**. Ela foi construída para domínios o
 
 ## Exemplos de Código (`.rts`)
 
-### 1. Motores de Jogos: ECS Nativo, `FrameArena` e Vetorização SIMD
+### 1. Motores de Jogos: ECS Nativo, `FrameArena` e Vetorização SIMD (`examples/engine_physics.rts`)
 ```rust
-struct Transform {
-    x: f32,
-    y: f32,
-    z: f32,
+module engine.physics;
+
+@soa_layout
+pub struct Transform {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
 }
 
-struct Velocity {
-    dx: f32,
-    dy: f32,
-    dz: f32,
+@soa_layout
+pub struct Velocity {
+    pub vx: f32,
+    pub vy: f32,
+    pub vz: f32,
 }
 
-struct CollisionEvent {
-    entity_id: u32,
-    impact_force: f32,
+pub struct CollisionEvent {
+    pub entity_id: usize,
+    pub impact_velocity: f32,
 }
 
-// O compilador garante ausência de aliasing entre 'pos' e 'vel',
-// vetorizando o loop em instruções AVX2/NEON automaticamente.
-fn update_physics_system(
-    pos: cap MutColumn<Transform>,
-    vel: cap ReadColumn<Velocity>,
-    events: cap FrameArena<CollisionEvent>,
-    dt: f32
-) -> Result<u32, EngineError> {
-    let count: usize = pos.len();
-    let mut hits: u32 = 0;
+// O compilador garante ausência de aliasing entre 'transforms' e 'velocities',
+// vetorizando o loop em instruções AVX2/NEON ou LLVM IR automaticamente.
+@sealed_sig
+@vectorize
+pub fn integrate_kinematics_system(
+    transforms: cap MutColumn<Transform>,
+    velocities: cap ReadColumn<Velocity>,
+    frame_events: cap FrameArena<CollisionEvent>,
+    dt: f32,
+    entity_count: usize
+) -> usize {
+    let mut ground_hits: usize = 0;
 
-    for i in 0..count {
-        pos[i].x = pos[i].x + (vel[i].dx * dt);
-        pos[i].y = pos[i].y + (vel[i].dy * dt);
-        pos[i].z = pos[i].z + (vel[i].dz * dt);
+    for i in 0..entity_count {
+        transforms[i].x = transforms[i].x + (velocities[i].vx * dt);
+        transforms[i].y = transforms[i].y + (velocities[i].vy * dt);
+        transforms[i].z = transforms[i].z + (velocities[i].vz * dt);
 
-        if pos[i].y < 0.0 {
-            pos[i].y = 0.0;
-            // Alocação O(1) na arena do frame atual (limpa ao final dos 16.6ms)
-            events.push(CollisionEvent {
-                entity_id: i as u32,
-                impact_force: vel[i].dy,
-            })?;
-            hits = hits + 1;
+        if transforms[i].y < 0.0 {
+            transforms[i].y = 0.0;
+            // Alocação O(1) na arena do frame atual (reciclada a cada 16.6ms; proibida de escapar via RTS-E0501)
+            let _evt: Handle<CollisionEvent> = frame_events.alloc(CollisionEvent {
+                entity_id: i,
+                impact_velocity: velocities[i].vy,
+            });
+            ground_hits = ground_hits + 1;
         }
     }
 
-    return Ok(hits);
+    return ground_hits;
 }
 ```
 
-### 2. Hardware e Embarcados: Controle Físico Blindado por Capacidades
+### 2. Hardware e Embarcados: Controle Físico Blindado por Capacidades (`examples/thermal_control.rts`)
 ```rust
-enum ThermalError {
-    BusTimeout,
+module embedded.thermal;
+
+pub enum HardwareFault {
+    I2CTimeout(u8),
     SensorDisconnected,
+    OverheatCritical(f32),
 }
 
 // Se uma IA tentar acessar rede, disco ou outro pino de hardware dentro desta função,
-// a compilação é abortada imediatamente no estágio de Capability Checking.
-fn regulate_cooling_unit(
-    sensor: cap I2CRead<0x48>,
-    fan_pwm: cap PWMWrite<Pin4>
-) -> Result<u16, ThermalError> {
-    let raw_temp: u16 = sensor.read_u16().map_err(ThermalError::BusTimeout)?;
+// a compilação é abortada imediatamente no estágio de Capability Checking (RTS-E0402).
+@sealed_sig
+pub fn regulate_reactor_cooling(
+    i2c: cap I2CRead<0x48>,
+    pwm_fan: cap PWMWrite<Pin4>,
+    max_safe_celsius: f32
+) -> Result<f32, HardwareFault> {
+    let raw_reg: u16 = i2c.read_register_u16(0x00)?;
+    let temp_celsius: f32 = (raw_reg as f32) * 0.0625;
 
-    if raw_temp > 85 {
-        fan_pwm.set_duty_cycle(100)?;
-    } else if raw_temp > 60 {
-        fan_pwm.set_duty_cycle(50)?;
-    } else {
-        fan_pwm.set_duty_cycle(0)?;
+    if temp_celsius > max_safe_celsius {
+        pwm_fan.set_duty_cycle(100);
+        return Err(HardwareFault::OverheatCritical(temp_celsius));
     }
 
-    return Ok(raw_temp);
+    if temp_celsius > 65.0 {
+        pwm_fan.set_duty_cycle(75);
+    } else {
+        pwm_fan.set_duty_cycle(25);
+    }
+
+    return Ok(temp_celsius);
 }
 ```
 
-### 3. Servidores e APIs: `RequestArena` e Segurança de Banco de Dados
+### 3. Compute Shaders GPU (`@gpu_kernel`) e Sandbox WASI com *Fuel Metering* (`examples/kanori_gpu_wasi_sim/`)
 ```rust
-struct UserProfileDTO {
-    id: u64,
-    username: str,
-    active: bool,
+module kanori.heterogeneous;
+
+@shader_shared
+pub struct RadiationParticle {
+    pub x: float,
+    pub y: float,
+    pub vx: float,
+    pub vy: float,
+    pub sieverts: float,
 }
 
-// A capacidade 'SqlRead' impede fisicamente qualquer operação de escrita (INSERT/DELETE/DROP).
-// Toda memória alocada em 'req_arena' é reciclada em O(1) assim que a resposta HTTP é enviada.
-@route("GET", "/api/v1/users/:id")
-fn get_user_profile(
-    user_id: u64,
-    db: cap SqlRead<UsersTable>,
-    req_arena: cap RequestArena
-) -> Result<Json<UserProfileDTO>, HttpError> {
-    let row = db.find_by_id(user_id, req_arena)
-        .ok_or(HttpError::NotFound)?;
+// Compila nativamente para WebGPU (--target wgsl) e Vulkan/DX12 SPIR-V 1.5 (--target spirv / spv)
+@sealed_sig
+@gpu_kernel
+@workgroup_size(64, 1, 1)
+pub fn step_radiation_field(
+    particles: cap MutColumn<RadiationParticle>,
+    dt: float,
+    decay_rate: float,
+    count: uint
+) {
+    for i in 0..count {
+        particles[i].x = particles[i].x + (particles[i].vx * dt);
+        particles[i].y = particles[i].y + (particles[i].vy * dt);
+        particles[i].sieverts = particles[i].sieverts * decay_rate;
+    }
+}
 
-    let dto = req_arena.alloc(UserProfileDTO {
-        id: row.id,
-        username: row.username,
-        active: row.is_active,
-    })?;
-
-    return Ok(Json(dto));
+// Compila para WebAssembly/WASI (--target wasi / wasm --fuel-limit 100000) com Fuel Metering determinístico
+@sealed_sig
+pub fn decidir_evacuacao_agente(
+    dose_inicial: float,
+    incremento_por_tick: float,
+    ticks_simulacao: int
+) -> int {
+    let mut acumulado: float = dose_inicial;
+    let mut passo: int = 0;
+    while passo < ticks_simulacao {
+        acumulado = acumulado + incremento_por_tick;
+        passo = passo + 1;
+        if acumulado > 300.0 {
+            return 1;
+        }
+    }
+    return 0;
 }
 ```
 
 ---
 
-## Instalação Rápida (`v1.4.0-rts`)
+## Instalação Rápida (`v2.0.0-rts`)
 
-**Via código-fonte (`v1.4.0-rts` — recomendado, requer Rust/Cargo):**
+**Via código-fonte (`v2.0.0-rts` — recomendado, requer Rust/Cargo):**
 ```bash
 git clone https://github.com/LuizCorrea-Dev/RustTS.git
 cd RustTS
 cargo install --path .
 rtsc --version
-# rtsc 1.4.0-rts
+# rtsc 2.0.0-rts
 ```
 
-**Instaladores pré-compilados (Release GitHub [`v1.0.0`](https://github.com/LuizCorrea-Dev/RustTS/releases/tag/v1.0.0)):**
+**Instaladores pré-compilados (Release GitHub [`v2.0.0`](https://github.com/LuizCorrea-Dev/RustTS/releases/tag/v2.0.0)):**
 
 **Windows (PowerShell):**
 ```powershell
@@ -196,35 +232,43 @@ irm https://raw.githubusercontent.com/LuizCorrea-Dev/RustTS/main/scripts/install
 curl -fsSL https://raw.githubusercontent.com/LuizCorrea-Dev/RustTS/main/scripts/install.sh | bash
 ```
 
-Consulte o **[Guia Completo de Instalação e Uso (`INSTALACAO_E_USO.md`)](./INSTALACAO_E_USO.md)** para detalhes da toolchain, compilação AVX2/Clang e tutorial passo a passo.
+Consulte o **[Guia Completo de Instalação e Uso (`INSTALACAO_E_USO.md`)](./INSTALACAO_E_USO.md)** para detalhes da toolchain, compilação AVX2/Clang/LLVM, shaders GPU (WGSL/SPIR-V), sandbox WASI e tutorial passo a passo.
 
 ---
 
-## Interface de Linha de Comando (`rtsc 1.4.0-rts`)
+## Interface de Linha de Comando (`rtsc 2.0.0-rts`)
 
-O compilador `rtsc` centraliza criação de projetos, verificação, compilação nativa e depuração:
+O compilador `rtsc` centraliza criação de projetos, verificação semântica e compilação heterogênea (CPU, GPU e WASI):
 
 ```bash
 # 1. Criar novo projeto autônomo com `pub fn main()` e `rts.toml`
 rtsc init meu_projeto
 
-# 2. Compilar via LLVM/Clang e executar diretamente (use `-g` para símbolos `#line` + `-O0`)
-rtsc run examples/kanori_zone_sim/src/main.rts
+# 2. Compilar e executar diretamente (via C99/Clang ou direto via LLVM IR com `--llvm`, ou debug `-g`)
+rtsc run examples/kanori_gpu_wasi_sim/src/main.rts --llvm
 rtsc run examples/kanori_zone_sim/src/main.rts -g
 
 # 3. Validar código e projetos multi-arquivo com saída humana ou JSON (< 15ms)
-rtsc check examples/thermal_control.rts
+rtsc check examples/kanori_gpu_wasi_sim/src/main.rts
 rtsc check examples/thermal_control.rts --json-diagnostics
 
-# 4. Gerar C99 AVX2/SoA, header C/C++ (`--emit-header`) ou binário (`--bin`), com linkagem externa (`-l/-L/-I`)
+# 4. Backends CPU: C99 AVX2/SoA, MLIR SSA (`.mlir`) e LLVM IR Direto (`.ll` / `--bin`)
 rtsc build examples/kanori_zone_sim/src/main.rts --out-dir build/kanori --emit-header
-rtsc build src/main.rts --bin -o build/app.exe -l raylib -L ./lib -I ./include
+rtsc build examples/kanori_gpu_wasi_sim/src/main.rts --target mlir -o build/kanori.mlir
+rtsc build examples/kanori_gpu_wasi_sim/src/main.rts --target llvm-ir --bin -o build/kanori_llvm.exe
 
-# 5. Transpilar módulos Unreal Engine 5 (.h/.cpp UHT) e Unity (C-ABI + NativeArray<T>)
+# 5. Backends GPU Compute (`@gpu_kernel`): WebGPU (`.wgsl`) e Vulkan/DX12 SPIR-V 1.5 (`.spvasm` / `.spv`)
+rtsc build examples/kanori_gpu_wasi_sim/src/gpu_radiation.rts --target wgsl -o build/gpu_radiation.wgsl
+rtsc build examples/kanori_gpu_wasi_sim/src/gpu_radiation.rts --target spirv -o build/gpu_radiation.spvasm
+rtsc build examples/kanori_gpu_wasi_sim/src/gpu_radiation.rts --target spv -o build/gpu_radiation.spv
+
+# 6. Backend Sandbox WASI Determinístico com Fuel Metering (`.wat` e binário `.wasm`)
+rtsc build examples/kanori_gpu_wasi_sim/src/sandbox_agent.rts --target wasi --fuel-limit 75000 -o build/agent.wat
+rtsc build examples/kanori_gpu_wasi_sim/src/sandbox_agent.rts --target wasm --fuel-limit 75000 -o build/agent.wasm
+
+# 7. Transpilar módulos Unreal Engine 5 (.h/.cpp UHT), Unity (C-ABI), TypeScript SDK e gramática GBNF
 rtsc build examples/combat_unreal.rts --target=unreal --out-dir build/unreal
 rtsc build examples/engine_physics.rts --target=unity --out-dir build/unity
-
-# 6. Gerar SDK TypeScript tipado (Next.js/React) e gramática GBNF para LLMs
 rtsc build examples/telemetry_server.rts --emit-ts-sdk -o build/telemetry_client_sdk.ts
 rtsc --export-gbnf > rustts.gbnf
 ```
@@ -263,7 +307,7 @@ Quando um agente de IA tenta violar uma regra de memória ou permissão de hardw
 * [`MANUAL_TIPOS_RUSTTS.md`](./MANUAL_TIPOS_RUSTTS.md) — **Manual Oficial de Tipos, Capacidades e Memória (`v2.0.0-rts`):** Referência completa dos 14 tipos escalares e seus aliases (TS / C / C# / Unreal Engine 5), inferência `let`, tipos SIMD, coleções `[T; N]`, tipos algébricos e tokens `cap`.
 * [`Guia_Interativo_e_Documentacao_RustTS.html`](./Guia_Interativo_e_Documentacao_RustTS.html) — **Guia Interativo & Documentação HTML:** Dashboard interativo com documentação completa da linguagem e Cheat Sheet (`v2.0.0-rts`).
 * [`CONTRIBUTING.md`](./CONTRIBUTING.md) — **Guia de Contribuição:** Mapa do compilador (`src/`), padrões de código, suíte `cargo test` e checklist para Pull Requests.
-* [`devlog.md`](./devlog.md) — **Devlog & Cronologia (`v0.1.0-rts` → `v2.0.0-rts`):** Histórico técnico completo de versões, auditorias, suíte `cargo test` (`35/35`) e benchmarks AVX2/SoA.
+* [`devlog.md`](./devlog.md) — **Devlog & Cronologia (`v0.1.0-rts` → `v2.0.0-rts`):** Histórico técnico completo de versões, auditorias, suíte `cargo test` (`36/36`) e benchmarks AVX2/SoA.
 * [`RustTS_guia.md`](./RustTS_guia.md) — **Matriz de Escopo Operacional e Domínios:** Regras de aplicação Tier 1 / Tier 2 / Tier 0 e integração com TypeScript SDK.
 * [`editors/vscode-rustts/`](./editors/vscode-rustts/package.json) — **Extensão Oficial VS Code / Antigravity IDE (`v2.0.0`):** Syntax highlighting TextMate, snippets (incluindo `gpukernel`) e pacote `editors/rustts-lang-2.0.0.vsix` para arquivos `.rts`.
 * [`examples/kanori_zone_sim/`](./examples/kanori_zone_sim/src/main.rts) — **Showcase Multi-Arquivo KANORI (`v1.5.0`):** Projeto integrado com `import`, `impl Struct`, `core.math`, `Option<T>`, `extern "C"` e `rtsc run -g`.
@@ -282,7 +326,7 @@ Quando um agente de IA tenta violar uma regra de memória ou permissão de hardw
 - [x] **Fase 6 (`v1.6.0-rts`):** Backend intermediário MLIR SSA (`--target=mlir`: dialetos `func`, `scf`, `memref`, `arith`, `vector` com metadados `rts.cap` e `llvm.noalias`).
 - [x] **Fase 7 (`v1.7.0-rts`):** Backend direto LLVM IR (`.ll`) e compilação nativa sem C99 (`--target=llvm-ir --bin` e `rtsc run --llvm` via `clang -x ir -O3 -mavx2 -mfma`).
 - [x] **Fase 8 (`v1.8.0-rts`):** Backend GPU Compute (`@gpu_kernel` e `@shader_shared`) compilando diretamente para WebGPU (`--target=wgsl`) e Vulkan/DX12 SPIR-V 1.5 (`--target=spirv` `.spvasm` e binário `.spv` magic `0x07230203`), com verificação estática `RTS-E0601`–`E0603`.
-- [x] **Fase 9 & 10 (`v1.9.0-rts` → `v2.0.0-rts`):** Sandbox WASI determinística (`.wat` e binário `.wasm` magic `\0asm`) com *Fuel Metering* automático (`--fuel-limit <N>` + `RTS-E0701`) e showcase heterogêneo `examples/kanori_gpu_wasi_sim/` (`cargo test` **35/35 PASS**).
+- [x] **Fase 9 & 10 (`v1.9.0-rts` → `v2.0.0-rts`):** Sandbox WASI determinística (`.wat` e binário `.wasm` magic `\0asm` com lowering real da AST) com *Fuel Metering* automático (`--fuel-limit <N>` + `RTS-E0701`), validação de imutabilidade local `let` vs `let mut` (`RTS-E0405`) e showcase heterogêneo `examples/kanori_gpu_wasi_sim/` (`cargo test` **36/36 PASS**).
 
 ---
 

@@ -2,9 +2,9 @@
   <img src="./rustts_language_logo.png" alt="RustTS Logo" width="220">
 </p>
 
-# Guia de Contribuição — RustTS (`rtsc v1.5.0-rts`)
+# Guia de Contribuição — RustTS (`rtsc v2.0.0-rts`)
 
-Obrigado pelo interesse em contribuir com o **RustTS (`rtsc`)**! Este repositório reúne o compilador de sistemas determinístico em Rust e seus backends para **C99 SIMD/SoA**, **Unreal Engine 5**, **Unity** e **TypeScript SDK**.
+Obrigado pelo interesse em contribuir com o **RustTS (`rtsc`)**! Este repositório reúne o compilador de sistemas determinístico em Rust e seus backends para **C99 SIMD/SoA**, **MLIR SSA**, **LLVM IR Direto**, **GPU Compute (SPIR-V 1.5 / WGSL)**, **Sandbox WASI (Fuel Metering)**, **Unreal Engine 5**, **Unity** e **TypeScript SDK**.
 
 ---
 
@@ -28,14 +28,18 @@ Antes de propor alterações na linguagem ou no compilador, tenha em mente os pi
 | [`src/ast.rs`](./src/ast.rs) | Definições da AST (`Module`, `Stmt`, `Expr`, `TypeExpr`, `CapabilityDecl`, etc.) |
 | [`src/parser.rs`](./src/parser.rs) | Parser recursivo para `.rts` |
 | [`src/gbnf_exporter.rs`](./src/gbnf_exporter.rs) | Exportação da gramática formal `.gbnf` (`rtsc --export-gbnf`) |
-| [`src/sema.rs`](./src/sema.rs) | *TypeChecker* (`RTS-E0301`), `match` exaustivo (`RTS-E0302`), capacidades (`RTS-E0402`–`E0405`), arenas (`RTS-E0501`) e regras Tier 1/Tier 0 (`RTS-E0900`) |
+| [`src/sema.rs`](./src/sema.rs) | *TypeChecker* (`RTS-E0301`), `match` exaustivo (`RTS-E0302`), capacidades e imutabilidade local `let`/`let mut` (`RTS-E0402`–`E0405`), arenas (`RTS-E0501`), kernels GPU (`RTS-E0601`–`E0603`), sandbox WASI (`RTS-E0701`) e regras Tier 1/Tier 0 (`RTS-E0900`) |
 | [`src/diagnostics.rs`](./src/diagnostics.rs) | Formatação de relatórios para terminal humano e `--json-diagnostics` |
 | [`src/codegen_native.rs`](./src/codegen_native.rs) | Backend C99 (`SoA 64B`, *Strip-Mining L1d*, unrolling vetorial, `TryOp ?`, `switch`, acoplamento `ReadFrameArena`) |
+| [`src/codegen_mlir.rs`](./src/codegen_mlir.rs) | Backend intermediário MLIR SSA (`--target=mlir`: dialetos `func`, `scf`, `memref`, `arith`, `vector`, metadados `rts.cap` e `llvm.noalias`) |
+| [`src/codegen_llvm.rs`](./src/codegen_llvm.rs) | Backend direto LLVM IR (`.ll`, `--target=llvm-ir --bin` e `rtsc run --llvm`: GEP SoA, `noalias`, `fast` math, `!llvm.loop.vectorize.enable`) |
+| [`src/codegen_gpu.rs`](./src/codegen_gpu.rs) | Backend GPU Compute (`@gpu_kernel` / `@shader_shared`) para WebGPU (`--target=wgsl`) e Vulkan/DX12 SPIR-V 1.5 (`.spvasm` e binário `.spv`) |
+| [`src/codegen_wasi.rs`](./src/codegen_wasi.rs) | Backend Sandbox WASI determinístico (`.wat` e binário WebAssembly 1.0 `.wasm` com lowering real da AST) e *Fuel Metering* (`--fuel-limit`) |
 | [`src/codegen_unreal.rs`](./src/codegen_unreal.rs) | Emissor C++ UHT (`.h` / `.cpp`) para Unreal Engine 5 |
 | [`src/codegen_unity.rs`](./src/codegen_unity.rs) | Emissor FFI Rust (`extern "C"`) + wrapper C# `NativeArray<T>` para Unity |
 | [`src/codegen_ts_sdk.rs`](./src/codegen_ts_sdk.rs) | Emissor TypeScript SDK (`RtsResult<T, ApiError>`, `u64`/`i64` → `string`) |
-| [`src/main.rs`](./src/main.rs) | CLI `rtsc` (`init`, `check`, `build`, `run`, `--export-gbnf`) |
-| [`src/lib.rs`](./src/lib.rs) | Pipeline integrado `compile_and_check_project` e suíte de 23 testes unitários |
+| [`src/main.rs`](./src/main.rs) | CLI `rtsc` (`init`, `check`, `build`, `run`, `--llvm`, `--fuel-limit`, `--export-gbnf`) |
+| [`src/lib.rs`](./src/lib.rs) | Pipeline integrado `compile_and_check_project` e suíte de 36 testes unitários |
 
 ---
 

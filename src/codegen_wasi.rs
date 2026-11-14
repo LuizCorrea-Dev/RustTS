@@ -567,19 +567,26 @@ impl WasiCodegen {
     // =========================================================================
 
     pub fn emit_wasm_binary(module: &Module, default_fuel: u64) -> Vec<u8> {
-        let mut wasm = Vec::with_capacity(256);
+        let mut wasm = Vec::with_capacity(512);
 
         // Cabeçalho WebAssembly 1.0 (8 bytes: "\0asm" + version 1)
         wasm.extend_from_slice(&WASM_MAGIC);
         wasm.extend_from_slice(&WASM_VERSION_1);
 
-        // Funções exportadas do módulo do usuário (além das 3 funções de controle de combustível/arena)
-        let mut user_exports: Vec<&str> = Vec::new();
+        // Coleta as funções reais definidas no módulo do usuário
+        let mut user_funcs: Vec<&FnDecl> = Vec::new();
+        let mut fn_index_map: std::collections::HashMap<String, (u32, u8)> =
+            std::collections::HashMap::new();
         for item in &module.items {
             if let Item::Function(f) = item {
-                if f.is_pub || f.name == "main" {
-                    user_exports.push(f.name.as_str());
-                }
+                let fn_idx = (3 + user_funcs.len()) as u32;
+                let ret_vt = f
+                    .return_type
+                    .as_ref()
+                    .map(Self::wasm_valtype_byte)
+                    .unwrap_or(0x7F);
+                fn_index_map.insert(f.name.clone(), (fn_idx, ret_vt));
+                user_funcs.push(f);
             }
         }
 
@@ -587,28 +594,45 @@ impl WasiCodegen {
         // Type 0: (param i64) -> ()          [rts_set_fuel]
         // Type 1: () -> (result i64)         [rts_get_fuel]
         // Type 2: () -> ()                   [rts_arena_reset]
-        // Type 3: () -> (result i32)         [user exported functions]
+        // Type 3+i: assinatura real (params + result) de cada função do usuário
         let mut type_sec = Vec::new();
-        Self::push_u32_leb128(&mut type_sec, 4); // 4 function types
+        let total_types = 3 + user_funcs.len();
+        Self::push_u32_leb128(&mut type_sec, total_types as u32);
         // Type 0: func (i64) -> ()
         type_sec.extend_from_slice(&[0x60, 0x01, 0x7E, 0x00]);
         // Type 1: func () -> (i64)
         type_sec.extend_from_slice(&[0x60, 0x00, 0x01, 0x7E]);
         // Type 2: func () -> ()
         type_sec.extend_from_slice(&[0x60, 0x00, 0x00]);
-        // Type 3: func () -> (i32)
-        type_sec.extend_from_slice(&[0x60, 0x00, 0x01, 0x7F]);
+        // Types 3..3+N: assinaturas reais das funções do usuário
+        for f in &user_funcs {
+            type_sec.push(0x60); // func type tag
+            let non_cap_params: Vec<&FnParam> = f.params.iter().filter(|p| !p.is_cap).collect();
+            Self::push_u32_leb128(&mut type_sec, non_cap_params.len() as u32);
+            for p in &non_cap_params {
+                type_sec.push(Self::wasm_valtype_byte(&p.ty));
+            }
+            match &f.return_type {
+                None => {
+                    type_sec.push(0x00); // 0 results
+                }
+                Some(ret_ty) => {
+                    type_sec.push(0x01); // 1 result
+                    type_sec.push(Self::wasm_valtype_byte(ret_ty));
+                }
+            }
+        }
         Self::emit_wasm_section(&mut wasm, 1, &type_sec);
 
         // --- Section 3: Function Section (ID = 3) ---
-        let total_funcs = 3 + user_exports.len();
+        let total_funcs = 3 + user_funcs.len();
         let mut func_sec = Vec::new();
         Self::push_u32_leb128(&mut func_sec, total_funcs as u32);
         func_sec.push(0); // func 0 -> type 0 (rts_set_fuel)
         func_sec.push(1); // func 1 -> type 1 (rts_get_fuel)
         func_sec.push(2); // func 2 -> type 2 (rts_arena_reset)
-        for _ in &user_exports {
-            func_sec.push(3); // user func -> type 3
+        for idx in 0..user_funcs.len() {
+            Self::push_u32_leb128(&mut func_sec, (3 + idx) as u32);
         }
         Self::emit_wasm_section(&mut wasm, 3, &func_sec);
 
@@ -637,15 +661,21 @@ impl WasiCodegen {
         Self::emit_wasm_section(&mut wasm, 6, &glob_sec);
 
         // --- Section 7: Export Section (ID = 7) ---
+        let exported_user_funcs: Vec<(usize, &FnDecl)> = user_funcs
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| f.is_pub || f.name == "main")
+            .map(|(i, f)| (i, *f))
+            .collect();
         let mut exp_sec = Vec::new();
-        let total_exports = 4 + user_exports.len();
+        let total_exports = 4 + exported_user_funcs.len();
         Self::push_u32_leb128(&mut exp_sec, total_exports as u32);
         Self::push_wasm_export(&mut exp_sec, "memory", 0x02, 0);
         Self::push_wasm_export(&mut exp_sec, "rts_set_fuel", 0x00, 0);
         Self::push_wasm_export(&mut exp_sec, "rts_get_fuel", 0x00, 1);
         Self::push_wasm_export(&mut exp_sec, "rts_arena_reset", 0x00, 2);
-        for (idx, name) in user_exports.iter().enumerate() {
-            Self::push_wasm_export(&mut exp_sec, name, 0x00, (3 + idx) as u32);
+        for (idx, f) in &exported_user_funcs {
+            Self::push_wasm_export(&mut exp_sec, &f.name, 0x00, (3 + *idx) as u32);
         }
         Self::emit_wasm_section(&mut wasm, 7, &exp_sec);
 
@@ -670,23 +700,9 @@ impl WasiCodegen {
         Self::push_u32_leb128(&mut code_sec, body2.len() as u32);
         code_sec.extend_from_slice(&body2);
 
-        // User Function Bodies (instrumentadas com Fuel Check: global.get 0, i64.const 10, i64.sub, global.set 0, global.get 0, i64.const 0, i64.lt_s, if, unreachable, end, i32.const 0, end)
-        for _ in &user_exports {
-            let user_body = vec![
-                0x00, // 0 local declarations
-                0x23, 0x00, // global.get 0 ($__rts_fuel)
-                0x42, 0x0A, // i64.const 10
-                0x7D, // i64.sub
-                0x24, 0x00, // global.set 0 ($__rts_fuel)
-                0x23, 0x00, // global.get 0 ($__rts_fuel)
-                0x42, 0x00, // i64.const 0
-                0x53, // i64.lt_s
-                0x04, 0x40, // if (void)
-                0x00, // unreachable (Deterministic Out-Of-Fuel Trap)
-                0x0B, // end if
-                0x41, 0x00, // i32.const 0
-                0x0B, // end func
-            ];
+        // Bodies 3..3+N: Lowering real da AST de cada função do usuário para bytecode WebAssembly 1.0
+        for f in &user_funcs {
+            let user_body = Self::compile_wasm_function_body(f, &fn_index_map);
             Self::push_u32_leb128(&mut code_sec, user_body.len() as u32);
             code_sec.extend_from_slice(&user_body);
         }
@@ -694,6 +710,607 @@ impl WasiCodegen {
         Self::emit_wasm_section(&mut wasm, 10, &code_sec);
 
         wasm
+    }
+
+    fn wasm_valtype_byte(ty: &TypeExpr) -> u8 {
+        match ty {
+            TypeExpr::Primitive(PrimitiveType::F32) => 0x7D, // f32
+            TypeExpr::Primitive(PrimitiveType::F64) => 0x7C, // f64
+            TypeExpr::Primitive(PrimitiveType::I64 | PrimitiveType::U64) => 0x7E, // i64
+            _ => 0x7F,                                       // i32
+        }
+    }
+
+    fn compile_wasm_function_body(
+        func: &FnDecl,
+        fn_index_map: &std::collections::HashMap<String, (u32, u8)>,
+    ) -> Vec<u8> {
+        let mut local_map: std::collections::HashMap<String, (u32, u8)> =
+            std::collections::HashMap::new();
+        let mut next_local_idx: u32 = 0;
+
+        for p in func.params.iter().filter(|p| !p.is_cap) {
+            let vt = Self::wasm_valtype_byte(&p.ty);
+            local_map.insert(p.name.clone(), (next_local_idx, vt));
+            next_local_idx += 1;
+        }
+
+        let mut declared_locals: Vec<u8> = Vec::new();
+        Self::collect_wasm_locals(
+            &func.body,
+            &mut local_map,
+            &mut declared_locals,
+            &mut next_local_idx,
+            fn_index_map,
+        );
+
+        let mut body = Vec::new();
+        // Declaração das variáveis locais da função (cada entrada: count=1, valtype)
+        Self::push_u32_leb128(&mut body, declared_locals.len() as u32);
+        for vt in &declared_locals {
+            body.push(0x01);
+            body.push(*vt);
+        }
+
+        // Instrumentação de prólogo: consome 10 unidades de combustível
+        Self::emit_wasm_fuel_check(&mut body, 10);
+
+        let ret_vt_opt = func.return_type.as_ref().map(Self::wasm_valtype_byte);
+
+        for stmt in &func.body {
+            Self::emit_wasm_stmt(
+                stmt,
+                ret_vt_opt,
+                &local_map,
+                fn_index_map,
+                None,
+                &mut body,
+            );
+        }
+
+        // Retorno fallback determinístico ao final do bloco da função caso o fluxo alcance o final
+        if let Some(ret_vt) = ret_vt_opt {
+            match ret_vt {
+                0x7D => {
+                    body.push(0x43); // f32.const 0.0
+                    body.extend_from_slice(&0.0f32.to_le_bytes());
+                }
+                0x7C => {
+                    body.push(0x44); // f64.const 0.0
+                    body.extend_from_slice(&0.0f64.to_le_bytes());
+                }
+                0x7E => {
+                    body.push(0x42); // i64.const 0
+                    Self::push_i64_leb128(&mut body, 0);
+                }
+                _ => {
+                    body.push(0x41); // i32.const 0
+                    Self::push_i64_leb128(&mut body, 0);
+                }
+            }
+        }
+
+        body.push(0x0B); // end function
+        body
+    }
+
+    fn collect_wasm_locals(
+        stmts: &[Stmt],
+        local_map: &mut std::collections::HashMap<String, (u32, u8)>,
+        declared_locals: &mut Vec<u8>,
+        next_local_idx: &mut u32,
+        fn_index_map: &std::collections::HashMap<String, (u32, u8)>,
+    ) {
+        for stmt in stmts {
+            match stmt {
+                Stmt::Let {
+                    name, ty, value, ..
+                } => {
+                    if !local_map.contains_key(name) {
+                        let vt = ty
+                            .as_ref()
+                            .map(Self::wasm_valtype_byte)
+                            .or_else(|| Self::infer_wasm_valtype(value, local_map, fn_index_map))
+                            .unwrap_or(0x7F);
+                        local_map.insert(name.clone(), (*next_local_idx, vt));
+                        declared_locals.push(vt);
+                        *next_local_idx += 1;
+                    }
+                }
+                Stmt::If {
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
+                    Self::collect_wasm_locals(
+                        then_branch,
+                        local_map,
+                        declared_locals,
+                        next_local_idx,
+                        fn_index_map,
+                    );
+                    if let Some(else_stmts) = else_branch {
+                        Self::collect_wasm_locals(
+                            else_stmts,
+                            local_map,
+                            declared_locals,
+                            next_local_idx,
+                            fn_index_map,
+                        );
+                    }
+                }
+                Stmt::While { body, .. } => {
+                    Self::collect_wasm_locals(
+                        body,
+                        local_map,
+                        declared_locals,
+                        next_local_idx,
+                        fn_index_map,
+                    );
+                }
+                Stmt::ForRange { iterator, body, .. } => {
+                    if !local_map.contains_key(iterator) {
+                        local_map.insert(iterator.clone(), (*next_local_idx, 0x7F));
+                        declared_locals.push(0x7F);
+                        *next_local_idx += 1;
+                    }
+                    Self::collect_wasm_locals(
+                        body,
+                        local_map,
+                        declared_locals,
+                        next_local_idx,
+                        fn_index_map,
+                    );
+                }
+                Stmt::Match { arms, .. } => {
+                    for arm in arms {
+                        Self::collect_wasm_locals(
+                            &arm.body,
+                            local_map,
+                            declared_locals,
+                            next_local_idx,
+                            fn_index_map,
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn infer_wasm_valtype(
+        expr: &Expr,
+        local_map: &std::collections::HashMap<String, (u32, u8)>,
+        fn_index_map: &std::collections::HashMap<String, (u32, u8)>,
+    ) -> Option<u8> {
+        match expr {
+            Expr::IntLit(_, _) | Expr::BoolLit(_, _) => Some(0x7F),
+            Expr::FloatLit(_, _) => Some(0x7D),
+            Expr::Ident(name, _) => local_map.get(name).map(|(_, vt)| *vt),
+            Expr::Unary { expr: inner, .. } => {
+                Self::infer_wasm_valtype(inner, local_map, fn_index_map)
+            }
+            Expr::Binary { left, op, right, .. } => match op {
+                BinaryOp::Eq
+                | BinaryOp::NotEq
+                | BinaryOp::Lt
+                | BinaryOp::Gt
+                | BinaryOp::LtEq
+                | BinaryOp::GtEq
+                | BinaryOp::And
+                | BinaryOp::Or => Some(0x7F),
+                _ => {
+                    let lt = Self::infer_wasm_valtype(left, local_map, fn_index_map);
+                    let rt = Self::infer_wasm_valtype(right, local_map, fn_index_map);
+                    if lt == Some(0x7C) || rt == Some(0x7C) {
+                        Some(0x7C)
+                    } else if lt == Some(0x7D) || rt == Some(0x7D) {
+                        Some(0x7D)
+                    } else if lt == Some(0x7E) || rt == Some(0x7E) {
+                        Some(0x7E)
+                    } else {
+                        lt.or(rt).or(Some(0x7F))
+                    }
+                }
+            },
+            Expr::Cast { target_type, .. } => Some(Self::wasm_valtype_byte(target_type)),
+            Expr::StaticCall { func, .. } => fn_index_map.get(func).map(|(_, vt)| *vt),
+            _ => Some(0x7F),
+        }
+    }
+
+    fn emit_wasm_fuel_check(body: &mut Vec<u8>, cost: i64) {
+        body.extend_from_slice(&[0x23, 0x00]); // global.get 0 ($__rts_fuel)
+        body.push(0x42); // i64.const <cost>
+        Self::push_i64_leb128(body, cost);
+        body.push(0x7D); // i64.sub
+        body.extend_from_slice(&[0x24, 0x00]); // global.set 0 ($__rts_fuel)
+        body.extend_from_slice(&[0x23, 0x00]); // global.get 0 ($__rts_fuel)
+        body.extend_from_slice(&[0x42, 0x00]); // i64.const 0
+        body.push(0x53); // i64.lt_s
+        body.extend_from_slice(&[0x04, 0x40]); // if (void)
+        body.push(0x00); // unreachable (Deterministic Out-Of-Fuel Trap)
+        body.push(0x0B); // end if
+    }
+
+    fn emit_wasm_stmt(
+        stmt: &Stmt,
+        ret_vt_opt: Option<u8>,
+        local_map: &std::collections::HashMap<String, (u32, u8)>,
+        fn_index_map: &std::collections::HashMap<String, (u32, u8)>,
+        loop_depth: Option<u32>,
+        body: &mut Vec<u8>,
+    ) {
+        match stmt {
+            Stmt::Let { name, value, .. } => {
+                if let Some(&(local_idx, expected_vt)) = local_map.get(name) {
+                    Self::emit_wasm_expr(value, expected_vt, local_map, fn_index_map, body);
+                    body.push(0x21); // local.set
+                    Self::push_u32_leb128(body, local_idx);
+                }
+            }
+            Stmt::Assign { target, value, .. } => {
+                if let Expr::Ident(name, _) = target {
+                    if let Some(&(local_idx, expected_vt)) = local_map.get(name) {
+                        Self::emit_wasm_expr(value, expected_vt, local_map, fn_index_map, body);
+                        body.push(0x21); // local.set
+                        Self::push_u32_leb128(body, local_idx);
+                    }
+                }
+            }
+            Stmt::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                Self::emit_wasm_expr(condition, 0x7F, local_map, fn_index_map, body);
+                body.extend_from_slice(&[0x04, 0x40]); // if (void)
+                let nested_depth = loop_depth.map(|d| d + 1);
+                for s in then_branch {
+                    Self::emit_wasm_stmt(
+                        s,
+                        ret_vt_opt,
+                        local_map,
+                        fn_index_map,
+                        nested_depth,
+                        body,
+                    );
+                }
+                if let Some(else_stmts) = else_branch {
+                    body.push(0x05); // else
+                    for s in else_stmts {
+                        Self::emit_wasm_stmt(
+                            s,
+                            ret_vt_opt,
+                            local_map,
+                            fn_index_map,
+                            nested_depth,
+                            body,
+                        );
+                    }
+                }
+                body.push(0x0B); // end if
+            }
+            Stmt::While {
+                condition,
+                body: loop_body,
+                ..
+            } => {
+                body.extend_from_slice(&[0x02, 0x40]); // block $exit (void)
+                body.extend_from_slice(&[0x03, 0x40]); // loop $cont (void)
+                Self::emit_wasm_expr(condition, 0x7F, local_map, fn_index_map, body);
+                body.push(0x45); // i32.eqz
+                body.extend_from_slice(&[0x0D, 0x01]); // br_if 1 ($exit)
+                Self::emit_wasm_fuel_check(body, 15);
+                for s in loop_body {
+                    Self::emit_wasm_stmt(s, ret_vt_opt, local_map, fn_index_map, Some(0), body);
+                }
+                body.extend_from_slice(&[0x0C, 0x00]); // br 0 ($cont)
+                body.push(0x0B); // end loop
+                body.push(0x0B); // end block
+            }
+            Stmt::ForRange {
+                iterator,
+                start,
+                end,
+                body: loop_body,
+                ..
+            } => {
+                if let Some(&(iter_idx, _)) = local_map.get(iterator) {
+                    Self::emit_wasm_expr(start, 0x7F, local_map, fn_index_map, body);
+                    body.push(0x21); // local.set iter_idx
+                    Self::push_u32_leb128(body, iter_idx);
+
+                    body.extend_from_slice(&[0x02, 0x40]); // block $exit (void)
+                    body.extend_from_slice(&[0x03, 0x40]); // loop $cont (void)
+                    body.push(0x20); // local.get iter_idx
+                    Self::push_u32_leb128(body, iter_idx);
+                    Self::emit_wasm_expr(end, 0x7F, local_map, fn_index_map, body);
+                    body.push(0x4E); // i32.ge_s
+                    body.extend_from_slice(&[0x0D, 0x01]); // br_if 1 ($exit)
+                    Self::emit_wasm_fuel_check(body, 15);
+                    for s in loop_body {
+                        Self::emit_wasm_stmt(
+                            s,
+                            ret_vt_opt,
+                            local_map,
+                            fn_index_map,
+                            Some(0),
+                            body,
+                        );
+                    }
+                    body.push(0x20); // local.get iter_idx
+                    Self::push_u32_leb128(body, iter_idx);
+                    body.extend_from_slice(&[0x41, 0x01, 0x6A]); // i32.const 1, i32.add
+                    body.push(0x21); // local.set iter_idx
+                    Self::push_u32_leb128(body, iter_idx);
+                    body.extend_from_slice(&[0x0C, 0x00]); // br 0 ($cont)
+                    body.push(0x0B); // end loop
+                    body.push(0x0B); // end block
+                }
+            }
+            Stmt::Break { .. } => {
+                if let Some(depth) = loop_depth {
+                    body.push(0x0C); // br ($exit = depth + 1)
+                    Self::push_u32_leb128(body, depth + 1);
+                }
+            }
+            Stmt::Continue { .. } => {
+                if let Some(depth) = loop_depth {
+                    body.push(0x0C); // br ($cont = depth)
+                    Self::push_u32_leb128(body, depth);
+                }
+            }
+            Stmt::Return { value, .. } => {
+                if let Some(expr) = value {
+                    let expected_vt = ret_vt_opt.unwrap_or(0x7F);
+                    Self::emit_wasm_expr(expr, expected_vt, local_map, fn_index_map, body);
+                }
+                body.push(0x0F); // return
+            }
+            Stmt::ExprStmt { expr, .. } => {
+                let vt =
+                    Self::infer_wasm_valtype(expr, local_map, fn_index_map).unwrap_or(0x7F);
+                Self::emit_wasm_expr(expr, vt, local_map, fn_index_map, body);
+                body.push(0x1A); // drop
+            }
+            Stmt::Match { arms, .. } => {
+                for arm in arms {
+                    for s in &arm.body {
+                        Self::emit_wasm_stmt(
+                            s,
+                            ret_vt_opt,
+                            local_map,
+                            fn_index_map,
+                            loop_depth,
+                            body,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    fn emit_wasm_expr(
+        expr: &Expr,
+        expected_vt: u8,
+        local_map: &std::collections::HashMap<String, (u32, u8)>,
+        fn_index_map: &std::collections::HashMap<String, (u32, u8)>,
+        body: &mut Vec<u8>,
+    ) {
+        match expr {
+            Expr::IntLit(v, _) => match expected_vt {
+                0x7D => {
+                    body.push(0x43); // f32.const
+                    body.extend_from_slice(&(*v as f32).to_le_bytes());
+                }
+                0x7C => {
+                    body.push(0x44); // f64.const
+                    body.extend_from_slice(&(*v as f64).to_le_bytes());
+                }
+                0x7E => {
+                    body.push(0x42); // i64.const
+                    Self::push_i64_leb128(body, *v as i64);
+                }
+                _ => {
+                    body.push(0x41); // i32.const
+                    Self::push_i64_leb128(body, *v as i64);
+                }
+            },
+            Expr::FloatLit(v, _) => match expected_vt {
+                0x7C => {
+                    body.push(0x44); // f64.const
+                    body.extend_from_slice(&v.to_le_bytes());
+                }
+                _ => {
+                    body.push(0x43); // f32.const
+                    body.extend_from_slice(&(*v as f32).to_le_bytes());
+                }
+            },
+            Expr::BoolLit(b, _) => {
+                body.push(0x41); // i32.const
+                Self::push_i64_leb128(body, if *b { 1 } else { 0 });
+            }
+            Expr::Ident(name, _) => {
+                if let Some(&(local_idx, local_vt)) = local_map.get(name) {
+                    body.push(0x20); // local.get
+                    Self::push_u32_leb128(body, local_idx);
+                    Self::emit_wasm_valtype_coercion(local_vt, expected_vt, body);
+                } else {
+                    body.extend_from_slice(&[0x41, 0x00]); // fallback i32.const 0
+                    Self::emit_wasm_valtype_coercion(0x7F, expected_vt, body);
+                }
+            }
+            Expr::Unary {
+                op, expr: inner, ..
+            } => {
+                let inner_vt = Self::infer_wasm_valtype(inner, local_map, fn_index_map)
+                    .unwrap_or(expected_vt);
+                match op {
+                    UnaryOp::Neg => match inner_vt {
+                        0x7D => {
+                            Self::emit_wasm_expr(inner, 0x7D, local_map, fn_index_map, body);
+                            body.push(0x8C); // f32.neg
+                        }
+                        0x7C => {
+                            Self::emit_wasm_expr(inner, 0x7C, local_map, fn_index_map, body);
+                            body.push(0x9A); // f64.neg
+                        }
+                        0x7E => {
+                            body.extend_from_slice(&[0x42, 0x00]); // i64.const 0
+                            Self::emit_wasm_expr(inner, 0x7E, local_map, fn_index_map, body);
+                            body.push(0x7D); // i64.sub
+                        }
+                        _ => {
+                            body.extend_from_slice(&[0x41, 0x00]); // i32.const 0
+                            Self::emit_wasm_expr(inner, 0x7F, local_map, fn_index_map, body);
+                            body.push(0x6B); // i32.sub
+                        }
+                    },
+                    UnaryOp::Not => {
+                        Self::emit_wasm_expr(inner, 0x7F, local_map, fn_index_map, body);
+                        body.push(0x45); // i32.eqz
+                    }
+                }
+            }
+            Expr::Binary {
+                left, op, right, ..
+            } => {
+                let lt = Self::infer_wasm_valtype(left, local_map, fn_index_map);
+                let rt = Self::infer_wasm_valtype(right, local_map, fn_index_map);
+                let op_vt = if lt == Some(0x7C) || rt == Some(0x7C) {
+                    0x7C
+                } else if lt == Some(0x7D) || rt == Some(0x7D) {
+                    0x7D
+                } else if lt == Some(0x7E) || rt == Some(0x7E) {
+                    0x7E
+                } else {
+                    0x7F
+                };
+
+                Self::emit_wasm_expr(left, op_vt, local_map, fn_index_map, body);
+                Self::emit_wasm_expr(right, op_vt, local_map, fn_index_map, body);
+
+                let opcode = match op_vt {
+                    0x7D => match op {
+                        BinaryOp::Add => 0x92,   // f32.add
+                        BinaryOp::Sub => 0x93,   // f32.sub
+                        BinaryOp::Mul => 0x94,   // f32.mul
+                        BinaryOp::Div => 0x95,   // f32.div
+                        BinaryOp::Eq => 0x5B,    // f32.eq
+                        BinaryOp::NotEq => 0x5C, // f32.ne
+                        BinaryOp::Lt => 0x5D,    // f32.lt
+                        BinaryOp::Gt => 0x5E,    // f32.gt
+                        BinaryOp::LtEq => 0x5F,  // f32.le
+                        BinaryOp::GtEq => 0x60,  // f32.ge
+                        _ => 0x92,
+                    },
+                    0x7C => match op {
+                        BinaryOp::Add => 0xA0,   // f64.add
+                        BinaryOp::Sub => 0xA1,   // f64.sub
+                        BinaryOp::Mul => 0xA2,   // f64.mul
+                        BinaryOp::Div => 0xA3,   // f64.div
+                        BinaryOp::Eq => 0x61,    // f64.eq
+                        BinaryOp::NotEq => 0x62, // f64.ne
+                        BinaryOp::Lt => 0x63,    // f64.lt
+                        BinaryOp::Gt => 0x64,    // f64.gt
+                        BinaryOp::LtEq => 0x65,  // f64.le
+                        BinaryOp::GtEq => 0x66,  // f64.ge
+                        _ => 0xA0,
+                    },
+                    0x7E => match op {
+                        BinaryOp::Add => 0x7C,   // i64.add
+                        BinaryOp::Sub => 0x7D,   // i64.sub
+                        BinaryOp::Mul => 0x7E,   // i64.mul
+                        BinaryOp::Div => 0x7F,   // i64.div_s
+                        BinaryOp::Eq => 0x51,    // i64.eq
+                        BinaryOp::NotEq => 0x52, // i64.ne
+                        BinaryOp::Lt => 0x53,    // i64.lt_s
+                        BinaryOp::Gt => 0x55,    // i64.gt_s
+                        BinaryOp::LtEq => 0x57,  // i64.le_s
+                        BinaryOp::GtEq => 0x59,  // i64.ge_s
+                        _ => 0x7C,
+                    },
+                    _ => match op {
+                        BinaryOp::Add => 0x6A,   // i32.add
+                        BinaryOp::Sub => 0x6B,   // i32.sub
+                        BinaryOp::Mul => 0x6C,   // i32.mul
+                        BinaryOp::Div => 0x6D,   // i32.div_s
+                        BinaryOp::And => 0x71,   // i32.and
+                        BinaryOp::Or => 0x72,    // i32.or
+                        BinaryOp::Eq => 0x46,    // i32.eq
+                        BinaryOp::NotEq => 0x47, // i32.ne
+                        BinaryOp::Lt => 0x48,    // i32.lt_s
+                        BinaryOp::Gt => 0x4A,    // i32.gt_s
+                        BinaryOp::LtEq => 0x4C,  // i32.le_s
+                        BinaryOp::GtEq => 0x4E,  // i32.ge_s
+                    },
+                };
+                body.push(opcode);
+
+                let result_vt = match op {
+                    BinaryOp::Eq
+                    | BinaryOp::NotEq
+                    | BinaryOp::Lt
+                    | BinaryOp::Gt
+                    | BinaryOp::LtEq
+                    | BinaryOp::GtEq
+                    | BinaryOp::And
+                    | BinaryOp::Or => 0x7F,
+                    _ => op_vt,
+                };
+                Self::emit_wasm_valtype_coercion(result_vt, expected_vt, body);
+            }
+            Expr::Cast {
+                expr: inner,
+                target_type,
+                ..
+            } => {
+                let dst_vt = Self::wasm_valtype_byte(target_type);
+                let src_vt = Self::infer_wasm_valtype(inner, local_map, fn_index_map)
+                    .unwrap_or(dst_vt);
+                Self::emit_wasm_expr(inner, src_vt, local_map, fn_index_map, body);
+                Self::emit_wasm_valtype_coercion(src_vt, dst_vt, body);
+                Self::emit_wasm_valtype_coercion(dst_vt, expected_vt, body);
+            }
+            Expr::StaticCall { func, args, .. } => {
+                for arg in args {
+                    let arg_vt =
+                        Self::infer_wasm_valtype(arg, local_map, fn_index_map).unwrap_or(0x7F);
+                    Self::emit_wasm_expr(arg, arg_vt, local_map, fn_index_map, body);
+                }
+                if let Some(&(fn_idx, ret_vt)) = fn_index_map.get(func) {
+                    body.push(0x10); // call
+                    Self::push_u32_leb128(body, fn_idx);
+                    Self::emit_wasm_valtype_coercion(ret_vt, expected_vt, body);
+                    return;
+                }
+                body.extend_from_slice(&[0x41, 0x00]);
+                Self::emit_wasm_valtype_coercion(0x7F, expected_vt, body);
+            }
+            _ => {
+                body.extend_from_slice(&[0x41, 0x00]);
+                Self::emit_wasm_valtype_coercion(0x7F, expected_vt, body);
+            }
+        }
+    }
+
+    fn emit_wasm_valtype_coercion(src_vt: u8, dst_vt: u8, body: &mut Vec<u8>) {
+        if src_vt == dst_vt {
+            return;
+        }
+        match (src_vt, dst_vt) {
+            (0x7F, 0x7D) => body.push(0xB2), // f32.convert_i32_s
+            (0x7D, 0x7F) => body.push(0xA8), // i32.trunc_f32_s
+            (0x7F, 0x7C) => body.push(0xB7), // f64.convert_i32_s
+            (0x7C, 0x7F) => body.push(0xAA), // i32.trunc_f64_s
+            (0x7D, 0x7C) => body.push(0xBB), // f64.promote_f32
+            (0x7C, 0x7D) => body.push(0xB6), // f32.demote_f64
+            (0x7F, 0x7E) => body.push(0xAC), // i64.extend_i32_s
+            (0x7E, 0x7F) => body.push(0xA7), // i32.wrap_i64
+            _ => {}
+        }
     }
 
     fn emit_wasm_section(wasm: &mut Vec<u8>, section_id: u8, payload: &[u8]) {

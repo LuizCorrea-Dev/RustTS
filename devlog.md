@@ -2,11 +2,11 @@
   <img src="./rustts_language_logo.png" alt="RustTS Logo" width="220">
 </p>
 
-# RustTS (`rtsc`) — Devlog de Evolução Arquitetural, Versões e Testes (`v0.1.0-rts` → `v1.6.0-rts`)
+# RustTS (`rtsc`) — Devlog de Evolução Arquitetural, Versões e Testes (`v0.1.0-rts` → `v2.0.0-rts`)
 
 Registro técnico cronológico da criação, auditorias de especificação, otimizações SIMD/memória, evolução semântica e validação em hardware real do compilador **RustTS (`rtsc`)**.
 
-- **Repositório Oficial:** [LuizCorrea-Dev/RustTS](https://github.com/LuizCorrea-Dev/RustTS) (`main`, tag `v1.5.0`)
+- **Repositório Oficial:** [LuizCorrea-Dev/RustTS](https://github.com/LuizCorrea-Dev/RustTS) (`main`, tag `v2.0.0`)
 - **Autor:** Luiz Correa — Rootszera
 - **Toolchain Nativa Verificada:** `rustc 1.99.1` / `cargo 1.99.1` + `LLVM/Clang 22.1.3` (`-std=c11 -O3 -mavx2 -mfma -Wall -Wextra -Werror`)
 
@@ -34,6 +34,10 @@ Registro técnico cronológico da criação, auditorias de especificação, otim
 | **`v1.4.0-rts`** | Debugging `#line`, Header `.h`, VS Code & KANORI (`Fase 5: 100%`) | Diretivas `#line`, `-g`/`--debug` (`-g -O0`), `--emit-header` (`emit_c_header`), extensão `editors/vscode-rustts/`, showcase `examples/kanori_zone_sim/` | **`cargo test`: 22/22 PASS**; `rtsc 1.4.0-rts`; `rtsc run -g` e `rtsc check` 5/5 aprovados |
 | **`v1.5.0-rts`** | Ergonomia TypeScript/C: Inferência no `let` & Aliases de Tipos | Aliases custo-zero (`int`, `uint`, `byte`, `float`, `number`, `boolean`, `string`), `infer_c_type_from_expr` para `let` sem `: Tipo`, inferência de `-IntLit` (`i32`) e construtores `vec2`/`vec3`/`vec4`/`quat` | **`cargo test`: 23/23 PASS** (`test_v150_typescript_ergonomics_type_aliases_and_let_inference`); `rtsc 1.5.0-rts` |
 | **`v1.6.0-rts`** | Ciclo 2 (Fase 6: 20%): Backend MLIR SSA (`--target=mlir`) | Novo módulo `src/codegen_mlir.rs` emitindo dialetos `func`, `scf`, `memref`, `arith`, `vector` e `rts` (`llvm.noalias`, `llvm.align = 64`, `rts.simd_tile = 256`) | **`cargo test`: 25/25 PASS** (`test_v160_mlir_ssa_codegen_soa_scf_and_capabilities`, `test_v160_mlir_hardware_and_ffi_capabilities`) |
+| **`v1.7.0-rts`** | Ciclo 2 (Fase 7: 45%): Backend Direto LLVM IR (`--target=llvm-ir`, `--llvm`) | Novo módulo `src/codegen_llvm.rs` emitindo `.ll` com GEP SoA, `noalias align 64`, `fast` math, intrínsecos LLVM e compilação direta via `clang -x ir` | **`cargo test`: 27/27 PASS** (`test_v170_llvm_ir_direct_codegen_soa_and_fast_math_vectorization`, `test_v170_llvm_ir_ffi_intrinsics_and_executable_main`) |
+| **`v1.8.0-rts`** | Ciclo 2 (Fase 8: 70%): GPU Compute (`@gpu_kernel`) $\rightarrow$ SPIR-V 1.5 & WGSL | Novo módulo `src/codegen_gpu.rs` (`.wgsl`, `.spvasm`, `.spv` binário magic `0x07230203`) + verificador semântico GPU (`RTS-E0601`–`E0603`) | **`cargo test`: 30/30 PASS** (`test_v180_gpu_sema_*`, `test_v180_wgsl_*`, `test_v180_spirv_*`) |
+| **`v1.9.0-rts`** | Ciclo 2 (Fase 9: 90%): Sandbox WASI com *Fuel Metering* (`--target=wasi`/`wasm`) | Novo módulo `src/codegen_wasi.rs` (`.wat` e `.wasm` magic `\0asm` com lowering real da AST + `--fuel-limit`) + verificador `RTS-E0701` | **`cargo test`: 33/33 PASS** (`test_v190_wasi_sema_rts_e0701_*`, `test_v190_wasi_wat_*`, `test_v190_wasm_binary_*`) |
+| **`v2.0.0-rts`** | Ciclo 2 (Fase 10: 100%): Pipeline Heterogêneo Unificado & Auditoria `v2.0.0` | Showcase `examples/kanori_gpu_wasi_sim/`, lowering real da AST em `.wasm` (`emit_wasm_binary`), checagem de imutabilidade local `let` vs `let mut` (`RTS-E0405`) e extensão VS Code `2.0.0` | **`cargo test`: 36/36 PASS** (`test_v200_kanori_heterogeneous_*`, `test_v200_immutable_let_*`, `test_v200_compiler_version_*`) |
 
 ---
 
@@ -468,8 +472,9 @@ Primeira etapa da Próxima Fronteira (`v2.0+`), adicionando geração direta de 
    - `src/gpu_particles.rts`: Declara `@shader_shared struct RadiationParticle`, `@gpu_kernel pub fn step_radiation_field` (compilável para WebGPU `.wgsl` e Vulkan/DX12 `.spvasm`/`.spv`) e a função determinística compartilhada `calcular_dose_particula`.
    - `src/sandbox_agent.rts`: Declara `module sandbox.kanori_agent;` com `@sealed_sig pub fn decidir_evacuacao_agente` instrumentada com *Fuel Metering* determinístico (compilável para `.wat` e `.wasm`).
    - `src/main.rts`: Orquestra e executa a simulação completa diretamente via backend LLVM IR (`rtsc run examples/kanori_gpu_wasi_sim/src/main.rts --llvm`).
-2. **Suíte Completa de Homologação `v2.0.0-rts` (`35/35` Testes Unitários em `src/lib.rs`):**
-   - `test_v200_kanori_heterogeneous_cpu_llvm_gpu_wgsl_spirv_and_wasi_showcase`: Valida a compilação unificada do showcase heterogêneo nos 6 backends (`C99`, `MLIR`, `LLVM IR .ll`, `WebGPU WGSL`, `Vulkan SPIR-V 1.5` e `WASI Fuel-Metered .wat/.wasm`).
+2. **Suíte Completa de Homologação `v2.0.0-rts` (`36/36` Testes Unitários em `src/lib.rs`):**
+   - `test_v200_kanori_heterogeneous_cpu_llvm_gpu_wgsl_spirv_and_wasi_showcase`: Valida a compilação unificada do showcase heterogêneo nos 6 backends (`C99`, `MLIR`, `LLVM IR .ll`, `WebGPU WGSL`, `Vulkan SPIR-V 1.5` e `WASI Fuel-Metered .wat/.wasm` com assinatura real `(f32, f32, i32) -> i32`).
+   - `test_v200_immutable_let_reassignment_blocked_by_sema`: Valida o bloqueio estático (`RTS-E0405`) contra reatribuição de variáveis locais declaradas com `let` sem `mut`.
    - `test_v200_compiler_version_and_full_diagnostic_taxonomy_homologation`: Homologa a versão `2.0.0-rts` e o protocolo JSON de diagnósticos.
 3. **Extensão Oficial `editors/rustts-lang-2.0.0.vsix`, Manuais Atualizados e Release `v2.0.0`:**
-   - Atualização de `README.md`, `INSTALACAO_E_USO.md`, `INICIANDO_UM_PROJETO.md`, `MANUAL_TIPOS_RUSTTS.md`, `editors/vscode-rustts/` (`v2.0.0`) e `RELEASE_NOTES_v2.0.0.md`.
+   - Atualização de `README.md`, `INSTALACAO_E_USO.md`, `INICIANDO_UM_PROJETO.md`, `MANUAL_TIPOS_RUSTTS.md`, `CONTRIBUTING.md`, `RustTS_guia.md`, `editors/vscode-rustts/` (`v2.0.0`) e `RELEASE_NOTES_v2.0.0.md`.

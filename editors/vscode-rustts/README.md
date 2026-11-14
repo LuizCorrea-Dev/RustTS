@@ -3,12 +3,13 @@
 Pacote oficial de realce de sintaxe (TextMate), configuração de linguagem e snippets para a linguagem determinística **RustTS (`.rts`)** (`rtsc v2.0.0-rts`).
 
 ## Recursos Inclusos
-- **Colorização Semântica Dedicada:** Destaque em alto contraste para o modificador `cap`, domínios de capacidades (`I2CBus`, `PWMPin`, `StdIO`, `FrameArena`, `ReadFrameArena`, `MutColumn`, `ReadColumn`), atributos de compilador (`@component`, `@system`, `@parallel_system`, `@sealed_sig`, `@open_sig`, `@unreal_actor`) e operador de propagação `?`.
-- **Tipos e Estruturas:** Suporte a tipos primitivos, vetoriais SIMD (`vec2`, `vec3`, `vec4`, `quat`, `mat3`, `mat4`), tipos algébricos (`Result<T, E>`, `Option<T>`, `Handle<T>`) e tipos nominais (`struct` e `enum`).
+- **Colorização Semântica Dedicada:** Destaque em alto contraste para o modificador `cap`, domínios de capacidades (`I2CBus`, `PWMPin`, `StdIO`, `FrameArena`, `ReadFrameArena`, `MutColumn`, `ReadColumn`, `MonotonicClock`, `RandomSeed`), atributos de compilador (`@component`, `@system`, `@parallel_system`, `@sealed_sig`, `@open_sig`, `@unreal_actor`, `@gpu_kernel`, `@workgroup_size`, `@shader_shared`, `@vectorize`, `@soa_layout`) e operador de propagação `?`.
+- **Tipos e Estruturas:** Suporte a tipos primitivos, aliases ergonômicos TypeScript/C (`int`, `uint`, `float`, `double`, `number`, `boolean`, `string`, `byte`, `int8..int64`, `uint8..uint64`), vetoriais SIMD (`vec2`, `vec3`, `vec4`, `quat`, `mat3`, `mat4`), tipos algébricos (`Result<T, E>`, `Option<T>`, `Handle<T>`) e tipos nominais (`struct` e `enum`).
 - **Snippets Integrados:**
   - `comp` → Gera um `@component struct` alinhado em 64 bytes SoA.
   - `sys` → Gera um `@system` determinístico com `MutColumn`, `FrameArena` e `TimeStep`.
   - `externc` → Declara uma função FFI `extern "C" fn` protegida por capacidade `cap`.
+  - `gpukernel` → Gera um Compute Shader GPU (`@gpu_kernel @workgroup_size(64, 1, 1)`) com `@shader_shared struct` para WebGPU (`.wgsl`) e Vulkan/DX12 SPIR-V (`.spvasm`/`.spv`).
 
 ## Como Instalar no Visual Studio Code e no Antigravity IDE
 

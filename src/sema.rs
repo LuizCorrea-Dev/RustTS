@@ -16,6 +16,8 @@ pub struct FunctionCapabilityEnv {
     pub local_var_arena_scope: HashMap<String, (ArenaScope, String)>,
     /// Rastreia o tipo estático (`TypeExpr`) de parâmetros e variáveis locais (`v1.0.0-rts` TypeChecker)
     pub local_var_types: HashMap<String, TypeExpr>,
+    /// Variáveis locais declaradas sem `mut` (`let x = ...`), proibidas de sofrerem reatribuição
+    pub immutable_locals: HashSet<String>,
 }
 
 impl FunctionCapabilityEnv {
@@ -24,6 +26,7 @@ impl FunctionCapabilityEnv {
         let mut granted_specs = Vec::new();
         let mut local_var_arena_scope = HashMap::new();
         let mut local_var_types = HashMap::new();
+        let immutable_locals = HashSet::new();
 
         for param in &func.params {
             local_var_types.insert(param.name.clone(), param.ty.clone());
@@ -48,6 +51,7 @@ impl FunctionCapabilityEnv {
             granted_specs,
             local_var_arena_scope,
             local_var_types,
+            immutable_locals,
         }
     }
 
@@ -932,11 +936,17 @@ impl SemanticAnalyzer {
         match stmt {
             Stmt::Let {
                 name,
+                is_mut,
                 ty,
                 value,
                 span,
-                ..
             } => {
+                if *is_mut {
+                    env.immutable_locals.remove(name);
+                } else {
+                    env.immutable_locals.insert(name.clone());
+                }
+
                 // RTS-E0404: Bloqueia declaração de variável local com tipo `cap ...` forjado fora do entrypoint `main`
                 if let Some(TypeExpr::Capability(forged_cap)) = ty {
                     if func.name != "main" {
@@ -1393,6 +1403,20 @@ impl SemanticAnalyzer {
         span: Span,
     ) {
         if let Some(root_ident) = Self::extract_root_receiver(target) {
+            if env.immutable_locals.contains(&root_ident) {
+                self.diagnostics.push(DiagnosticEntry {
+                    error_code: "RTS-E0405".to_string(),
+                    category: DiagnosticCategory::AliasingViolation,
+                    file: self.file_path.clone(),
+                    span,
+                    ast_node: format!("AssignExpr({})", root_ident),
+                    message: format!(
+                        "Cannot reassign immutable local variable '{}' in function '{}'. Declare it as 'let mut {}' to allow mutation.",
+                        root_ident, func.name, root_ident
+                    ),
+                    deterministic_fixes: vec![],
+                });
+            }
             if let Some(cap_spec) = env.param_caps.get(&root_ident) {
                 if matches!(
                     cap_spec.kind,
