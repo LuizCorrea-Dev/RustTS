@@ -38,9 +38,10 @@ curl -fsSL https://raw.githubusercontent.com/LuizCorrea-Dev/RustTS/main/scripts/
    * Emissão de diretivas `#line <linha> "<modulo>.rts"` no C99 gerado: depure diretamente o código `.rts` no Visual Studio, VS Code (`codelldb`/`cppvsdbg`), GDB ou LLDB usando `rtsc run arquivo.rts -g`.
    * Gere cabeçalhos `.h` (`#pragma once` + `extern "C"`) com `rtsc build arquivo.rts --emit-header` para integração imediata com engines C/C++.
 
-6. **Extensão Oficial VS Code & Showcase KANORI:**
-   * Extensão TextMate oficial em `editors/vscode-rustts/`.
-   * Projeto multi-arquivo completo em `examples/kanori_zone_sim/`.
+6. **Extensão Oficial VS Code & Antigravity IDE + Showcase KANORI:**
+   * **Pacote VSIX pronto para VS Code e Antigravity IDE:** [`editors/rustts-lang-1.4.0.vsix`](./editors/rustts-lang-1.4.0.vsix) (instale via `Ctrl + Shift + P` → `Extensions: Install from VSIX...`, sem dar duplo-clique pelo Windows Explorer para não invocar o `VSIXInstaller.exe` do Visual Studio C++).
+   * **Código-fonte da extensão, TextMate e snippets (`comp`, `sys`, `externc`):** [`editors/vscode-rustts/`](./editors/vscode-rustts/README.md) (`Ctrl + Shift + P` → `Developer: Install Extension from Location...`).
+   * Projeto multi-arquivo completo em [`examples/kanori_zone_sim/`](./examples/kanori_zone_sim/src/main.rts).
 
 ---
 

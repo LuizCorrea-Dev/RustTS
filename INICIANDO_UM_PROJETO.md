@@ -6,7 +6,7 @@
 
 Na versão **`v1.4.0-rts`**, o compilador `rtsc` opera como um toolchain autônomo de sistemas e motores de jogos: inicialização de projetos (`rtsc init`), resolução recursiva multi-arquivo em disco (`import`), compilação direta via LLVM/Clang com vetorização AVX2 ou depuração source-level `#line` (`rtsc run [-g]`), blocos de métodos nativos (`impl Struct`), FFI C-ABI protegido por capacidades (`extern "C" fn`), exportação de cabeçalhos C/C++ (`--emit-header`) e geração de código para **C99 Nativo**, **Unreal Engine 5**, **Unity** e **TypeScript SDK**.
 
-## Passo 1 — Verifique a Instalação do Compilador e Extensão VS Code
+## Passo 1 — Verifique a Instalação do Compilador e Extensão (VS Code / Antigravity IDE)
 
 1. Confirme no terminal que o binário `rtsc` está disponível no `PATH`:
    ```bash
@@ -15,16 +15,11 @@ Na versão **`v1.4.0-rts`**, o compilador `rtsc` opera como um toolchain autôno
    ```
    *(Caso ainda não tenha instalado o compilador, consulte [INSTALACAO_E_USO.md](./INSTALACAO_E_USO.md)).*
 
-2. **Ative o Syntax Highlighting Oficial no VS Code:**
-   Copie a extensão oficial `editors/vscode-rustts` para a pasta de extensões do seu usuário e recarregue a janela do VS Code (`Ctrl+Shift+P` → `Developer: Reload Window`):
-   ```powershell
-   # Windows (PowerShell)
-   Copy-Item -Path "editors\vscode-rustts" -Destination "$env:USERPROFILE\.vscode\extensions\rustts-lang-1.4.0" -Recurse -Force
-   ```
-   ```bash
-   # Linux / macOS
-   cp -r editors/vscode-rustts ~/.vscode/extensions/rustts-lang-1.4.0
-   ```
+2. **Instale a Extensão Oficial no VS Code ou Antigravity IDE:**
+   - **Pacote VSIX pronto para VS Code e Antigravity IDE:** [`editors/rustts-lang-1.4.0.vsix`](./editors/rustts-lang-1.4.0.vsix) — pressione **`Ctrl + Shift + P`** → **`Extensions: Install from VSIX...`** e selecione o arquivo *(**NÃO dê duplo-clique pelo Windows Explorer**, pois o `VSIXInstaller.exe` do Visual Studio C++ exibe `MissingPackagePartException`)*.
+   - **Código-fonte da extensão, snippets (`comp`, `sys`, `externc`) e guia completo:** [`editors/vscode-rustts/README.md`](./editors/vscode-rustts/README.md) (ou **`Developer: Install Extension from Location...`** em `editors/vscode-rustts/`).
+
+---
 
 ## Passo 2 — Crie um Projeto Autônomo (`rtsc init`)
 

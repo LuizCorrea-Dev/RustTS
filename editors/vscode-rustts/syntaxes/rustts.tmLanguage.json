@@ -3,25 +3,60 @@
   "name": "RustTS",
   "scopeName": "source.rustts",
   "patterns": [
-    { "include": "#comments" },
-    { "include": "#attributes" },
-    { "include": "#strings" },
-    { "include": "#numbers" },
-    { "include": "#keywords" },
-    { "include": "#types" },
-    { "include": "#capabilities" },
-    { "include": "#functions" }
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#attributes"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#capabilities"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#types"
+    },
+    {
+      "include": "#namespaces"
+    },
+    {
+      "include": "#functions"
+    },
+    {
+      "include": "#fields"
+    },
+    {
+      "include": "#operators"
+    }
   ],
   "repository": {
     "comments": {
       "patterns": [
-        { "name": "comment.line.double-slash.rustts", "match": "//.*$" },
-        { "name": "comment.block.rustts", "begin": "/\\*", "end": "\\*/" }
+        {
+          "name": "comment.line.double-slash.rustts",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.block.rustts",
+          "begin": "/\\*",
+          "end": "\\*/"
+        }
       ]
     },
     "attributes": {
       "patterns": [
-        { "name": "meta.attribute.rustts", "match": "@[a-zA-Z_][a-zA-Z0-9_]*" }
+        {
+          "name": "entity.name.function.decorator.rustts",
+          "match": "@[a-zA-Z_][a-zA-Z0-9_]*"
+        }
       ]
     },
     "strings": {
@@ -29,14 +64,38 @@
       "begin": "\"",
       "end": "\"",
       "patterns": [
-        { "name": "constant.character.escape.rustts", "match": "\\\\." }
+        {
+          "name": "constant.character.escape.rustts",
+          "match": "\\\\."
+        }
       ]
     },
     "numbers": {
       "patterns": [
-        { "name": "constant.numeric.hex.rustts", "match": "\\b0x[0-9a-fA-F]+\\b" },
-        { "name": "constant.numeric.float.rustts", "match": "\\b[0-9]+\\.[0-9]+\\b" },
-        { "name": "constant.numeric.integer.rustts", "match": "\\b[0-9]+\\b" }
+        {
+          "name": "constant.numeric.hex.rustts",
+          "match": "\\b0x[0-9a-fA-F_]+\\b"
+        },
+        {
+          "name": "constant.numeric.float.rustts",
+          "match": "\\b[0-9][0-9_]*\\.[0-9][0-9_]*\\b"
+        },
+        {
+          "name": "constant.numeric.integer.rustts",
+          "match": "\\b[0-9][0-9_]*\\b"
+        }
+      ]
+    },
+    "capabilities": {
+      "patterns": [
+        {
+          "name": "keyword.other.capability.rustts",
+          "match": "\\bcap\\b"
+        },
+        {
+          "name": "support.type.capability.rustts",
+          "match": "\\b(I2CBus|I2CRead|I2CPort|SPIBus|PWMPin|PWMWrite|GPIOPin|GPIOOut|GPIOIn|DMAChannel|Interrupt|MonotonicClock|TimeStep|StdIO|NetSocket|TcpSocket|UdpTick|HttpRoute|SqlRead|SqlWrite|AudioBus|AudioBuffer|GpuQueue|WebGpuDevice|CanvasContext|StaticArena|LevelArena|SessionArena|FrameArena|RequestArena|TaskArena|ReadFrameArena|ReadRequestArena|ReadTaskArena|AllocArena|ReadColumn|MutColumn|Read|Mut|ECSWorld|World)\\b"
+        }
       ]
     },
     "keywords": {
@@ -51,7 +110,11 @@
         },
         {
           "name": "constant.language.rustts",
-          "match": "\\b(true|false|Some|None|Ok|Err|self)\\b"
+          "match": "\\b(true|false|Some|None|Ok|Err)\\b"
+        },
+        {
+          "name": "variable.language.self.rustts",
+          "match": "\\bself\\b"
         }
       ]
     },
@@ -60,14 +123,18 @@
         {
           "name": "storage.type.primitive.rustts",
           "match": "\\b(i8|i16|i32|i64|u8|u16|u32|u64|usize|f32|f64|fix32|bool|str|vec2|vec3|vec4|quat|mat3|mat4|Vec2|Vec3|Vec4|Quat|Mat3|Mat4|SoA|Result|Option|Handle|Json)\\b"
+        },
+        {
+          "name": "entity.name.type.rustts",
+          "match": "\\b[A-Z][a-zA-Z0-9_]*\\b"
         }
       ]
     },
-    "capabilities": {
+    "namespaces": {
       "patterns": [
         {
-          "name": "storage.modifier.capability.rustts",
-          "match": "\\b(cap|I2CBus|I2CRead|I2CPort|SPIBus|PWMPin|PWMWrite|GPIOPin|GPIOOut|GPIOIn|DMAChannel|Interrupt|MonotonicClock|TimeStep|StdIO|NetSocket|TcpSocket|UdpTick|HttpRoute|SqlRead|SqlWrite|AudioBus|AudioBuffer|GpuQueue|WebGpuDevice|CanvasContext|StaticArena|LevelArena|SessionArena|FrameArena|RequestArena|TaskArena|ReadFrameArena|ReadRequestArena|ReadTaskArena|AllocArena|ReadColumn|MutColumn|Read|Mut|ECSWorld|World)\\b"
+          "name": "entity.name.namespace.rustts",
+          "match": "\\b[a-z_][a-zA-Z0-9_]*(?=::)"
         }
       ]
     },
@@ -76,6 +143,42 @@
         {
           "name": "entity.name.function.rustts",
           "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*(?=\\s*\\()"
+        }
+      ]
+    },
+    "fields": {
+      "patterns": [
+        {
+          "name": "variable.other.member.rustts",
+          "match": "(?<=\\.)[a-zA-Z_][a-zA-Z0-9_]*\\b"
+        },
+        {
+          "name": "variable.parameter.rustts",
+          "match": "\\b[a-z_][a-zA-Z0-9_]*(?=\\s*:(?!:))"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.try.rustts",
+          "match": "\\?"
+        },
+        {
+          "name": "keyword.operator.arrow.rustts",
+          "match": "->|=>|::|\\.\\."
+        },
+        {
+          "name": "keyword.operator.comparison.rustts",
+          "match": "==|!=|<=|>=|<|>"
+        },
+        {
+          "name": "keyword.operator.logical.rustts",
+          "match": "&&|\\|\\||!"
+        },
+        {
+          "name": "keyword.operator.arithmetic.rustts",
+          "match": "\\+|-|\\*|/|="
         }
       ]
     }

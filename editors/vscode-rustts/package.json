@@ -1,19 +1,28 @@
 {
   "name": "rustts-lang",
   "displayName": "RustTS (.rts) — Deterministic Systems & Engine Language",
-  "description": "Official syntax highlighting and language configuration for RustTS (.rts) v1.4.0-rts",
+  "description": "Official syntax highlighting, capability colorization, and snippets for RustTS (.rts) v1.4.0-rts",
   "version": "1.4.0",
   "publisher": "Rootszera",
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Programming Languages"],
+  "categories": [
+    "Programming Languages",
+    "Snippets"
+  ],
   "contributes": {
     "languages": [
       {
         "id": "rustts",
-        "aliases": ["RustTS", "rustts"],
-        "extensions": [".rts"],
+        "aliases": [
+          "RustTS",
+          "rustts",
+          "rts"
+        ],
+        "extensions": [
+          ".rts"
+        ],
         "configuration": "./language-configuration.json"
       }
     ],
@@ -23,6 +32,46 @@
         "scopeName": "source.rustts",
         "path": "./syntaxes/rustts.tmLanguage.json"
       }
-    ]
+    ],
+    "snippets": [
+      {
+        "language": "rustts",
+        "path": "./snippets/rustts.json"
+      }
+    ],
+    "configurationDefaults": {
+      "editor.tokenColorCustomizations": {
+        "textMateRules": [
+          {
+            "scope": "entity.name.function.decorator.rustts",
+            "settings": {
+              "foreground": "#FFD700",
+              "fontStyle": "bold"
+            }
+          },
+          {
+            "scope": "keyword.other.capability.rustts",
+            "settings": {
+              "foreground": "#FF5555",
+              "fontStyle": "bold"
+            }
+          },
+          {
+            "scope": "support.type.capability.rustts",
+            "settings": {
+              "foreground": "#FF79C6",
+              "fontStyle": "bold"
+            }
+          },
+          {
+            "scope": "keyword.operator.try.rustts",
+            "settings": {
+              "foreground": "#FF5555",
+              "fontStyle": "bold"
+            }
+          }
+        ]
+      }
+    }
   }
 }

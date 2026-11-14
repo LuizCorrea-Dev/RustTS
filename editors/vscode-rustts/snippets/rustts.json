@@ -1,0 +1,37 @@
+{
+    "RustTS ECS Component": {
+        "prefix": "comp",
+        "body": [
+            "@component",
+            "struct ${1:ComponentName} {",
+            "    ${2:field}: ${3:f32},",
+            "}"
+        ],
+        "description": "Cria uma struct @component alinhada em 64B SoA"
+    },
+    "RustTS ECS System": {
+        "prefix": "sys",
+        "body": [
+            "@system(stage = \"${1:FixedUpdate}\")",
+            "pub fn ${2:system_name}(",
+            "    ${3:col}: cap MutColumn<${4:Transform}>,",
+            "    events: cap FrameArena<${5:CollisionEvent}>,",
+            "    time: cap TimeStep",
+            ") {",
+            "    let dt: f32 = time.fixed_delta;",
+            "    let count: usize = ${3:col}.len();",
+            "    for i in 0..count {",
+            "        $0",
+            "    }",
+            "}"
+        ],
+        "description": "Cria um sistema determinístico SoA com FrameArena"
+    },
+    "RustTS Capability Extern C": {
+        "prefix": "externc",
+        "body": [
+            "extern \"C\" fn ${1:c_function}(${2:arg}: ${3:i32}, ${4:guard}: cap ${5:StdIO}) -> ${6:i32};"
+        ],
+        "description": "Declara uma função FFI C-ABI protegida por capacidade"
+    }
+}

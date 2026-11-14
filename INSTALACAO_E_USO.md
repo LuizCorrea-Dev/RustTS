@@ -18,12 +18,12 @@ Os binários pré-compilados da release `v1.4.0` possuem **zero dependências ex
 
 **Windows (PowerShell):**
 ```powershell
-irm [https://raw.githubusercontent.com/LuizCorrea-Dev/RustTS/main/scripts/install.ps1](https://raw.githubusercontent.com/LuizCorrea-Dev/RustTS/main/scripts/install.ps1) | iex
+irm https://raw.githubusercontent.com/LuizCorrea-Dev/RustTS/main/scripts/install.ps1 | iex
 ```
 
 **Linux e macOS (Bash / Zsh):**
 ```bash
-curl -fsSL [https://raw.githubusercontent.com/LuizCorrea-Dev/RustTS/main/scripts/install.sh](https://raw.githubusercontent.com/LuizCorrea-Dev/RustTS/main/scripts/install.sh) | bash
+curl -fsSL https://raw.githubusercontent.com/LuizCorrea-Dev/RustTS/main/scripts/install.sh | bash
 # Adicione ao perfil se necessário:
 export PATH="$HOME/.rtsc/bin:$PATH"
 ```
@@ -33,7 +33,7 @@ export PATH="$HOME/.rtsc/bin:$PATH"
 Com o toolchain **Rust (`cargo` / `rustc`)** instalado (via [rustup.rs](https://rustup.rs) ou `winget install Rustlang.Rustup` no Windows):
 
 ```bash
-git clone [https://github.com/LuizCorrea-Dev/RustTS.git](https://github.com/LuizCorrea-Dev/RustTS.git)
+git clone https://github.com/LuizCorrea-Dev/RustTS.git
 cd RustTS
 
 # Executa os 22 testes unitários do compilador
@@ -163,17 +163,31 @@ clang -std=c11 -O3 -mavx2 -mfma -Wall -Wextra -Werror examples/thermal_control_b
 
 ---
 
-## 4. Extensão Oficial VS Code (`editors/vscode-rustts/`)
+## 4. Extensão para VS Code e Antigravity IDE (`v1.4.0`)
 
-O pacote oficial de *syntax highlighting* TextMate (`.tmLanguage.json`) e configuração de linguagem para arquivos `.rts` está disponível em [`editors/vscode-rustts/`](./editors/vscode-rustts/package.json). Para instalá-lo localmente no seu VS Code:
+A extensão oficial fornece realce semântico de sintaxe (`cap`, `@component`, `@system`, `@sealed_sig`, `?`, tipos vetoriais e capacidades), configuração de linguagem e snippets (`comp`, `sys`, `externc`). Consulte também o guia dedicado em [`editors/vscode-rustts/README.md`](./editors/vscode-rustts/README.md).
 
+- **Pacote VSIX pronto para VS Code e Antigravity IDE:** [`editors/rustts-lang-1.4.0.vsix`](./editors/rustts-lang-1.4.0.vsix) (instale via `Ctrl + Shift + P` → `Extensions: Install from VSIX...` → selecione `editors/rustts-lang-1.4.0.vsix` → `Developer: Reload Window`).
+- **Código-fonte da extensão e snippets:** [`editors/vscode-rustts/`](./editors/vscode-rustts/package.json) (carregue via `Ctrl + Shift + P` → `Developer: Install Extension from Location...`).
+
+> **Atenção (Windows):** **NÃO dê duplo-clique** no arquivo `.vsix` pelo Windows Explorer. O Windows associa `.vsix` ao `VSIXInstaller.exe` do *Microsoft Visual Studio Build Tools* (C++/C#), exibindo o erro `MissingPackagePartException`. Instale sempre por dentro do **VS Code** ou **Antigravity IDE**, ou via terminal:
+
+**Instalação via PowerShell (VS Code + Antigravity IDE):**
 ```powershell
-# Windows (PowerShell)
-Copy-Item -Path "editors\vscode-rustts" -Destination "$env:USERPROFILE\.vscode\extensions\rustts-lang-1.4.0" -Recurse -Force
+foreach ($base in @("$env:USERPROFILE\.antigravity\extensions", "$env:USERPROFILE\.vscode\extensions")) {
+    if (Test-Path (Split-Path $base -Parent)) {
+        $dest = "$base\rootszera.rustts-lang-1.4.0"
+        Remove-Item $dest -Recurse -Force -ErrorAction SilentlyContinue
+        New-Item -ItemType Directory -Force -Path $dest | Out-Null
+        Copy-Item -Path "editors\vscode-rustts\*" -Destination $dest -Recurse -Force
+    }
+}
 ```
+
+**Instalação via Bash/Zsh (Linux / macOS):**
 ```bash
-# Linux / macOS
-cp -r editors/vscode-rustts ~/.vscode/extensions/rustts-lang-1.4.0
+mkdir -p ~/.vscode/extensions/rootszera.rustts-lang-1.4.0 && cp -r editors/vscode-rustts/* ~/.vscode/extensions/rootszera.rustts-lang-1.4.0/
+mkdir -p ~/.antigravity/extensions/rootszera.rustts-lang-1.4.0 && cp -r editors/vscode-rustts/* ~/.antigravity/extensions/rootszera.rustts-lang-1.4.0/
 ```
 
 ---
