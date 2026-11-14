@@ -4,7 +4,7 @@
 pub fn export_rustts_gbnf() -> &'static str {
     r#"# ==============================================================================
 # RustTS (.rts) Official Formal Grammar for Constrained LLM Decoding (GBNF)
-# Compiler: rtsc 1.6.0-rts | Specification: RustTS_guia.md (One Canonical Way)
+# Compiler: rtsc 1.7.0-rts | Specification: RustTS_guia.md (One Canonical Way)
 # ==============================================================================
 
 root            ::= ws module-decl? (import-decl)* (item ws)*

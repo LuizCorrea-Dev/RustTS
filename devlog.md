@@ -400,3 +400,23 @@ Primeira etapa da Próxima Fronteira (`v2.0+`), adicionando geração direta de 
 ### Validação (`v1.6.0-rts`)
 - **`cargo test`:** **25/25** testes unitários aprovados (`test_v160_mlir_ssa_codegen_soa_scf_and_capabilities` e `test_v160_mlir_hardware_and_ffi_capabilities`).
 - **Instalação Global:** `cargo install --path .` concluído com `rtsc --version` reportando **`rtsc 1.6.0-rts`**.
+
+---
+
+## Etapa 19 — Fase 7 do Ciclo 2 (`v1.7.0-rts`): Backend Direto LLVM IR (`.ll`) e Compilação Nativa Sem C99 (`45%` do Ciclo 2)
+
+### O que foi implementado
+1. **Gerador Direto de LLVM IR Textual SSA (`src/codegen_llvm.rs`):**
+   - Emissão de módulos LLVM IR completos com `target datalayout` e `target triple` nativos (`x86_64-pc-windows-msvc`, `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`) e ponteiros opacos (`ptr`, LLVM 15–22).
+   - Lowering de `struct` (`%Struct_t = type { ... }`), descritores SoA de 64 bytes (`%Component_soa_column_t = type { ptr, ..., i64, i64 }`), `Option<T>` (`{ i8, T }`), `Result<T, E>` (`{ i8, T, E }`) e tipos vetoriais (`%rts_vec2_t`, `%rts_vec3_t`, `%rts_vec4_t`, `%rts_quat_t`).
+   - Emissão de funções `define dso_local` com anotações de alias analysis estritas (`ptr noalias nocapture noundef align 64 %arg_col`) para colunas ECS SoA (`MutColumn<T>` / `ReadColumn<T>`) e remoção *zero-overhead* de tokens `cap` em declarações e chamadas FFI (`extern "C" fn`).
+2. **Fast-Math, Intrínsecos LLVM e Metadados de Vetorização (`!llvm.loop`):**
+   - Operações em ponto flutuante emitidas com flags `fast` (`fadd fast`, `fsub fast`, `fmul fast`, `fdiv fast`, `fcmp fast`).
+   - Lowering direto de `math::sqrt`, `math::sin`, `math::cos`, `math::abs` e `math::lerp` para intrínsecos nativos do LLVM (`@llvm.sqrt.f32`, `@llvm.sin.f32`, `@llvm.cos.f32`, `@llvm.fabs.f32`, `@llvm.fmuladd.f32`).
+   - Loops `for i in start..end` anotados com `!llvm.loop !0` (`!"llvm.loop.vectorize.enable", i1 true` e `!"llvm.loop.vectorize.width", i32 8`) para auto-vetorização AVX2 de 8 lanes sem passar pelo front-end C99.
+3. **Pipeline Direto `.ll` $\rightarrow$ Binário Nativo (`--target=llvm-ir --bin` e `rtsc run --llvm`):**
+   - Integração de `LlvmIrCodegen` em `src/main.rs` suportando `rtsc build <arquivo.rts> --target llvm-ir [-o <out.ll>] [--bin]` e `rtsc run <arquivo.rts> --llvm`, invocando `clang -x ir -O3 -mavx2 -mfma` diretamente sobre o `.ll` gerado.
+
+### Validação (`v1.7.0-rts`)
+- **`cargo test`:** **27/27** testes unitários aprovados (`test_v170_llvm_ir_direct_codegen_soa_and_fast_math_vectorization` e `test_v170_llvm_ir_ffi_intrinsics_and_executable_main`).
+- **Instalação Global:** `cargo install --path .` concluído com `rtsc --version` reportando **`rtsc 1.7.0-rts`**.

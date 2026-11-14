@@ -1,4 +1,5 @@
 use clap::{Parser as ClapParser, Subcommand};
+use rtsc_core::codegen_llvm::LlvmIrCodegen;
 use rtsc_core::codegen_mlir::MlirCodegen;
 use rtsc_core::codegen_native::NativeCodegen;
 use rtsc_core::codegen_ts_sdk::TsSdkCodegen;
@@ -13,7 +14,7 @@ use std::process::{self, Command};
 #[derive(ClapParser)]
 #[command(
     name = "rtsc",
-    version = "1.6.0-rts",
+    version = "1.7.0-rts",
     about = "RustTS (.rts) Deterministic Systems & Engine Compiler for Humans and AI"
 )]
 struct Cli {
@@ -79,10 +80,13 @@ enum Commands {
         #[arg(short = 'I', long = "include-dir")]
         include_dirs: Vec<PathBuf>,
     },
-    /// Compile `.rts` to a native SIMD binary and execute it immediately
+    /// Compile `.rts` to a native SIMD binary and execute it immediately (C99 or Direct LLVM IR via `--llvm`)
     Run {
         /// Path to the `.rts` file containing `pub fn main()`
         file: PathBuf,
+        /// Lower directly to LLVM IR (`.ll`) and compile with `clang -x ir` (bypasses C99)
+        #[arg(long = "llvm")]
+        llvm: bool,
         /// Emit debug symbols (`-g -O0` for LLDB/GDB source mapping via `#line`)
         #[arg(short = 'g', long = "debug")]
         debug_symbols: bool,
@@ -184,6 +188,48 @@ fn compile_c99_with_clang(
     }
 }
 
+fn compile_llvm_ir_with_clang(
+    ll_file: &Path,
+    bin_file: &Path,
+    lib_dirs: &[PathBuf],
+    link_libs: &[String],
+    debug_symbols: bool,
+) {
+    let Some(clang) = find_clang_binary() else {
+        eprintln!("error: LLVM/Clang ('clang') not found in PATH or standard installation paths.");
+        eprintln!("hint: install LLVM (winget install LLVM.LLVM) to compile LLVM IR (.ll) directly to a native binary.");
+        process::exit(1);
+    };
+
+    let mut cmd = Command::new(&clang);
+    let flags: &[&str] = if debug_symbols {
+        &["-x", "ir", "-g", "-O0", "-mavx2", "-mfma", "-Wno-override-module"]
+    } else {
+        &["-x", "ir", "-O3", "-mavx2", "-mfma", "-Wno-override-module"]
+    };
+    cmd.args(flags)
+        .arg(ll_file)
+        .arg("-o")
+        .arg(bin_file);
+
+    for lib_dir in lib_dirs {
+        cmd.arg(format!("-L{}", lib_dir.display()));
+    }
+    for lib in link_libs {
+        cmd.arg(format!("-l{}", lib));
+    }
+
+    let status = cmd.status().unwrap_or_else(|err| {
+        eprintln!("Failed to invoke '{}': {}", clang.display(), err);
+        process::exit(1);
+    });
+
+    if !status.success() {
+        eprintln!("error: direct LLVM IR (.ll) compilation failed via '{}'.", clang.display());
+        process::exit(status.code().unwrap_or(1));
+    }
+}
+
 fn scaffold_project(target_dir: &Path) {
     let src_dir = target_dir.join("src");
     let build_dir = target_dir.join("build");
@@ -196,7 +242,7 @@ fn scaffold_project(target_dir: &Path) {
         .unwrap_or("meu_projeto_rts");
 
     let rts_toml = format!(
-        "[package]\nname = \"{}\"\nversion = \"0.1.0\"\ncompiler = \"1.6.0-rts\"\ntarget = \"native\"\n",
+        "[package]\nname = \"{}\"\nversion = \"0.1.0\"\ncompiler = \"1.7.0-rts\"\ntarget = \"native\"\n",
         project_name
     );
     write_utf8_no_bom(&target_dir.join("rts.toml"), &rts_toml);
@@ -245,11 +291,11 @@ pub fn main() -> i32 {
     let leitura: Result<f32, FalhaSensor> = self::monitorar(lim, i2c, cooler);
     match leitura {
         Ok(temp) => {
-            io::print_f32("[RustTS v1.6.0-rts] Temperatura Nominal (C): ", temp);
+            io::print_f32("[RustTS v1.7.0-rts] Temperatura Nominal (C): ", temp);
             return 0;
         },
         Err(falha) => {
-            io::println("[RustTS v1.6.0-rts] Alerta: Falha de Sensor Detectada!");
+            io::println("[RustTS v1.7.0-rts] Alerta: Falha de Sensor Detectada!");
             return 1;
         },
     }
@@ -261,7 +307,7 @@ pub fn main() -> i32 {
     }
 
     println!(
-        "[rtsc 1.6.0-rts] Initialized RustTS project in '{}'\n  -> Run project: rtsc run {}",
+        "[rtsc 1.7.0-rts] Initialized RustTS project in '{}'\n  -> Run project: rtsc run {}",
         target_dir.display(),
         main_rts_path.display()
     );
@@ -341,15 +387,15 @@ fn main() {
                 if let Some(dir) = &out_dir {
                     let h_path = dir.join(format!("{}.h", stem));
                     write_utf8_no_bom(&h_path, &header_code);
-                    println!("[rtsc 1.6.0-rts] Emitted C/C++ ABI header: {}", h_path.display());
+                    println!("[rtsc 1.7.0-rts] Emitted C/C++ ABI header: {}", h_path.display());
                 } else if let Some(out_path) = &output {
                     let h_path = out_path.with_extension("h");
                     write_utf8_no_bom(&h_path, &header_code);
-                    println!("[rtsc 1.6.0-rts] Emitted C/C++ ABI header: {}", h_path.display());
+                    println!("[rtsc 1.7.0-rts] Emitted C/C++ ABI header: {}", h_path.display());
                 } else {
                     let h_path = PathBuf::from("build").join(format!("{}.h", stem));
                     write_utf8_no_bom(&h_path, &header_code);
-                    println!("[rtsc 1.6.0-rts] Emitted C/C++ ABI header: {}", h_path.display());
+                    println!("[rtsc 1.7.0-rts] Emitted C/C++ ABI header: {}", h_path.display());
                 }
             }
 
@@ -357,11 +403,11 @@ fn main() {
                 let ts_code = TsSdkCodegen::emit_typescript_sdk(&module);
                 if let Some(out_path) = output {
                     write_utf8_no_bom(&out_path, &ts_code);
-                    println!("[rtsc 1.6.0-rts] Emitted TypeScript SDK: {}", out_path.display());
+                    println!("[rtsc 1.7.0-rts] Emitted TypeScript SDK: {}", out_path.display());
                 } else if let Some(dir) = out_dir {
                     let p = dir.join(format!("{}_sdk.ts", stem));
                     write_utf8_no_bom(&p, &ts_code);
-                    println!("[rtsc 1.6.0-rts] Emitted TypeScript SDK: {}", p.display());
+                    println!("[rtsc 1.7.0-rts] Emitted TypeScript SDK: {}", p.display());
                 } else {
                     println!("{}", ts_code);
                 }
@@ -392,16 +438,16 @@ fn main() {
                         });
                         compile_c99_with_clang(&c_path, &bin_path, &include_dirs, &lib_dirs, &link_libs, debug_symbols);
                         println!(
-                            "[rtsc 1.6.0-rts] Compiled native AVX2 binary: {}",
+                            "[rtsc 1.7.0-rts] Compiled native AVX2 binary: {}",
                             bin_path.display()
                         );
                     } else if let Some(out_path) = output {
                         write_utf8_no_bom(&out_path, &c99_code);
-                        println!("[rtsc 1.6.0-rts] Emitted C99 source: {}", out_path.display());
+                        println!("[rtsc 1.7.0-rts] Emitted C99 source: {}", out_path.display());
                     } else if let Some(dir) = out_dir {
                         let p = dir.join(format!("{}.c", stem));
                         write_utf8_no_bom(&p, &c99_code);
-                        println!("[rtsc 1.6.0-rts] Emitted C99 source: {}", p.display());
+                        println!("[rtsc 1.7.0-rts] Emitted C99 source: {}", p.display());
                     } else {
                         println!("{}", c99_code);
                     }
@@ -419,7 +465,7 @@ fn main() {
                             write_utf8_no_bom(&h_path, &artifact.header_code);
                             write_utf8_no_bom(&cpp_path, &artifact.source_code);
                             println!(
-                                "[rtsc 1.6.0-rts] Emitted Unreal UHT files: {}, {}",
+                                "[rtsc 1.7.0-rts] Emitted Unreal UHT files: {}, {}",
                                 h_path.display(),
                                 cpp_path.display()
                             );
@@ -449,7 +495,7 @@ fn main() {
                         write_utf8_no_bom(&rs_path, &out.rust_ffi_code);
                         write_utf8_no_bom(&cs_path, &out.csharp_wrapper_code);
                         println!(
-                            "[rtsc 1.6.0-rts] Emitted Unity FFI files: {}, {}",
+                            "[rtsc 1.7.0-rts] Emitted Unity FFI files: {}, {}",
                             rs_path.display(),
                             cs_path.display()
                         );
@@ -462,18 +508,53 @@ fn main() {
                     let mlir_code = MlirCodegen::emit_mlir(&module);
                     if let Some(out_path) = output {
                         write_utf8_no_bom(&out_path, &mlir_code);
-                        println!("[rtsc 1.6.0-rts] Emitted MLIR SSA module: {}", out_path.display());
+                        println!("[rtsc 1.7.0-rts] Emitted MLIR SSA module: {}", out_path.display());
                     } else if let Some(dir) = out_dir {
                         let p = dir.join(format!("{}.mlir", stem));
                         write_utf8_no_bom(&p, &mlir_code);
-                        println!("[rtsc 1.6.0-rts] Emitted MLIR SSA module: {}", p.display());
+                        println!("[rtsc 1.7.0-rts] Emitted MLIR SSA module: {}", p.display());
                     } else {
                         println!("{}", mlir_code);
                     }
                 }
+                "llvm-ir" | "llvm" => {
+                    let ir_code = LlvmIrCodegen::emit_llvm_ir(&module);
+                    if compile_bin {
+                        let build_dir = out_dir.unwrap_or_else(|| PathBuf::from("build"));
+                        let ll_path = build_dir.join(format!("{}.ll", stem));
+                        let bin_path = output.unwrap_or_else(|| {
+                            if cfg!(windows) {
+                                build_dir.join(format!("{}.exe", stem))
+                            } else {
+                                build_dir.join(stem)
+                            }
+                        });
+                        write_utf8_no_bom(&ll_path, &ir_code);
+                        compile_llvm_ir_with_clang(
+                            &ll_path,
+                            &bin_path,
+                            &lib_dirs,
+                            &link_libs,
+                            debug_symbols,
+                        );
+                        println!(
+                            "[rtsc 1.7.0-rts] Direct LLVM IR (.ll -> native binary) compiled: {}",
+                            bin_path.display()
+                        );
+                    } else if let Some(out_path) = output {
+                        write_utf8_no_bom(&out_path, &ir_code);
+                        println!("[rtsc 1.7.0-rts] Emitted LLVM IR (.ll) module: {}", out_path.display());
+                    } else if let Some(dir) = out_dir {
+                        let p = dir.join(format!("{}.ll", stem));
+                        write_utf8_no_bom(&p, &ir_code);
+                        println!("[rtsc 1.7.0-rts] Emitted LLVM IR (.ll) module: {}", p.display());
+                    } else {
+                        println!("{}", ir_code);
+                    }
+                }
                 other => {
                     eprintln!(
-                        "Unsupported target '{}'. Valid targets: native, mlir, unreal, unity, ts-sdk",
+                        "Unsupported target '{}'. Valid targets: native, mlir, llvm-ir, unreal, unity, ts-sdk",
                         other
                     );
                     process::exit(1);
@@ -482,6 +563,7 @@ fn main() {
         }
         Some(Commands::Run {
             file,
+            llvm,
             debug_symbols,
             json_diagnostics,
             link_libs,
@@ -505,21 +587,41 @@ fn main() {
             }
 
             let module = module_opt.expect("Valid module AST");
-            let c99_code = NativeCodegen::emit_c99(&module);
             let stem = file
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("app");
             let build_dir = PathBuf::from("build");
-            let c_path = build_dir.join(format!("{}.c", stem));
             let bin_path = if cfg!(windows) {
                 build_dir.join(format!("{}.exe", stem))
             } else {
                 build_dir.join(stem)
             };
 
-            write_utf8_no_bom(&c_path, &c99_code);
-            compile_c99_with_clang(&c_path, &bin_path, &include_dirs, &lib_dirs, &link_libs, debug_symbols);
+            if llvm {
+                let ir_code = LlvmIrCodegen::emit_llvm_ir(&module);
+                let ll_path = build_dir.join(format!("{}.ll", stem));
+                write_utf8_no_bom(&ll_path, &ir_code);
+                compile_llvm_ir_with_clang(
+                    &ll_path,
+                    &bin_path,
+                    &lib_dirs,
+                    &link_libs,
+                    debug_symbols,
+                );
+            } else {
+                let c99_code = NativeCodegen::emit_c99(&module);
+                let c_path = build_dir.join(format!("{}.c", stem));
+                write_utf8_no_bom(&c_path, &c99_code);
+                compile_c99_with_clang(
+                    &c_path,
+                    &bin_path,
+                    &include_dirs,
+                    &lib_dirs,
+                    &link_libs,
+                    debug_symbols,
+                );
+            }
 
             let run_status = Command::new(&bin_path).status().unwrap_or_else(|err| {
                 eprintln!("Failed to execute '{}': {}", bin_path.display(), err);

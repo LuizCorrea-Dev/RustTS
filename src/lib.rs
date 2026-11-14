@@ -1,4 +1,5 @@
 pub mod ast;
+pub mod codegen_llvm;
 pub mod codegen_mlir;
 pub mod codegen_native;
 pub mod codegen_ts_sdk;
@@ -1225,5 +1226,76 @@ pub fn monitor_bus(i2c: cap I2CBus<0x48>, pwm: cap PWMPin<0>, console: cap StdIO
         assert!(mlir.contains("scf.condition("));
         assert!(mlir.contains("\"rts.hw_call\"(%pwm"));
         assert!(mlir.contains("arith.addi"));
+    }
+
+    #[test]
+    fn test_v170_llvm_ir_direct_codegen_soa_and_fast_math_vectorization() {
+        let src = r#"
+@component
+struct Transform {
+    pos_x: f32,
+    pos_y: f32,
+    vel_x: f32,
+    vel_y: f32
+}
+
+@parallel_system
+fn integrate_velocity(
+    t: cap MutColumn<Transform>,
+    dt: cap TimeStep
+) {
+    let dt_val: f32 = dt.fixed_delta;
+    let count: usize = t.len();
+    for i in 0..count {
+        t[i].pos_x = math::lerp(t[i].pos_x, t[i].vel_x, dt_val);
+        t[i].pos_y = t[i].pos_y + t[i].vel_y * dt_val;
+    }
+}
+"#;
+        let (module_opt, report) = compile_and_check(src, "test_v170_soa.rts");
+        assert_eq!(report.status, "ok", "{}", report.to_human_terminal());
+        let module = module_opt.expect("Valid module AST");
+        let ir = codegen_llvm::LlvmIrCodegen::emit_llvm_ir(&module);
+        assert!(ir.contains("target datalayout ="));
+        assert!(ir.contains("target triple ="));
+        assert!(ir.contains("%Transform_t = type { float, float, float, float }"));
+        assert!(ir.contains("%Transform_soa_column_t = type { ptr, ptr, ptr, ptr, ptr, i64, i64 }"));
+        assert!(ir.contains("define dso_local void @root_integrate_velocity("));
+        assert!(ir.contains("ptr noalias nocapture noundef align 64 %arg_t"));
+        assert!(ir.contains("call fast float @llvm.fmuladd.f32("));
+        assert!(ir.contains("fmul fast float"));
+        assert!(ir.contains("fadd fast float"));
+        assert!(ir.contains("!llvm.loop !0"));
+        assert!(ir.contains("!\"llvm.loop.vectorize.enable\", i1 true"));
+        assert!(ir.contains("!\"llvm.loop.vectorize.width\", i32 8"));
+    }
+
+    #[test]
+    fn test_v170_llvm_ir_ffi_intrinsics_and_executable_main() {
+        let src = r#"
+extern "C" fn puts(msg: string, io: cap StdIO) -> int;
+
+fn somar_quadrado(x: float, bias: float) -> float {
+    let r = math::sqrt(x * x) + bias;
+    return r;
+}
+
+fn main(io: cap StdIO) -> i32 {
+    let v = somar_quadrado(9.0, 2.5);
+    if v > 10.0 {
+        let _rc = puts("RustTS v1.7.0 Direct LLVM IR Backend OK!", io);
+    }
+    return 0;
+}
+"#;
+        let (module_opt, report) = compile_and_check(src, "test_v170_main.rts");
+        assert_eq!(report.status, "ok", "{}", report.to_human_terminal());
+        let module = module_opt.expect("Valid module AST");
+        let ir = codegen_llvm::LlvmIrCodegen::emit_llvm_ir(&module);
+        assert!(ir.contains("declare i32 @puts(ptr)"));
+        assert!(ir.contains("define dso_local float @root_somar_quadrado(float %arg_x, float %arg_bias)"));
+        assert!(ir.contains("call fast float @llvm.sqrt.f32("));
+        assert!(ir.contains("define dso_local i32 @main()"));
+        assert!(ir.contains("call i32 @puts(ptr @.str.4)"));
     }
 }

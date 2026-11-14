@@ -9,7 +9,7 @@ pub struct UnrealCppOutput {
     pub source_code: String,
 }
 
-/// Transpilador para Unreal Engine 5 (`rtsc --target unreal` — v1.6.0-rts).
+/// Transpilador para Unreal Engine 5 (`rtsc --target unreal` — v1.7.0-rts).
 /// Converte um único arquivo `.rts` contendo `@unreal_actor` e `@unreal_impl` em `.h` e `.cpp`
 /// com `UCLASS()`, `GENERATED_BODY()`, `UPROPERTY()`, `UFUNCTION()`, `GetLifetimeReplicatedProps`
 /// e lowering determinístico completo da AST para C++20 da Unreal (`FMath`, `this->`, etc.).
@@ -57,7 +57,7 @@ impl UnrealCodegen {
                         .collect();
 
                     let mut h = String::new();
-                    h.push_str("// Generated deterministically by rtsc 1.6.0-rts --target=unreal\n");
+                    h.push_str("// Generated deterministically by rtsc 1.7.0-rts --target=unreal\n");
                     h.push_str("#pragma once\n\n");
                     h.push_str("#include \"CoreMinimal.h\"\n");
                     h.push_str("#include \"GameFramework/Actor.h\"\n");
@@ -146,7 +146,7 @@ impl UnrealCodegen {
 
                     // Geração do `.cpp` com lowering real da AST
                     let mut cpp = String::new();
-                    cpp.push_str("// Generated deterministically by rtsc 1.6.0-rts --target=unreal\n");
+                    cpp.push_str("// Generated deterministically by rtsc 1.7.0-rts --target=unreal\n");
                     cpp.push_str(&format!("#include \"{}\"\n", header_filename));
                     cpp.push_str("#include \"Math/UnrealMathUtility.h\"\n\n");
                     cpp.push_str(&format!("{}::{}()\n{{\n", class_name, class_name));
