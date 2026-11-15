@@ -439,6 +439,10 @@ impl WasiCodegen {
                         }
                     }
                     UnaryOp::Not => format!("(i32.eqz {})", in_s),
+                    UnaryOp::BitNot => {
+                        let it = if ty == "i64" { "i64" } else { "i32" };
+                        format!("({}.xor {} ({}.const -1))", it, in_s, it)
+                    }
                 }
             }
             Expr::Binary {
@@ -459,6 +463,12 @@ impl WasiCodegen {
                             format!("{}.div_s", operand_ty)
                         }
                     }
+                    BinaryOp::Rem => format!("{}.rem_s", if is_float { "i32" } else { &operand_ty }),
+                    BinaryOp::BitAnd => format!("{}.and", if is_float { "i32" } else { &operand_ty }),
+                    BinaryOp::BitOr => format!("{}.or", if is_float { "i32" } else { &operand_ty }),
+                    BinaryOp::BitXor => format!("{}.xor", if is_float { "i32" } else { &operand_ty }),
+                    BinaryOp::Shl => format!("{}.shl", if is_float { "i32" } else { &operand_ty }),
+                    BinaryOp::Shr => format!("{}.shr_s", if is_float { "i32" } else { &operand_ty }),
                     BinaryOp::Eq => format!("{}.eq", operand_ty),
                     BinaryOp::NotEq => format!("{}.ne", operand_ty),
                     BinaryOp::Lt => {
@@ -531,6 +541,18 @@ impl WasiCodegen {
             } => {
                 let dst_ty = Self::map_wat_type(target_type);
                 Self::lower_wat_expr(inner, Some(&dst_ty), local_vars)
+            }
+            Expr::IfExpr {
+                cond,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                let res_ty = expected_ty.unwrap_or("i32");
+                let c_s = Self::lower_wat_expr(cond, Some("i32"), local_vars);
+                let t_s = Self::lower_wat_expr(then_branch, Some(res_ty), local_vars);
+                let e_s = Self::lower_wat_expr(else_branch, Some(res_ty), local_vars);
+                format!("(if (result {}) {} (then {}) (else {}))", res_ty, c_s, t_s, e_s)
             }
             _ => {
                 let ty = expected_ty.unwrap_or("i32");
@@ -1172,6 +1194,17 @@ impl WasiCodegen {
                         Self::emit_wasm_expr(inner, 0x7F, local_map, fn_index_map, body);
                         body.push(0x45); // i32.eqz
                     }
+                    UnaryOp::BitNot => {
+                        if inner_vt == 0x7E {
+                            Self::emit_wasm_expr(inner, 0x7E, local_map, fn_index_map, body);
+                            body.extend_from_slice(&[0x42, 0x7F]); // i64.const -1
+                            body.push(0x85); // i64.xor
+                        } else {
+                            Self::emit_wasm_expr(inner, 0x7F, local_map, fn_index_map, body);
+                            body.extend_from_slice(&[0x41, 0x7F]); // i32.const -1
+                            body.push(0x73); // i32.xor
+                        }
+                    }
                 }
             }
             Expr::Binary {
@@ -1224,6 +1257,12 @@ impl WasiCodegen {
                         BinaryOp::Sub => 0x7D,   // i64.sub
                         BinaryOp::Mul => 0x7E,   // i64.mul
                         BinaryOp::Div => 0x7F,   // i64.div_s
+                        BinaryOp::Rem => 0x81,   // i64.rem_s
+                        BinaryOp::BitAnd => 0x83, // i64.and
+                        BinaryOp::BitOr => 0x84,  // i64.or
+                        BinaryOp::BitXor => 0x85, // i64.xor
+                        BinaryOp::Shl => 0x86,   // i64.shl
+                        BinaryOp::Shr => 0x87,   // i64.shr_s
                         BinaryOp::Eq => 0x51,    // i64.eq
                         BinaryOp::NotEq => 0x52, // i64.ne
                         BinaryOp::Lt => 0x53,    // i64.lt_s
@@ -1237,8 +1276,12 @@ impl WasiCodegen {
                         BinaryOp::Sub => 0x6B,   // i32.sub
                         BinaryOp::Mul => 0x6C,   // i32.mul
                         BinaryOp::Div => 0x6D,   // i32.div_s
-                        BinaryOp::And => 0x71,   // i32.and
-                        BinaryOp::Or => 0x72,    // i32.or
+                        BinaryOp::Rem => 0x6F,   // i32.rem_s
+                        BinaryOp::And | BinaryOp::BitAnd => 0x71, // i32.and
+                        BinaryOp::Or | BinaryOp::BitOr => 0x72,   // i32.or
+                        BinaryOp::BitXor => 0x73, // i32.xor
+                        BinaryOp::Shl => 0x74,   // i32.shl
+                        BinaryOp::Shr => 0x75,   // i32.shr_s
                         BinaryOp::Eq => 0x46,    // i32.eq
                         BinaryOp::NotEq => 0x47, // i32.ne
                         BinaryOp::Lt => 0x48,    // i32.lt_s
@@ -1288,6 +1331,23 @@ impl WasiCodegen {
                 }
                 body.extend_from_slice(&[0x41, 0x00]);
                 Self::emit_wasm_valtype_coercion(0x7F, expected_vt, body);
+            }
+            Expr::IfExpr {
+                cond,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                let res_vt = Self::infer_wasm_valtype(then_branch, local_map, fn_index_map)
+                    .unwrap_or(expected_vt);
+                Self::emit_wasm_expr(cond, 0x7F, local_map, fn_index_map, body);
+                body.push(0x04); // if
+                body.push(res_vt);
+                Self::emit_wasm_expr(then_branch, res_vt, local_map, fn_index_map, body);
+                body.push(0x05); // else
+                Self::emit_wasm_expr(else_branch, res_vt, local_map, fn_index_map, body);
+                body.push(0x0B); // end
+                Self::emit_wasm_valtype_coercion(res_vt, expected_vt, body);
             }
             _ => {
                 body.extend_from_slice(&[0x41, 0x00]);

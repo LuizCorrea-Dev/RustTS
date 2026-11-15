@@ -18,6 +18,8 @@ pub struct FunctionCapabilityEnv {
     pub local_var_types: HashMap<String, TypeExpr>,
     /// Variáveis locais declaradas sem `mut` (`let x = ...`), proibidas de sofrerem reatribuição
     pub immutable_locals: HashSet<String>,
+    /// Ligações mutáveis elegíveis para passagem como `inout` (`let mut x` ou parâmetro `inout`)
+    pub mutable_bindings: HashSet<String>,
 }
 
 impl FunctionCapabilityEnv {
@@ -27,9 +29,13 @@ impl FunctionCapabilityEnv {
         let mut local_var_arena_scope = HashMap::new();
         let mut local_var_types = HashMap::new();
         let immutable_locals = HashSet::new();
+        let mut mutable_bindings = HashSet::new();
 
         for param in &func.params {
             local_var_types.insert(param.name.clone(), param.ty.clone());
+            if param.is_inout {
+                mutable_bindings.insert(param.name.clone());
+            }
             if param.is_cap {
                 let spec_opt = param.capability.clone().or_else(|| match &param.ty {
                     TypeExpr::Capability(s) => Some(s.clone()),
@@ -52,6 +58,7 @@ impl FunctionCapabilityEnv {
             local_var_arena_scope,
             local_var_types,
             immutable_locals,
+            mutable_bindings,
         }
     }
 
@@ -80,6 +87,17 @@ impl FunctionCapabilityEnv {
                     (Some(_), None) | (None, None) => true,
                     (None, Some(_)) => false,
                 }
+            } else if matches!(
+                (&granted.kind, &required.kind),
+                (
+                    CapabilityKind::MutSlice,
+                    CapabilityKind::ReadSlice
+                ) | (
+                    CapabilityKind::MutColumn,
+                    CapabilityKind::ReadColumn
+                )
+            ) {
+                granted.generic_arg == required.generic_arg
             } else if matches!(
                 (&granted.kind, &required.kind),
                 (
@@ -115,9 +133,12 @@ pub struct FunctionSymbol {
 pub struct SymbolTable {
     pub functions: HashMap<String, FunctionSymbol>,
     pub structs: HashMap<String, HashMap<String, TypeExpr>>,
+    pub struct_decls: HashMap<String, StructDecl>,
     pub enums: HashMap<String, Vec<(String, Option<TypeExpr>)>>,
+    pub consts: HashMap<String, TypeExpr>,
     pub fn_return_types: HashMap<String, Option<TypeExpr>>,
     pub fn_param_types: HashMap<String, Vec<TypeExpr>>,
+    pub fn_params: HashMap<String, Vec<FnParam>>,
     pub extern_fns: HashSet<String>,
     pub call_edges: HashMap<String, Vec<String>>,
 }
@@ -128,8 +149,10 @@ impl SymbolTable {
         let mut functions = HashMap::new();
         let mut structs: HashMap<String, HashMap<String, TypeExpr>> = HashMap::new();
         let mut enums: HashMap<String, Vec<(String, Option<TypeExpr>)>> = HashMap::new();
+        let mut consts: HashMap<String, TypeExpr> = HashMap::new();
         let mut fn_return_types: HashMap<String, Option<TypeExpr>> = HashMap::new();
         let mut fn_param_types: HashMap<String, Vec<TypeExpr>> = HashMap::new();
+        let mut fn_params: HashMap<String, Vec<FnParam>> = HashMap::new();
 
         // Intrínsecos matemáticos determinísticos do Prelude (`core.math` -> `<math.h>`)
         let f32_ty = TypeExpr::Primitive(PrimitiveType::F32);
@@ -180,6 +203,21 @@ impl SymbolTable {
             ],
         );
 
+        for (ns, pty) in [
+            ("str64", PrimitiveType::Str64),
+            ("str128", PrimitiveType::Str128),
+            ("str256", PrimitiveType::Str256),
+        ] {
+            let ret = Some(TypeExpr::Primitive(pty));
+            let new_k = format!("{}::new", ns);
+            fn_return_types.insert(new_k.clone(), ret.clone());
+            fn_param_types.insert(new_k, vec![]);
+
+            let from_k = format!("{}::from", ns);
+            fn_return_types.insert(from_k.clone(), ret);
+            fn_param_types.insert(from_k, vec![TypeExpr::Primitive(PrimitiveType::Str)]);
+        }
+
         // 1. Prelude Intrínseco (`core.rts`): Assinaturas formais dos subsistemas de hardware/SO/rede
         let intrinsics: Vec<(&str, &str, Option<CapGenericArg>)> = vec![
             ("NetworkSocket::send", "NetSocket", None),
@@ -223,15 +261,20 @@ impl SymbolTable {
         // 2. Registra todas as structs, enums e funções declaradas no módulo e suas capacidades explícitas
         let mut call_edges: HashMap<String, Vec<String>> = HashMap::new();
         let mut extern_fns: HashSet<String> = HashSet::new();
+        let mut struct_decls: HashMap<String, StructDecl> = HashMap::new();
 
         for item in &module.items {
             match item {
+                Item::Const(c) => {
+                    consts.insert(c.name.clone(), c.ty.clone());
+                }
                 Item::Struct(s) => {
                     let mut field_map = HashMap::new();
                     for f in &s.fields {
                         field_map.insert(f.name.clone(), f.ty.clone());
                     }
                     structs.insert(s.name.clone(), field_map);
+                    struct_decls.insert(s.name.clone(), s.clone());
                 }
                 Item::Enum(e) => {
                     let variants = e
@@ -247,6 +290,7 @@ impl SymbolTable {
                         f.name.clone(),
                         f.params.iter().map(|p| p.ty.clone()).collect(),
                     );
+                    fn_params.insert(f.name.clone(), f.params.clone());
                     let mut req_caps = Vec::new();
                     let mut prov = HashMap::new();
                     for p in &f.params {
@@ -294,6 +338,7 @@ impl SymbolTable {
                         ext.name.clone(),
                         ext.params.iter().map(|p| p.ty.clone()).collect(),
                     );
+                    fn_params.insert(ext.name.clone(), ext.params.clone());
                     let mut req_caps = Vec::new();
                     let mut prov = HashMap::new();
                     for p in &ext.params {
@@ -378,9 +423,12 @@ impl SymbolTable {
         Self {
             functions,
             structs,
+            struct_decls,
             enums,
+            consts,
             fn_return_types,
             fn_param_types,
+            fn_params,
             extern_fns,
             call_edges,
         }
@@ -496,6 +544,16 @@ impl SymbolTable {
                     Self::collect_callees_in_expr(el, out);
                 }
             }
+            Expr::IfExpr {
+                cond,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                Self::collect_callees_in_expr(cond, out);
+                Self::collect_callees_in_expr(then_branch, out);
+                Self::collect_callees_in_expr(else_branch, out);
+            }
             _ => {}
         }
     }
@@ -525,7 +583,27 @@ impl SemanticAnalyzer {
 
         for item in &module.items {
             match item {
-                Item::Struct(s) => self.check_struct(s),
+                Item::Const(c) => {
+                    let empty_env = FunctionCapabilityEnv::default();
+                    if let Some(actual_ty) = self.infer_expr_type(&empty_env, &sym_table, &c.value)
+                    {
+                        if !Self::types_compatible(&c.ty, &actual_ty) {
+                            self.diagnostics.push(DiagnosticEntry {
+                                error_code: "RTS-E0301".to_string(),
+                                category: DiagnosticCategory::TypeMismatch,
+                                file: self.file_path.clone(),
+                                span: c.span,
+                                ast_node: format!("ConstDecl({}: {})", c.name, c.ty),
+                                message: format!(
+                                    "Type mismatch in module const '{}': declared as '{}', but initializer has incompatible type '{}'.",
+                                    c.name, c.ty, actual_ty
+                                ),
+                                deterministic_fixes: vec![],
+                            });
+                        }
+                    }
+                }
+                Item::Struct(s) => self.check_struct(s, &sym_table),
                 Item::Enum(_e) => {}
                 Item::Function(f) => {
                     if is_wasi_sandbox_mod {
@@ -631,6 +709,8 @@ impl SemanticAnalyzer {
                 | "TimeStep"
                 | "ReadColumn"
                 | "MutColumn"
+                | "ReadSlice"
+                | "MutSlice"
                 | "StaticArena"
                 | "LevelArena"
                 | "SessionArena"
@@ -648,6 +728,10 @@ impl SemanticAnalyzer {
                 | "SqlWrite"
                 | "GpuQueue"
                 | "WebGpuDevice"
+                | "WindowHost"
+                | "InputDevice"
+                | "FileSystem"
+                | "AudioDevice"
         )
     }
 
@@ -709,7 +793,59 @@ impl SemanticAnalyzer {
         )
     }
 
-    fn check_struct(&mut self, s: &StructDecl) {
+    fn is_type_repr_c_safe(
+        ty: &TypeExpr,
+        sym_table: &SymbolTable,
+        visiting: &mut HashSet<String>,
+    ) -> bool {
+        match ty {
+            TypeExpr::Primitive(p) => matches!(
+                p,
+                PrimitiveType::I8
+                    | PrimitiveType::I16
+                    | PrimitiveType::I32
+                    | PrimitiveType::I64
+                    | PrimitiveType::U8
+                    | PrimitiveType::U16
+                    | PrimitiveType::U32
+                    | PrimitiveType::U64
+                    | PrimitiveType::Usize
+                    | PrimitiveType::F32
+                    | PrimitiveType::F64
+                    | PrimitiveType::Fix32
+                    | PrimitiveType::Bool
+                    | PrimitiveType::Str64
+                    | PrimitiveType::Str128
+                    | PrimitiveType::Str256
+            ),
+            TypeExpr::Math(_) => true,
+            TypeExpr::Array(inner, _) => Self::is_type_repr_c_safe(inner, sym_table, visiting),
+            TypeExpr::Named { name, generics } if generics.is_empty() => {
+                if !visiting.insert(name.clone()) {
+                    return false;
+                }
+                let ok = sym_table
+                    .struct_decls
+                    .get(name)
+                    .map(|st| {
+                        (st.is_repr_c()
+                            || st
+                                .attributes
+                                .iter()
+                                .any(|a| matches!(a, Attribute::ShaderShared)))
+                            && st.fields.iter().all(|f| {
+                                Self::is_type_repr_c_safe(&f.ty, sym_table, visiting)
+                            })
+                    })
+                    .unwrap_or(false);
+                visiting.remove(name);
+                ok
+            }
+            _ => false,
+        }
+    }
+
+    fn check_struct(&mut self, s: &StructDecl, sym_table: &SymbolTable) {
         if Self::is_tier_zero_forbidden(&s.name) {
             self.diagnostics.push(DiagnosticEntry {
                 error_code: "RTS-E0900".to_string(),
@@ -725,6 +861,24 @@ impl SemanticAnalyzer {
             });
         }
 
+        // RTS-E0501: Bloqueia MutSlice<T> / ReadSlice<T> dentro de campos de struct (Guarda Anti-Escape)
+        for field in &s.fields {
+            if field.ty.is_slice_capability() {
+                self.diagnostics.push(DiagnosticEntry {
+                    error_code: "RTS-E0501".to_string(),
+                    category: DiagnosticCategory::ArenaLifetimeEscape,
+                    file: self.file_path.clone(),
+                    span: field.span,
+                    ast_node: format!("StructField({}.{})", s.name, field.name),
+                    message: format!(
+                        "Capability slices ('MutSlice<T>' / 'ReadSlice<T>') cannot escape function scope via struct field '{}.{}' (prevents dangling pointers).",
+                        s.name, field.name
+                    ),
+                    deterministic_fixes: vec![],
+                });
+            }
+        }
+
         // RTS-E0602: Verifica alinhamento e tipos std430/std140 em `@shader_shared struct`
         if s.attributes.iter().any(|a| matches!(a, Attribute::ShaderShared)) {
             for field in &s.fields {
@@ -737,6 +891,28 @@ impl SemanticAnalyzer {
                         ast_node: format!("ShaderSharedField({}.{})", s.name, field.name),
                         message: format!(
                             "Field '{}.{}' in '@shader_shared' struct has type '{}', which violates GPU std430/std140 layout alignment rules. Only 32-bit scalars (f32, i32, u32), SIMD vectors/matrices (vec2..vec4, quat, mat3, mat4), and fixed-size arrays [T; N] are permitted on GPU.",
+                            s.name, field.name, field.ty
+                        ),
+                        deterministic_fixes: vec![],
+                    });
+                }
+            }
+        }
+
+        // RTS-E0602: Verifica layout binário estrito ABI C em `@repr_c struct` (proíbe `str`, `cap`, `Handle`, etc.)
+        if s.is_repr_c() {
+            for field in &s.fields {
+                let mut visiting = HashSet::new();
+                visiting.insert(s.name.clone());
+                if !Self::is_type_repr_c_safe(&field.ty, sym_table, &mut visiting) {
+                    self.diagnostics.push(DiagnosticEntry {
+                        error_code: "RTS-E0602".to_string(),
+                        category: DiagnosticCategory::GpuLayoutAlignmentViolation,
+                        file: self.file_path.clone(),
+                        span: field.span,
+                        ast_node: format!("ReprCField({}.{})", s.name, field.name),
+                        message: format!(
+                            "@repr_c struct '{}' field '{}' has non-POD/pointer type '{}'. Only fixed-width scalars, fixed arrays [T; N], str64/str128/str256, and nested @repr_c structs are allowed.",
                             s.name, field.name, field.ty
                         ),
                         deterministic_fixes: vec![],
@@ -829,6 +1005,26 @@ impl SemanticAnalyzer {
 
     fn check_function(&mut self, func: &FnDecl, sym_table: &SymbolTable) {
         let mut env = FunctionCapabilityEnv::from_fn_decl(func);
+
+        if func
+            .return_type
+            .as_ref()
+            .map(|t| t.is_slice_capability())
+            .unwrap_or(false)
+        {
+            self.diagnostics.push(DiagnosticEntry {
+                error_code: "RTS-E0501".to_string(),
+                category: DiagnosticCategory::ArenaLifetimeEscape,
+                file: self.file_path.clone(),
+                span: func.span,
+                ast_node: format!("FnReturn({})", func.name),
+                message: format!(
+                    "Function '{}' cannot return capability slice ('MutSlice<T>' / 'ReadSlice<T>'); slice capabilities must remain scoped to caller lifetimes.",
+                    func.name
+                ),
+                deterministic_fixes: vec![],
+            });
+        }
 
         if func.attributes.iter().any(|a| matches!(a, Attribute::GpuKernel)) {
             self.check_gpu_kernel_constraints(func, sym_table);
@@ -943,13 +1139,21 @@ impl SemanticAnalyzer {
             } => {
                 if *is_mut {
                     env.immutable_locals.remove(name);
+                    env.mutable_bindings.insert(name.clone());
                 } else {
                     env.immutable_locals.insert(name.clone());
+                    env.mutable_bindings.remove(name);
                 }
 
-                // RTS-E0404: Bloqueia declaração de variável local com tipo `cap ...` forjado fora do entrypoint `main`
+                // RTS-E0404: Bloqueia declaração de variável local com tipo `cap ...` forjado fora do entrypoint `main`,
+                // exceto derivação autorizada `let buf: cap MutSlice<T> = arena.alloc_slice(N);`.
                 if let Some(TypeExpr::Capability(forged_cap)) = ty {
-                    if func.name != "main" {
+                    let is_authorized_slice_alloc = forged_cap.kind == CapabilityKind::MutSlice
+                        && matches!(
+                            value,
+                            Expr::MethodCall { method, .. } if method == "alloc_slice"
+                        );
+                    if func.name != "main" && !is_authorized_slice_alloc {
                         self.diagnostics.push(DiagnosticEntry {
                             error_code: "RTS-E0404".to_string(),
                             category: DiagnosticCategory::CapabilityForgeryAttempt,
@@ -965,7 +1169,7 @@ impl SemanticAnalyzer {
                             ],
                         });
                     } else {
-                        // Entrypoint `main` possui autoridade raiz para instanciar capacidades e repassá-las
+                        // Entrypoint `main` ou derivação via `arena.alloc_slice(N)` concede capacidade escopada
                         if let Some(scope) = FunctionCapabilityEnv::capability_arena_scope(forged_cap)
                         {
                             env.local_var_arena_scope
@@ -999,6 +1203,17 @@ impl SemanticAnalyzer {
                 }
 
                 if let Some(var_ty) = ty.clone().or(inferred_ty) {
+                    if ty.is_none() && func.name == "main" {
+                        if let TypeExpr::Capability(cap_spec) = &var_ty {
+                            if let Some(scope) = FunctionCapabilityEnv::capability_arena_scope(cap_spec)
+                            {
+                                env.local_var_arena_scope
+                                    .insert(name.clone(), (scope, cap_spec.to_string()));
+                            }
+                            env.param_caps.insert(name.clone(), cap_spec.clone());
+                            env.granted_specs.push((name.clone(), cap_spec.clone()));
+                        }
+                    }
                     env.local_var_types.insert(name.clone(), var_ty);
                 }
 
@@ -1014,7 +1229,7 @@ impl SemanticAnalyzer {
                 value,
                 span,
             } => {
-                self.check_mutation_target(func, env, target, *span);
+                self.check_mutation_target(func, env, sym_table, target, *span);
                 self.check_arena_escape_on_assign(func, env, target, value, *span);
                 self.check_expr(func, env, sym_table, target);
                 self.check_expr(func, env, sym_table, value);
@@ -1399,28 +1614,49 @@ impl SemanticAnalyzer {
         &mut self,
         func: &FnDecl,
         env: &FunctionCapabilityEnv,
+        sym_table: &SymbolTable,
         target: &Expr,
         span: Span,
     ) {
         if let Some(root_ident) = Self::extract_root_receiver(target) {
-            if env.immutable_locals.contains(&root_ident) {
+            if sym_table.consts.contains_key(&root_ident) {
                 self.diagnostics.push(DiagnosticEntry {
                     error_code: "RTS-E0405".to_string(),
                     category: DiagnosticCategory::AliasingViolation,
                     file: self.file_path.clone(),
                     span,
-                    ast_node: format!("AssignExpr({})", root_ident),
+                    ast_node: format!("AssignConst({})", root_ident),
                     message: format!(
-                        "Cannot reassign immutable local variable '{}' in function '{}'. Declare it as 'let mut {}' to allow mutation.",
-                        root_ident, func.name, root_ident
+                        "Cannot reassign immutable module constant '{}' in function '{}'. Constants declared with 'const' are strictly read-only.",
+                        root_ident, func.name
                     ),
                     deterministic_fixes: vec![],
                 });
+            } else if env.immutable_locals.contains(&root_ident) {
+                let is_mut_cap_element_write = !matches!(target, Expr::Ident(_, _))
+                    && env.param_caps.get(&root_ident).map_or(false, |c| {
+                        matches!(c.kind, CapabilityKind::MutSlice | CapabilityKind::MutColumn)
+                    });
+                if !is_mut_cap_element_write {
+                    self.diagnostics.push(DiagnosticEntry {
+                        error_code: "RTS-E0405".to_string(),
+                        category: DiagnosticCategory::AliasingViolation,
+                        file: self.file_path.clone(),
+                        span,
+                        ast_node: format!("AssignExpr({})", root_ident),
+                        message: format!(
+                            "Cannot reassign immutable local variable '{}' in function '{}'. Declare it as 'let mut {}' to allow mutation.",
+                            root_ident, func.name, root_ident
+                        ),
+                        deterministic_fixes: vec![],
+                    });
+                }
             }
             if let Some(cap_spec) = env.param_caps.get(&root_ident) {
                 if matches!(
                     cap_spec.kind,
                     CapabilityKind::ReadColumn
+                        | CapabilityKind::ReadSlice
                         | CapabilityKind::ReadResource
                         | CapabilityKind::ReadScopedArena(_)
                 ) {
@@ -1608,8 +1844,22 @@ impl SemanticAnalyzer {
                         qualified_key
                     };
 
+                    let mut escalated_slice_caps: Vec<CapabilitySpec> = Vec::new();
+                    if let Some(callee_params) = sym_table.fn_params.get(&lookup_key) {
+                        self.verify_call_inout_and_slice_aliasing(
+                            func,
+                            env,
+                            callee_params,
+                            args,
+                            *span,
+                            &mut escalated_slice_caps,
+                        );
+                    }
                     if let Some(callee_sym) = sym_table.functions.get(&lookup_key) {
                         for req_cap in &callee_sym.required_caps {
+                            if escalated_slice_caps.contains(req_cap) {
+                                continue;
+                            }
                             if !env.satisfies_capability(req_cap) {
                                 let is_interprocedural = namespace == "self"
                                     || (!is_builtin_ns
@@ -1665,7 +1915,11 @@ impl SemanticAnalyzer {
                         {
                             if let Some(actual_ty) = self.infer_expr_type(env, sym_table, arg_expr)
                             {
-                                if !Self::types_compatible(expected_ty, &actual_ty) {
+                                let both_caps = matches!(
+                                    (expected_ty, &actual_ty),
+                                    (TypeExpr::Capability(_), TypeExpr::Capability(_))
+                                );
+                                if !both_caps && !Self::types_compatible(expected_ty, &actual_ty) {
                                     self.diagnostics.push(DiagnosticEntry {
                                         error_code: "RTS-E0301".to_string(),
                                         category: DiagnosticCategory::TypeMismatch,
@@ -1700,6 +1954,89 @@ impl SemanticAnalyzer {
                 span,
             } => {
                 self.check_expr(func, env, sym_table, receiver);
+                self.check_hal_method_call(func, env, sym_table, receiver, method, args, *span);
+
+                if let Some(TypeExpr::Primitive(rec_prim)) =
+                    self.infer_expr_type(env, sym_table, receiver)
+                {
+                    if rec_prim.fixed_str_capacity().is_some() {
+                        let expected_args: Option<Vec<TypeExpr>> = match method.as_str() {
+                            "clear" => Some(vec![]),
+                            "push_str" => Some(vec![TypeExpr::Primitive(PrimitiveType::Str)]),
+                            "push_u32" | "push_hex" => {
+                                Some(vec![TypeExpr::Primitive(PrimitiveType::U32)])
+                            }
+                            "push_i32" => Some(vec![TypeExpr::Primitive(PrimitiveType::I32)]),
+                            "push_f32" => Some(vec![
+                                TypeExpr::Primitive(PrimitiveType::F32),
+                                TypeExpr::Primitive(PrimitiveType::U32),
+                            ]),
+                            _ => None,
+                        };
+                        if let Some(exp_tys) = expected_args {
+                            if let Some(root_ident) = Self::extract_root_receiver(receiver) {
+                                if sym_table.consts.contains_key(&root_ident)
+                                    || env.immutable_locals.contains(&root_ident)
+                                    || !env.mutable_bindings.contains(&root_ident)
+                                {
+                                    self.diagnostics.push(DiagnosticEntry {
+                                        error_code: "RTS-E0405".to_string(),
+                                        category: DiagnosticCategory::AliasingViolation,
+                                        file: self.file_path.clone(),
+                                        span: *span,
+                                        ast_node: format!(
+                                            "FixedStringMut({}.{})",
+                                            root_ident, method
+                                        ),
+                                        message: format!(
+                                            "Cannot mutate fixed string '{}' via '.{}()' in function '{}'. Declare it with 'let mut' or pass as 'inout'.",
+                                            root_ident, method, func.name
+                                        ),
+                                        deterministic_fixes: vec![],
+                                    });
+                                }
+                            }
+                            if args.len() != exp_tys.len() {
+                                self.diagnostics.push(DiagnosticEntry {
+                                    error_code: "RTS-E0301".to_string(),
+                                    category: DiagnosticCategory::TypeMismatch,
+                                    file: self.file_path.clone(),
+                                    span: *span,
+                                    ast_node: format!("FixedStringArity({})", method),
+                                    message: format!(
+                                        "Fixed string method '.{}()' expects {} argument(s), got {}.",
+                                        method,
+                                        exp_tys.len(),
+                                        args.len()
+                                    ),
+                                    deterministic_fixes: vec![],
+                                });
+                            } else {
+                                for (idx, (a, exp)) in args.iter().zip(exp_tys.iter()).enumerate() {
+                                    if let Some(actual) = self.infer_expr_type(env, sym_table, a) {
+                                        if !Self::types_compatible(exp, &actual) {
+                                            self.diagnostics.push(DiagnosticEntry {
+                                                error_code: "RTS-E0301".to_string(),
+                                                category: DiagnosticCategory::TypeMismatch,
+                                                file: self.file_path.clone(),
+                                                span: *span,
+                                                ast_node: format!(
+                                                    "FixedStringArg({}[{}])",
+                                                    method, idx
+                                                ),
+                                                message: format!(
+                                                    "Type mismatch in call to '.{}()' inside '{}': argument #{} expected '{}', but found '{}'.",
+                                                    method, func.name, idx + 1, exp, actual
+                                                ),
+                                                deterministic_fixes: vec![],
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
 
                 if let Some(root_ident) = Self::extract_root_receiver(receiver) {
                     // Verifica RTS-E0501 (ArenaLifetimeEscape) em métodos `.push(...)`, `.store(...)`, `.insert(...)`
@@ -1920,11 +2257,81 @@ impl SemanticAnalyzer {
                     }
                 }
             }
+            Expr::Unary {
+                op: UnaryOp::BitNot,
+                expr: inner,
+                span,
+            } => {
+                self.check_expr(func, env, sym_table, inner);
+                if let Some(in_ty) = self.infer_expr_type(env, sym_table, inner) {
+                    let is_int = matches!(&in_ty, TypeExpr::Primitive(p) if Self::is_integer_primitive(p));
+                    if !is_int {
+                        self.diagnostics.push(DiagnosticEntry {
+                            error_code: "RTS-E0301".to_string(),
+                            category: DiagnosticCategory::TypeMismatch,
+                            file: self.file_path.clone(),
+                            span: *span,
+                            ast_node: format!("UnaryExpr(~{})", in_ty),
+                            message: format!(
+                                "Bitwise NOT '~' in '{}' requires an integer scalar operand, found '{}'.",
+                                func.name, in_ty
+                            ),
+                            deterministic_fixes: vec![],
+                        });
+                    }
+                }
+            }
             Expr::Unary { expr: inner, .. }
             | Expr::Cast { expr: inner, .. }
             | Expr::TryOp { expr: inner, .. }
             | Expr::ErrorMapClosure { body: inner, .. } => {
                 self.check_expr(func, env, sym_table, inner);
+            }
+            Expr::IfExpr {
+                cond,
+                then_branch,
+                else_branch,
+                span,
+            } => {
+                self.check_expr(func, env, sym_table, cond);
+                self.check_expr(func, env, sym_table, then_branch);
+                self.check_expr(func, env, sym_table, else_branch);
+                if let Some(cond_ty) = self.infer_expr_type(env, sym_table, cond) {
+                    if !Self::types_compatible(&TypeExpr::Primitive(PrimitiveType::Bool), &cond_ty)
+                    {
+                        self.diagnostics.push(DiagnosticEntry {
+                            error_code: "RTS-E0301".to_string(),
+                            category: DiagnosticCategory::TypeMismatch,
+                            file: self.file_path.clone(),
+                            span: *span,
+                            ast_node: format!("IfExprCond({})", cond_ty),
+                            message: format!(
+                                "Inline 'if' expression condition in '{}' must be 'bool', found '{}'.",
+                                func.name, cond_ty
+                            ),
+                            deterministic_fixes: vec![],
+                        });
+                    }
+                }
+                if let (Some(tt), Some(et)) = (
+                    self.infer_expr_type(env, sym_table, then_branch),
+                    self.infer_expr_type(env, sym_table, else_branch),
+                ) {
+                    if !Self::types_compatible(&tt, &et) {
+                        self.diagnostics.push(DiagnosticEntry {
+                            error_code: "RTS-E0301".to_string(),
+                            category: DiagnosticCategory::TypeMismatch,
+                            file: self.file_path.clone(),
+                            span: *span,
+                            ast_node: format!("IfExpr({} vs {})", tt, et),
+                            message: format!(
+                                "Inline 'if' expression branch types mismatch in '{}': 'then' produces '{}', but 'else' produces '{}'.",
+                                func.name, tt, et
+                            ),
+                            deterministic_fixes: vec![],
+                        });
+                    }
+                }
             }
             Expr::ArrayLit { elements, span } => {
                 for el in elements {
@@ -2028,7 +2435,10 @@ impl SemanticAnalyzer {
                 Self::types_compatible(ok1, ok2) && Self::types_compatible(err1, err2)
             }
             (TypeExpr::Capability(c1), TypeExpr::Capability(c2)) => {
-                c1.kind == c2.kind
+                let kinds_ok = c1.kind == c2.kind
+                    || (c1.kind == CapabilityKind::ReadSlice
+                        && c2.kind == CapabilityKind::MutSlice);
+                kinds_ok
                     && (c1.generic_arg == c2.generic_arg
                         || c1.generic_arg.is_none()
                         || c2.generic_arg.is_none())
@@ -2055,6 +2465,20 @@ impl SemanticAnalyzer {
                 Self::is_numeric_type(lt)
                     && Self::is_numeric_type(rt)
                     && Self::types_compatible(lt, rt)
+            }
+            BinaryOp::Rem => {
+                Self::is_numeric_type(lt)
+                    && Self::is_numeric_type(rt)
+                    && Self::types_compatible(lt, rt)
+            }
+            BinaryOp::BitAnd
+            | BinaryOp::BitOr
+            | BinaryOp::BitXor
+            | BinaryOp::Shl
+            | BinaryOp::Shr => {
+                let l_int = matches!(lt, TypeExpr::Primitive(p) if Self::is_integer_primitive(p));
+                let r_int = matches!(rt, TypeExpr::Primitive(p) if Self::is_integer_primitive(p));
+                l_int && r_int && Self::types_compatible(lt, rt)
             }
             BinaryOp::And | BinaryOp::Or => {
                 matches!(
@@ -2085,10 +2509,15 @@ impl SemanticAnalyzer {
             Expr::FloatLit(_, _) => Some(TypeExpr::Primitive(PrimitiveType::F32)),
             Expr::BoolLit(_, _) => Some(TypeExpr::Primitive(PrimitiveType::Bool)),
             Expr::StringLit(_, _) => Some(TypeExpr::Primitive(PrimitiveType::Str)),
-            Expr::Ident(name, _) => env.local_var_types.get(name).cloned(),
+            Expr::Ident(name, _) => env
+                .local_var_types
+                .get(name)
+                .cloned()
+                .or_else(|| sym_table.consts.get(name).cloned()),
             Expr::Cast { target_type, .. } => Some(target_type.clone()),
             Expr::Unary { op, expr: inner, .. } => match op {
                 UnaryOp::Not => Some(TypeExpr::Primitive(PrimitiveType::Bool)),
+                UnaryOp::BitNot => self.infer_expr_type(env, sym_table, inner),
                 UnaryOp::Neg => {
                     if matches!(inner.as_ref(), Expr::IntLit(_, _)) {
                         Some(TypeExpr::Primitive(PrimitiveType::I32))
@@ -2117,11 +2546,8 @@ impl SemanticAnalyzer {
                 }
                 if let Some(root) = Self::extract_root_receiver(receiver) {
                     if let Some(cap) = env.param_caps.get(&root) {
-                        if let Some(CapGenericArg::TypeName(elem_ty)) = &cap.generic_arg {
-                            return Some(TypeExpr::Named {
-                                name: elem_ty.clone(),
-                                generics: vec![],
-                            });
+                        if let Some(elem_ty) = cap.slice_element_type() {
+                            return Some(elem_ty);
                         }
                     }
                 }
@@ -2153,7 +2579,34 @@ impl SemanticAnalyzer {
                 }
                 None
             }
-            Expr::MethodCall { method, .. } => match method.as_str() {
+            Expr::MethodCall {
+                receiver, method, ..
+            } => {
+                if let Some(TypeExpr::Primitive(rec_prim)) =
+                    self.infer_expr_type(env, sym_table, receiver)
+                {
+                    if rec_prim.fixed_str_capacity().is_some() {
+                        match method.as_str() {
+                            "len" | "capacity" => {
+                                return Some(TypeExpr::Primitive(PrimitiveType::Usize));
+                            }
+                            "as_str" => {
+                                return Some(TypeExpr::Primitive(PrimitiveType::Str));
+                            }
+                            "clear" | "push_str" | "push_u32" | "push_i32" | "push_hex"
+                            | "push_f32" => return None,
+                            _ => {}
+                        }
+                    }
+                }
+                if let Some(TypeExpr::Capability(cap)) =
+                    self.infer_expr_type(env, sym_table, receiver)
+                {
+                    if let Some(hal_ret) = Self::hal_method_return_type(&cap.kind, method) {
+                        return hal_ret;
+                    }
+                }
+                match method.as_str() {
                 "len" => Some(TypeExpr::Primitive(PrimitiveType::Usize)),
                 "handle_at" | "alloc_handle" | "push_handle" => Some(TypeExpr::Handle(Box::new(
                     TypeExpr::Named {
@@ -2169,8 +2622,9 @@ impl SemanticAnalyzer {
                     Box::new(TypeExpr::Primitive(PrimitiveType::U8)),
                     Box::new(TypeExpr::Primitive(PrimitiveType::U8)),
                 )),
-                _ => sym_table.fn_return_types.get(method).cloned().flatten(),
-            },
+                    _ => sym_table.fn_return_types.get(method).cloned().flatten(),
+                }
+            }
             Expr::StaticCall {
                 namespace,
                 func: called_fn,
@@ -2287,7 +2741,16 @@ impl SemanticAnalyzer {
                 | BinaryOp::GtEq
                 | BinaryOp::And
                 | BinaryOp::Or => Some(TypeExpr::Primitive(PrimitiveType::Bool)),
-                BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
+                BinaryOp::Add
+                | BinaryOp::Sub
+                | BinaryOp::Mul
+                | BinaryOp::Div
+                | BinaryOp::Rem
+                | BinaryOp::BitAnd
+                | BinaryOp::BitOr
+                | BinaryOp::BitXor
+                | BinaryOp::Shl
+                | BinaryOp::Shr => {
                     let lt = self.infer_expr_type(env, sym_table, left);
                     let rt = self.infer_expr_type(env, sym_table, right);
                     match (&lt, &rt) {
@@ -2298,6 +2761,13 @@ impl SemanticAnalyzer {
                     }
                 }
             },
+            Expr::IfExpr {
+                then_branch,
+                else_branch,
+                ..
+            } => self
+                .infer_expr_type(env, sym_table, then_branch)
+                .or_else(|| self.infer_expr_type(env, sym_table, else_branch)),
             Expr::ArrayLit { elements, .. } => {
                 let elem_ty = elements
                     .first()
@@ -2320,12 +2790,16 @@ impl SemanticAnalyzer {
                 "PWMPin",
                 Some(CapGenericArg::HardwareAddress(4)),
             )),
-            "push" | "alloc" | "alloc_handle" | "push_handle" | "spawn_temp" => {
+            "push" | "alloc" | "alloc_handle" | "push_handle" | "spawn_temp" | "alloc_slice" => {
                 Some(CapabilitySpec::from_name_and_arg(
                     "FrameArena",
                     Some(CapGenericArg::TypeName("Event".to_string())),
                 ))
             }
+            "fill" => Some(CapabilitySpec::from_name_and_arg(
+                "MutSlice",
+                Some(CapGenericArg::TypeName("T".to_string())),
+            )),
             "send" | "recv" | "broadcast" | "connect" => {
                 Some(CapabilitySpec::from_name_and_arg("NetSocket", None))
             }
@@ -2345,6 +2819,35 @@ impl SemanticAnalyzer {
                 "ReadColumn",
                 Some(CapGenericArg::TypeName("Component".to_string())),
             )),
+            "open_fullscreen" | "open_headless" | "width" | "height" | "poll_events"
+            | "present_rgba" | "draw_text" | "close" | "is_smoke_test" => {
+                Some(CapabilitySpec::from_name_and_arg("WindowHost", None))
+            }
+            "poll"
+            | "is_key_down"
+            | "was_key_pressed"
+            | "mouse_x"
+            | "mouse_y"
+            | "mouse_left_down"
+            | "mouse_clicked"
+            | "gamepad_connected"
+            | "gamepad_move_x"
+            | "gamepad_move_y"
+            | "gamepad_aim_x"
+            | "gamepad_aim_y"
+            | "gamepad_aim_active"
+            | "gamepad_fire_down"
+            | "was_gamepad_pressed"
+            | "set_vibration" => Some(CapabilitySpec::from_name_and_arg("InputDevice", None)),
+            "create_dir" | "write_text" | "write_struct" | "read_struct" => {
+                Some(CapabilitySpec::from_name_and_arg("FileSystem", None))
+            }
+            "write_synth_wav" | "play_wav_async" => {
+                Some(CapabilitySpec::from_name_and_arg("AudioDevice", None))
+            }
+            "tick_frame_fps" | "last_frame_ms" => {
+                Some(CapabilitySpec::from_name_and_arg("MonotonicClock", None))
+            }
             _ => None,
         }
     }
@@ -2357,7 +2860,377 @@ impl SemanticAnalyzer {
             (CapabilityKind::ScopedArena(_), CapabilityKind::ScopedArena(_)) => true,
             (CapabilityKind::SqlWrite, CapabilityKind::SqlRead) => true,
             (CapabilityKind::MutColumn, CapabilityKind::ReadColumn) => true,
+            (CapabilityKind::MutSlice, CapabilityKind::ReadSlice) => true,
             (a, b) => a == b,
+        }
+    }
+
+    fn verify_call_inout_and_slice_aliasing(
+        &mut self,
+        caller: &FnDecl,
+        env: &FunctionCapabilityEnv,
+        callee_params: &[FnParam],
+        call_args: &[Expr],
+        span: Span,
+        escalated_slice_caps: &mut Vec<CapabilitySpec>,
+    ) {
+        let mut all_roots: Vec<(String, bool)> = Vec::new();
+
+        for (param, arg) in callee_params.iter().zip(call_args.iter()) {
+            let is_mut_slice = param.is_cap
+                && matches!(
+                    param.capability.as_ref().map(|c| &c.kind),
+                    Some(CapabilityKind::MutSlice | CapabilityKind::MutColumn)
+                );
+            let is_read_slice = param.is_cap
+                && matches!(
+                    param.capability.as_ref().map(|c| &c.kind),
+                    Some(CapabilityKind::ReadSlice | CapabilityKind::ReadColumn)
+                );
+
+            if param.is_inout {
+                if let Some(root) = Self::extract_root_receiver(arg) {
+                    if !env.mutable_bindings.contains(&root) {
+                        self.diagnostics.push(DiagnosticEntry {
+                            error_code: "RTS-E0405".to_string(),
+                            category: DiagnosticCategory::AliasingViolation,
+                            file: self.file_path.clone(),
+                            span,
+                            ast_node: format!("InoutArg({}: {})", param.name, root),
+                            message: format!(
+                                "Cannot pass immutable binding '{}' to 'inout' parameter '{}' inside '{}'. Declare it as 'let mut' or 'inout'.",
+                                root, param.name, caller.name
+                            ),
+                            deterministic_fixes: vec![],
+                        });
+                    }
+                    all_roots.push((root, true));
+                } else {
+                    self.diagnostics.push(DiagnosticEntry {
+                        error_code: "RTS-E0405".to_string(),
+                        category: DiagnosticCategory::AliasingViolation,
+                        file: self.file_path.clone(),
+                        span,
+                        ast_node: format!("InoutArg({})", param.name),
+                        message: format!(
+                            "Argument for 'inout' parameter '{}' inside '{}' must be a mutable variable ('let mut' or 'inout').",
+                            param.name, caller.name
+                        ),
+                        deterministic_fixes: vec![],
+                    });
+                }
+            } else if param.is_cap {
+                if let (Some(req_cap), Some(root)) =
+                    (&param.capability, Self::extract_root_receiver(arg))
+                {
+                    if let Some(arg_cap) = env.param_caps.get(&root) {
+                        if is_mut_slice
+                            && matches!(
+                                arg_cap.kind,
+                                CapabilityKind::ReadSlice | CapabilityKind::ReadColumn
+                            )
+                        {
+                            escalated_slice_caps.push(req_cap.clone());
+                            self.diagnostics.push(DiagnosticEntry {
+                                error_code: "RTS-E0402".to_string(),
+                                category: DiagnosticCategory::CapabilityViolation,
+                                file: self.file_path.clone(),
+                                span,
+                                ast_node: format!("SliceEscalation({} -> {})", root, param.name),
+                                message: format!(
+                                    "Cannot escalate read-only capability '{}' to mutable capability for parameter '{}' inside '{}'.",
+                                    root, param.name, caller.name
+                                ),
+                                deterministic_fixes: vec![
+                                    DeterministicFix::remove_unauthorized_call_sealed(span.line_start),
+                                ],
+                            });
+                        } else if !Self::types_compatible(
+                            &TypeExpr::Capability(req_cap.clone()),
+                            &TypeExpr::Capability(arg_cap.clone()),
+                        ) {
+                            escalated_slice_caps.push(req_cap.clone());
+                            self.diagnostics.push(DiagnosticEntry {
+                                error_code: "RTS-E0402".to_string(),
+                                category: DiagnosticCategory::CapabilityViolation,
+                                file: self.file_path.clone(),
+                                span,
+                                ast_node: format!(
+                                    "CapArgMismatch({}: cap {} -> cap {})",
+                                    param.name, arg_cap, req_cap
+                                ),
+                                message: format!(
+                                    "Capability mismatch in '{}': argument '{}' has 'cap {}', but parameter '{}' requires 'cap {}'.",
+                                    caller.name, root, arg_cap, param.name, req_cap
+                                ),
+                                deterministic_fixes: Self::build_fixes_for_violation(
+                                    caller,
+                                    &param.name,
+                                    req_cap,
+                                    span.line_start,
+                                ),
+                            });
+                        }
+                    }
+                    if is_mut_slice || is_read_slice {
+                        all_roots.push((root, is_mut_slice));
+                    }
+                }
+            }
+        }
+
+        for i in 0..all_roots.len() {
+            for j in (i + 1)..all_roots.len() {
+                if all_roots[i].0 == all_roots[j].0 && (all_roots[i].1 || all_roots[j].1) {
+                    self.diagnostics.push(DiagnosticEntry {
+                        error_code: "RTS-E0405".to_string(),
+                        category: DiagnosticCategory::AliasingViolation,
+                        file: self.file_path.clone(),
+                        span,
+                        ast_node: format!("AliasingCall({})", all_roots[i].0),
+                        message: format!(
+                            "Aliasing violation in '{}': variable '{}' cannot be borrowed more than once when mutated in the same call.",
+                            caller.name, all_roots[i].0
+                        ),
+                        deterministic_fixes: vec![],
+                    });
+                    return;
+                }
+            }
+        }
+    }
+
+    fn hal_method_return_type(
+        kind: &CapabilityKind,
+        method: &str,
+    ) -> Option<Option<TypeExpr>> {
+        let b = Some(Some(TypeExpr::Primitive(PrimitiveType::Bool)));
+        let i = Some(Some(TypeExpr::Primitive(PrimitiveType::I32)));
+        let f = Some(Some(TypeExpr::Primitive(PrimitiveType::F32)));
+        let v = Some(None);
+        match (kind, method) {
+            (
+                CapabilityKind::WindowHost,
+                "open_fullscreen" | "open_headless" | "poll_events" | "is_smoke_test",
+            ) => b,
+            (CapabilityKind::WindowHost, "width" | "height") => i,
+            (CapabilityKind::WindowHost, "present_rgba" | "draw_text" | "close") => v,
+            (
+                CapabilityKind::InputDevice,
+                "is_key_down"
+                | "was_key_pressed"
+                | "mouse_left_down"
+                | "mouse_clicked"
+                | "gamepad_connected"
+                | "gamepad_aim_active"
+                | "gamepad_fire_down"
+                | "was_gamepad_pressed",
+            ) => b,
+            (CapabilityKind::InputDevice, "mouse_x" | "mouse_y") => i,
+            (
+                CapabilityKind::InputDevice,
+                "gamepad_move_x" | "gamepad_move_y" | "gamepad_aim_x" | "gamepad_aim_y",
+            ) => f,
+            (CapabilityKind::InputDevice, "poll" | "set_vibration") => v,
+            (
+                CapabilityKind::FileSystem,
+                "create_dir" | "write_text" | "write_struct" | "read_struct",
+            ) => b,
+            (CapabilityKind::AudioDevice, "write_synth_wav") => b,
+            (CapabilityKind::AudioDevice, "play_wav_async") => v,
+            (CapabilityKind::Clock, "tick_frame_fps" | "last_frame_ms") => f,
+            _ => None,
+        }
+    }
+
+    fn check_hal_method_call(
+        &mut self,
+        func: &FnDecl,
+        env: &FunctionCapabilityEnv,
+        sym_table: &SymbolTable,
+        receiver: &Expr,
+        method: &str,
+        args: &[Expr],
+        span: Span,
+    ) {
+        let Some(TypeExpr::Capability(rec_cap)) = self.infer_expr_type(env, sym_table, receiver)
+        else {
+            return;
+        };
+        let str_ty = TypeExpr::Primitive(PrimitiveType::Str);
+        let i32_ty = TypeExpr::Primitive(PrimitiveType::I32);
+        let u32_ty = TypeExpr::Primitive(PrimitiveType::U32);
+        let f32_ty = TypeExpr::Primitive(PrimitiveType::F32);
+        let slice_u32_ty = TypeExpr::Capability(CapabilitySpec::from_name_and_arg(
+            "ReadSlice",
+            Some(CapGenericArg::ElementType(Box::new(u32_ty.clone()))),
+        ));
+
+        let expected: Option<Vec<TypeExpr>> = match (&rec_cap.kind, method) {
+            (CapabilityKind::WindowHost, "open_fullscreen") => {
+                Some(vec![str_ty.clone(), i32_ty.clone(), i32_ty.clone()])
+            }
+            (CapabilityKind::WindowHost, "open_headless") => {
+                Some(vec![i32_ty.clone(), i32_ty.clone(), u32_ty.clone()])
+            }
+            (
+                CapabilityKind::WindowHost,
+                "width" | "height" | "poll_events" | "close" | "is_smoke_test",
+            ) => Some(vec![]),
+            (CapabilityKind::WindowHost, "present_rgba") => Some(vec![slice_u32_ty]),
+            (CapabilityKind::WindowHost, "draw_text") => {
+                Some(vec![i32_ty.clone(), i32_ty.clone(), u32_ty.clone(), str_ty.clone()])
+            }
+            (
+                CapabilityKind::InputDevice,
+                "poll"
+                | "mouse_x"
+                | "mouse_y"
+                | "mouse_left_down"
+                | "mouse_clicked"
+                | "gamepad_connected"
+                | "gamepad_move_x"
+                | "gamepad_move_y"
+                | "gamepad_aim_x"
+                | "gamepad_aim_y"
+                | "gamepad_aim_active"
+                | "gamepad_fire_down",
+            ) => Some(vec![]),
+            (
+                CapabilityKind::InputDevice,
+                "is_key_down" | "was_key_pressed" | "was_gamepad_pressed",
+            ) => Some(vec![u32_ty.clone()]),
+            (CapabilityKind::InputDevice, "set_vibration") => Some(vec![f32_ty.clone()]),
+            (CapabilityKind::FileSystem, "create_dir") => Some(vec![str_ty.clone()]),
+            (CapabilityKind::FileSystem, "write_text") => {
+                Some(vec![str_ty.clone(), str_ty.clone()])
+            }
+            (CapabilityKind::FileSystem, "write_struct" | "read_struct") => {
+                if args.len() != 2 {
+                    self.diagnostics.push(DiagnosticEntry {
+                        error_code: "RTS-E0301".to_string(),
+                        category: DiagnosticCategory::TypeMismatch,
+                        file: self.file_path.clone(),
+                        span,
+                        ast_node: format!("HalFsStructArity({})", method),
+                        message: format!(
+                            "Method '.{}()' in '{}' expected 2 arguments (path, struct), found {}.",
+                            method,
+                            func.name,
+                            args.len()
+                        ),
+                        deterministic_fixes: vec![],
+                    });
+                    return;
+                }
+                if let Some(p_ty) = self.infer_expr_type(env, sym_table, &args[0]) {
+                    if !Self::types_compatible(&str_ty, &p_ty) {
+                        self.diagnostics.push(DiagnosticEntry {
+                            error_code: "RTS-E0301".to_string(),
+                            category: DiagnosticCategory::TypeMismatch,
+                            file: self.file_path.clone(),
+                            span,
+                            ast_node: format!("HalFsPath({})", method),
+                            message: format!(
+                                "Path argument #1 to '.{}()' in '{}' expected 'str', found '{}'.",
+                                method, func.name, p_ty
+                            ),
+                            deterministic_fixes: vec![],
+                        });
+                    }
+                }
+                if method == "read_struct" {
+                    let is_mut_arg = Self::extract_root_receiver(&args[1])
+                        .map_or(false, |r| env.mutable_bindings.contains(&r));
+                    if !is_mut_arg {
+                        self.diagnostics.push(DiagnosticEntry {
+                            error_code: "RTS-E0405".to_string(),
+                            category: DiagnosticCategory::AliasingViolation,
+                            file: self.file_path.clone(),
+                            span,
+                            ast_node: "HalFsReadStructMut".to_string(),
+                            message: format!(
+                                "Destination struct passed to 'fs.read_struct()' in '{}' must be mutable ('let mut' or 'inout').",
+                                func.name
+                            ),
+                            deterministic_fixes: vec![],
+                        });
+                    }
+                }
+                if let Some(s_ty) = self.infer_expr_type(env, sym_table, &args[1]) {
+                    let is_repr_c = match &s_ty {
+                        TypeExpr::Named { name, .. } => sym_table
+                            .struct_decls
+                            .get(name)
+                            .map_or(false, |d| d.is_repr_c()),
+                        _ => false,
+                    };
+                    if !is_repr_c {
+                        self.diagnostics.push(DiagnosticEntry {
+                            error_code: "RTS-E0602".to_string(),
+                            category: DiagnosticCategory::GpuLayoutAlignmentViolation,
+                            file: self.file_path.clone(),
+                            span,
+                            ast_node: format!("HalFsReprC({}, {})", method, s_ty),
+                            message: format!(
+                                "Binary FileSystem I/O '.{}()' in '{}' requires a '@repr_c' struct with deterministic ABI layout, but found '{}'.",
+                                method, func.name, s_ty
+                            ),
+                            deterministic_fixes: vec![],
+                        });
+                    }
+                }
+                return;
+            }
+            (CapabilityKind::AudioDevice, "write_synth_wav") => Some(vec![
+                str_ty.clone(),
+                u32_ty.clone(),
+                u32_ty.clone(),
+                i32_ty.clone(),
+            ]),
+            (CapabilityKind::AudioDevice, "play_wav_async") => Some(vec![str_ty]),
+            (CapabilityKind::Clock, "tick_frame_fps") => Some(vec![u32_ty]),
+            (CapabilityKind::Clock, "last_frame_ms") => Some(vec![]),
+            _ => None,
+        };
+
+        if let Some(exp_tys) = expected {
+            if args.len() != exp_tys.len() {
+                self.diagnostics.push(DiagnosticEntry {
+                    error_code: "RTS-E0301".to_string(),
+                    category: DiagnosticCategory::TypeMismatch,
+                    file: self.file_path.clone(),
+                    span,
+                    ast_node: format!("HalArity({})", method),
+                    message: format!(
+                        "HAL method '.{}()' in '{}' expected {} argument(s), found {}.",
+                        method,
+                        func.name,
+                        exp_tys.len(),
+                        args.len()
+                    ),
+                    deterministic_fixes: vec![],
+                });
+                return;
+            }
+            for (idx, (a, exp)) in args.iter().zip(exp_tys.iter()).enumerate() {
+                if let Some(actual) = self.infer_expr_type(env, sym_table, a) {
+                    if !Self::types_compatible(exp, &actual) {
+                        self.diagnostics.push(DiagnosticEntry {
+                            error_code: "RTS-E0301".to_string(),
+                            category: DiagnosticCategory::TypeMismatch,
+                            file: self.file_path.clone(),
+                            span,
+                            ast_node: format!("HalArg({}[{}])", method, idx),
+                            message: format!(
+                                "Type mismatch in HAL method '.{}()' inside '{}': argument #{} expected '{}', found '{}'.",
+                                method, func.name, idx + 1, exp, actual
+                            ),
+                            deterministic_fixes: vec![],
+                        });
+                    }
+                }
+            }
         }
     }
 }

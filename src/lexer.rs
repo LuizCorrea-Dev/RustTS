@@ -75,8 +75,12 @@ pub enum TokenKind {
     KwEnum,
     #[token("let")]
     KwLet,
+    #[token("const")]
+    KwConst,
     #[token("mut")]
     KwMut,
+    #[token("inout")]
+    KwInout,
     #[token("return")]
     KwReturn,
     #[token("if")]
@@ -173,6 +177,12 @@ pub enum TokenKind {
     #[token("str")]
     #[token("string")]
     TyStr,
+    #[token("str64")]
+    TyStr64,
+    #[token("str128")]
+    TyStr128,
+    #[token("str256")]
+    TyStr256,
 
     // Tipos Matemáticos Nativos SIMD-Ready
     #[token("vec2")]
@@ -213,6 +223,8 @@ pub enum TokenKind {
     AttrGpuKernel,
     #[token("@shader_shared")]
     AttrShaderShared,
+    #[token("@repr_c")]
+    AttrReprC,
     #[token("@route")]
     AttrRoute,
     #[token("@sealed_sig")]
@@ -286,9 +298,29 @@ pub enum TokenKind {
     #[token("|")]
     Pipe,
 
-    // Operadores Aritméticos, Relacionais e Lógicos
+    // Operadores Aritméticos, Bitwise, Relacionais, Lógicos e Atribuição Composta
     #[token("=")]
     Assign,
+    #[token("+=")]
+    PlusEq,
+    #[token("-=")]
+    MinusEq,
+    #[token("*=")]
+    StarEq,
+    #[token("/=")]
+    SlashEq,
+    #[token("%=")]
+    PercentEq,
+    #[token("&=")]
+    AmpEq,
+    #[token("|=")]
+    PipeEq,
+    #[token("^=")]
+    CaretEq,
+    #[token("<<=")]
+    ShlEq,
+    #[token(">>=")]
+    ShrEq,
     #[token("==")]
     EqEq,
     #[token("!=")]
@@ -297,6 +329,10 @@ pub enum TokenKind {
     LtEq,
     #[token(">=")]
     GtEq,
+    #[token("<<")]
+    Shl,
+    #[token(">>")]
+    Shr,
     #[token("+")]
     Plus,
     #[token("-")]
@@ -305,6 +341,14 @@ pub enum TokenKind {
     Star,
     #[token("/")]
     Slash,
+    #[token("%")]
+    Percent,
+    #[token("&")]
+    Amp,
+    #[token("^")]
+    Caret,
+    #[token("~")]
+    Tilde,
     #[token("&&")]
     AndAnd,
     #[token("||")]

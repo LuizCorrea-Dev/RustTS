@@ -150,7 +150,10 @@ impl TsSdkCodegen {
                     "string".to_string()
                 }
                 PrimitiveType::Bool => "boolean".to_string(),
-                PrimitiveType::Str => "string".to_string(),
+                PrimitiveType::Str
+                | PrimitiveType::Str64
+                | PrimitiveType::Str128
+                | PrimitiveType::Str256 => "string".to_string(),
             },
             TypeExpr::Option(inner) => format!("{} | null", Self::map_ts_type(inner)),
             TypeExpr::Named { name, generics } if name == "Json" && generics.len() == 1 => {

@@ -13,10 +13,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{self, Command};
 
+pub const RTSC_VERSION: &str = "2.1.0-rts";
+
 #[derive(ClapParser)]
 #[command(
     name = "rtsc",
-    version = "2.0.0-rts",
+    version = RTSC_VERSION,
     about = "RustTS (.rts) Deterministic Systems & Engine Compiler for Humans and AI"
 )]
 struct Cli {
@@ -110,6 +112,9 @@ enum Commands {
         /// Deterministic WASI sandbox fuel budget (`--fuel-limit <N>`, default: 100000)
         #[arg(long = "fuel-limit", default_value_t = DEFAULT_FUEL_LIMIT)]
         fuel_limit: u64,
+        /// Extra arguments passed through to the compiled binary after `--` (e.g. `-- --smoke-test`)
+        #[arg(last = true)]
+        run_args: Vec<String>,
     },
 }
 
@@ -143,6 +148,17 @@ fn write_utf8_no_bom(path: &Path, content: &str) {
         eprintln!("Failed to write '{}': {}", path.display(), err);
         process::exit(1);
     });
+}
+
+fn append_platform_hal_libs(cmd: &mut Command) {
+    #[cfg(target_os = "windows")]
+    {
+        cmd.arg("-luser32").arg("-lgdi32").arg("-lwinmm");
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = cmd;
+    }
 }
 
 fn compile_c99_with_clang(
@@ -184,6 +200,7 @@ fn compile_c99_with_clang(
     for lib in link_libs {
         cmd.arg(format!("-l{}", lib));
     }
+    append_platform_hal_libs(&mut cmd);
 
     let status = cmd.status().unwrap_or_else(|err| {
         eprintln!("Failed to invoke '{}': {}", clang.display(), err);
@@ -226,6 +243,7 @@ fn compile_llvm_ir_with_clang(
     for lib in link_libs {
         cmd.arg(format!("-l{}", lib));
     }
+    append_platform_hal_libs(&mut cmd);
 
     let status = cmd.status().unwrap_or_else(|err| {
         eprintln!("Failed to invoke '{}': {}", clang.display(), err);
@@ -250,7 +268,7 @@ fn scaffold_project(target_dir: &Path) {
         .unwrap_or("meu_projeto_rts");
 
     let rts_toml = format!(
-        "[package]\nname = \"{}\"\nversion = \"0.1.0\"\ncompiler = \"2.0.0-rts\"\ntarget = \"native\"\n",
+        "[package]\nname = \"{}\"\nversion = \"0.1.0\"\ncompiler = \"2.1.0-rts\"\ntarget = \"native\"\n",
         project_name
     );
     write_utf8_no_bom(&target_dir.join("rts.toml"), &rts_toml);
@@ -299,11 +317,11 @@ pub fn main() -> i32 {
     let leitura: Result<f32, FalhaSensor> = self::monitorar(lim, i2c, cooler);
     match leitura {
         Ok(temp) => {
-            io::print_f32("[RustTS v2.0.0-rts] Temperatura Nominal (C): ", temp);
+            io::print_f32("[RustTS v2.1.0-rts] Temperatura Nominal (C): ", temp);
             return 0;
         },
         Err(falha) => {
-            io::println("[RustTS v2.0.0-rts] Alerta: Falha de Sensor Detectada!");
+            io::println("[RustTS v2.1.0-rts] Alerta: Falha de Sensor Detectada!");
             return 1;
         },
     }
@@ -315,7 +333,7 @@ pub fn main() -> i32 {
     }
 
     println!(
-        "[rtsc 2.0.0-rts] Initialized RustTS project in '{}'\n  -> Run project: rtsc run {}",
+        "[rtsc 2.1.0-rts] Initialized RustTS project in '{}'\n  -> Run project: rtsc run {}",
         target_dir.display(),
         main_rts_path.display()
     );
@@ -396,15 +414,15 @@ fn main() {
                 if let Some(dir) = &out_dir {
                     let h_path = dir.join(format!("{}.h", stem));
                     write_utf8_no_bom(&h_path, &header_code);
-                    println!("[rtsc 2.0.0-rts] Emitted C/C++ ABI header: {}", h_path.display());
+                    println!("[rtsc 2.1.0-rts] Emitted C/C++ ABI header: {}", h_path.display());
                 } else if let Some(out_path) = &output {
                     let h_path = out_path.with_extension("h");
                     write_utf8_no_bom(&h_path, &header_code);
-                    println!("[rtsc 2.0.0-rts] Emitted C/C++ ABI header: {}", h_path.display());
+                    println!("[rtsc 2.1.0-rts] Emitted C/C++ ABI header: {}", h_path.display());
                 } else {
                     let h_path = PathBuf::from("build").join(format!("{}.h", stem));
                     write_utf8_no_bom(&h_path, &header_code);
-                    println!("[rtsc 2.0.0-rts] Emitted C/C++ ABI header: {}", h_path.display());
+                    println!("[rtsc 2.1.0-rts] Emitted C/C++ ABI header: {}", h_path.display());
                 }
             }
 
@@ -412,11 +430,11 @@ fn main() {
                 let ts_code = TsSdkCodegen::emit_typescript_sdk(&module);
                 if let Some(out_path) = output {
                     write_utf8_no_bom(&out_path, &ts_code);
-                    println!("[rtsc 2.0.0-rts] Emitted TypeScript SDK: {}", out_path.display());
+                    println!("[rtsc 2.1.0-rts] Emitted TypeScript SDK: {}", out_path.display());
                 } else if let Some(dir) = out_dir {
                     let p = dir.join(format!("{}_sdk.ts", stem));
                     write_utf8_no_bom(&p, &ts_code);
-                    println!("[rtsc 2.0.0-rts] Emitted TypeScript SDK: {}", p.display());
+                    println!("[rtsc 2.1.0-rts] Emitted TypeScript SDK: {}", p.display());
                 } else {
                     println!("{}", ts_code);
                 }
@@ -447,16 +465,16 @@ fn main() {
                         });
                         compile_c99_with_clang(&c_path, &bin_path, &include_dirs, &lib_dirs, &link_libs, debug_symbols);
                         println!(
-                            "[rtsc 2.0.0-rts] Compiled native AVX2 binary: {}",
+                            "[rtsc 2.1.0-rts] Compiled native AVX2 binary: {}",
                             bin_path.display()
                         );
                     } else if let Some(out_path) = output {
                         write_utf8_no_bom(&out_path, &c99_code);
-                        println!("[rtsc 2.0.0-rts] Emitted C99 source: {}", out_path.display());
+                        println!("[rtsc 2.1.0-rts] Emitted C99 source: {}", out_path.display());
                     } else if let Some(dir) = out_dir {
                         let p = dir.join(format!("{}.c", stem));
                         write_utf8_no_bom(&p, &c99_code);
-                        println!("[rtsc 2.0.0-rts] Emitted C99 source: {}", p.display());
+                        println!("[rtsc 2.1.0-rts] Emitted C99 source: {}", p.display());
                     } else {
                         println!("{}", c99_code);
                     }
@@ -474,7 +492,7 @@ fn main() {
                             write_utf8_no_bom(&h_path, &artifact.header_code);
                             write_utf8_no_bom(&cpp_path, &artifact.source_code);
                             println!(
-                                "[rtsc 2.0.0-rts] Emitted Unreal UHT files: {}, {}",
+                                "[rtsc 2.1.0-rts] Emitted Unreal UHT files: {}, {}",
                                 h_path.display(),
                                 cpp_path.display()
                             );
@@ -504,7 +522,7 @@ fn main() {
                         write_utf8_no_bom(&rs_path, &out.rust_ffi_code);
                         write_utf8_no_bom(&cs_path, &out.csharp_wrapper_code);
                         println!(
-                            "[rtsc 2.0.0-rts] Emitted Unity FFI files: {}, {}",
+                            "[rtsc 2.1.0-rts] Emitted Unity FFI files: {}, {}",
                             rs_path.display(),
                             cs_path.display()
                         );
@@ -517,11 +535,11 @@ fn main() {
                     let mlir_code = MlirCodegen::emit_mlir(&module);
                     if let Some(out_path) = output {
                         write_utf8_no_bom(&out_path, &mlir_code);
-                        println!("[rtsc 2.0.0-rts] Emitted MLIR SSA module: {}", out_path.display());
+                        println!("[rtsc 2.1.0-rts] Emitted MLIR SSA module: {}", out_path.display());
                     } else if let Some(dir) = out_dir {
                         let p = dir.join(format!("{}.mlir", stem));
                         write_utf8_no_bom(&p, &mlir_code);
-                        println!("[rtsc 2.0.0-rts] Emitted MLIR SSA module: {}", p.display());
+                        println!("[rtsc 2.1.0-rts] Emitted MLIR SSA module: {}", p.display());
                     } else {
                         println!("{}", mlir_code);
                     }
@@ -547,16 +565,16 @@ fn main() {
                             debug_symbols,
                         );
                         println!(
-                            "[rtsc 2.0.0-rts] Direct LLVM IR (.ll -> native binary) compiled: {}",
+                            "[rtsc 2.1.0-rts] Direct LLVM IR (.ll -> native binary) compiled: {}",
                             bin_path.display()
                         );
                     } else if let Some(out_path) = output {
                         write_utf8_no_bom(&out_path, &ir_code);
-                        println!("[rtsc 2.0.0-rts] Emitted LLVM IR (.ll) module: {}", out_path.display());
+                        println!("[rtsc 2.1.0-rts] Emitted LLVM IR (.ll) module: {}", out_path.display());
                     } else if let Some(dir) = out_dir {
                         let p = dir.join(format!("{}.ll", stem));
                         write_utf8_no_bom(&p, &ir_code);
-                        println!("[rtsc 2.0.0-rts] Emitted LLVM IR (.ll) module: {}", p.display());
+                        println!("[rtsc 2.1.0-rts] Emitted LLVM IR (.ll) module: {}", p.display());
                     } else {
                         println!("{}", ir_code);
                     }
@@ -566,14 +584,14 @@ fn main() {
                     if let Some(out_path) = output {
                         write_utf8_no_bom(&out_path, &wgsl_code);
                         println!(
-                            "[rtsc 2.0.0-rts] Emitted WebGPU WGSL Compute Shader: {}",
+                            "[rtsc 2.1.0-rts] Emitted WebGPU WGSL Compute Shader: {}",
                             out_path.display()
                         );
                     } else if let Some(dir) = out_dir {
                         let p = dir.join(format!("{}.wgsl", stem));
                         write_utf8_no_bom(&p, &wgsl_code);
                         println!(
-                            "[rtsc 2.0.0-rts] Emitted WebGPU WGSL Compute Shader: {}",
+                            "[rtsc 2.1.0-rts] Emitted WebGPU WGSL Compute Shader: {}",
                             p.display()
                         );
                     } else {
@@ -604,7 +622,7 @@ fn main() {
                             process::exit(1);
                         }
                         println!(
-                            "[rtsc 2.0.0-rts] Emitted SPIR-V 1.5 Binary Module (magic 0x07230203, {} bytes): {}",
+                            "[rtsc 2.1.0-rts] Emitted SPIR-V 1.5 Binary Module (magic 0x07230203, {} bytes): {}",
                             spv_bytes.len(),
                             out_path.display()
                         );
@@ -613,14 +631,14 @@ fn main() {
                         if let Some(out_path) = output {
                             write_utf8_no_bom(&out_path, &spvasm_code);
                             println!(
-                                "[rtsc 2.0.0-rts] Emitted SPIR-V 1.5 Assembly (.spvasm): {}",
+                                "[rtsc 2.1.0-rts] Emitted SPIR-V 1.5 Assembly (.spvasm): {}",
                                 out_path.display()
                             );
                         } else if let Some(dir) = out_dir {
                             let p = dir.join(format!("{}.spvasm", stem));
                             write_utf8_no_bom(&p, &spvasm_code);
                             println!(
-                                "[rtsc 2.0.0-rts] Emitted SPIR-V 1.5 Assembly (.spvasm): {}",
+                                "[rtsc 2.1.0-rts] Emitted SPIR-V 1.5 Assembly (.spvasm): {}",
                                 p.display()
                             );
                         } else {
@@ -652,7 +670,7 @@ fn main() {
                             process::exit(1);
                         }
                         println!(
-                            "[rtsc 2.0.0-rts] Emitted WASI Fuel-Metered Binary (.wasm, fuel={}, {} bytes): {}",
+                            "[rtsc 2.1.0-rts] Emitted WASI Fuel-Metered Binary (.wasm, fuel={}, {} bytes): {}",
                             fuel_limit,
                             wasm_bytes.len(),
                             out_path.display()
@@ -662,7 +680,7 @@ fn main() {
                         if let Some(out_path) = output {
                             write_utf8_no_bom(&out_path, &wat_code);
                             println!(
-                                "[rtsc 2.0.0-rts] Emitted WASI Fuel-Metered Text (.wat, fuel={}): {}",
+                                "[rtsc 2.1.0-rts] Emitted WASI Fuel-Metered Text (.wat, fuel={}): {}",
                                 fuel_limit,
                                 out_path.display()
                             );
@@ -670,7 +688,7 @@ fn main() {
                             let p = dir.join(format!("{}.wat", stem));
                             write_utf8_no_bom(&p, &wat_code);
                             println!(
-                                "[rtsc 2.0.0-rts] Emitted WASI Fuel-Metered Text (.wat, fuel={}): {}",
+                                "[rtsc 2.1.0-rts] Emitted WASI Fuel-Metered Text (.wat, fuel={}): {}",
                                 fuel_limit,
                                 p.display()
                             );
@@ -697,6 +715,7 @@ fn main() {
             lib_dirs,
             include_dirs,
             fuel_limit: _,
+            run_args,
         }) => {
             let file_str = file.to_string_lossy().replace('\\', "/");
             if let Err(err) = fs::metadata(&file) {
@@ -751,10 +770,13 @@ fn main() {
                 );
             }
 
-            let run_status = Command::new(&bin_path).status().unwrap_or_else(|err| {
-                eprintln!("Failed to execute '{}': {}", bin_path.display(), err);
-                process::exit(1);
-            });
+            let run_status = Command::new(&bin_path)
+                .args(&run_args)
+                .status()
+                .unwrap_or_else(|err| {
+                    eprintln!("Failed to execute '{}': {}", bin_path.display(), err);
+                    process::exit(1);
+                });
 
             process::exit(run_status.code().unwrap_or(0));
         }

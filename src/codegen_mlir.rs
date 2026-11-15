@@ -659,6 +659,17 @@ impl MlirCodegen {
                     ));
                     (ssa, "i1".to_string())
                 }
+                UnaryOp::BitNot => {
+                    let (in_ssa, in_ty) = Self::lower_expr(out, inner, indent, ctx, expected_ty);
+                    let mask_ssa = ctx.next_ssa();
+                    let ssa = ctx.next_ssa();
+                    out.push_str(&format!("{}{} = arith.constant -1 : {}\n", pad, mask_ssa, in_ty));
+                    out.push_str(&format!(
+                        "{}{} = arith.xori {}, {} : {}\n",
+                        pad, ssa, in_ssa, mask_ssa, in_ty
+                    ));
+                    (ssa, in_ty)
+                }
             },
             Expr::Binary {
                 left, op, right, ..
@@ -712,6 +723,49 @@ impl MlirCodegen {
                         out.push_str(&format!(
                             "{}{} = {} {}, {} : {}\n",
                             pad, ssa, mnemonic, l_ssa, r_ssa, op_ty
+                        ));
+                        (ssa, op_ty)
+                    }
+                    BinaryOp::Rem => {
+                        let mnemonic = if is_float { "arith.remf" } else { "arith.remsi" };
+                        out.push_str(&format!(
+                            "{}{} = {} {}, {} : {}\n",
+                            pad, ssa, mnemonic, l_ssa, r_ssa, op_ty
+                        ));
+                        (ssa, op_ty)
+                    }
+                    BinaryOp::BitAnd => {
+                        out.push_str(&format!(
+                            "{}{} = arith.andi {}, {} : {}\n",
+                            pad, ssa, l_ssa, r_ssa, op_ty
+                        ));
+                        (ssa, op_ty)
+                    }
+                    BinaryOp::BitOr => {
+                        out.push_str(&format!(
+                            "{}{} = arith.ori {}, {} : {}\n",
+                            pad, ssa, l_ssa, r_ssa, op_ty
+                        ));
+                        (ssa, op_ty)
+                    }
+                    BinaryOp::BitXor => {
+                        out.push_str(&format!(
+                            "{}{} = arith.xori {}, {} : {}\n",
+                            pad, ssa, l_ssa, r_ssa, op_ty
+                        ));
+                        (ssa, op_ty)
+                    }
+                    BinaryOp::Shl => {
+                        out.push_str(&format!(
+                            "{}{} = arith.shli {}, {} : {}\n",
+                            pad, ssa, l_ssa, r_ssa, op_ty
+                        ));
+                        (ssa, op_ty)
+                    }
+                    BinaryOp::Shr => {
+                        out.push_str(&format!(
+                            "{}{} = arith.shrsi {}, {} : {}\n",
+                            pad, ssa, l_ssa, r_ssa, op_ty
                         ));
                         (ssa, op_ty)
                     }
@@ -1211,6 +1265,22 @@ impl MlirCodegen {
                 ));
                 (ssa, arr_ty)
             }
+            Expr::IfExpr {
+                cond,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                let (c_ssa, _) = Self::lower_expr(out, cond, indent, ctx, Some("i1"));
+                let (t_ssa, t_ty) = Self::lower_expr(out, then_branch, indent, ctx, expected_ty);
+                let (e_ssa, _) = Self::lower_expr(out, else_branch, indent, ctx, Some(&t_ty));
+                let ssa = ctx.next_ssa();
+                out.push_str(&format!(
+                    "{}{} = arith.select {}, {}, {} : {}\n",
+                    pad, ssa, c_ssa, t_ssa, e_ssa, t_ty
+                ));
+                (ssa, t_ty)
+            }
         }
     }
 
@@ -1266,6 +1336,9 @@ impl MlirCodegen {
                 PrimitiveType::F64 => "f64".to_string(),
                 PrimitiveType::Bool => "i1".to_string(),
                 PrimitiveType::Str => "!rts.str".to_string(),
+                PrimitiveType::Str64 => "!rts.str64".to_string(),
+                PrimitiveType::Str128 => "!rts.str128".to_string(),
+                PrimitiveType::Str256 => "!rts.str256".to_string(),
             },
             TypeExpr::Math(m) => match m {
                 MathType::Vec2 => "vector<2xf32>".to_string(),

@@ -344,6 +344,12 @@ impl UnityCodegen {
                     BinaryOp::Sub => "-",
                     BinaryOp::Mul => "*",
                     BinaryOp::Div => "/",
+                    BinaryOp::Rem => "%",
+                    BinaryOp::BitAnd => "&",
+                    BinaryOp::BitOr => "|",
+                    BinaryOp::BitXor => "^",
+                    BinaryOp::Shl => "<<",
+                    BinaryOp::Shr => ">>",
                     BinaryOp::Eq => "==",
                     BinaryOp::NotEq => "!=",
                     BinaryOp::Lt => "<",
@@ -358,7 +364,7 @@ impl UnityCodegen {
             Expr::Unary { op, expr: inner, .. } => {
                 let op_str = match op {
                     UnaryOp::Neg => "-",
-                    UnaryOp::Not => "!",
+                    UnaryOp::Not | UnaryOp::BitNot => "!",
                 };
                 format!(
                     "({}{})",

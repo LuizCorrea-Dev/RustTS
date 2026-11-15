@@ -1,0 +1,3 @@
+# Força o GitHub Linguist a tratar todos os arquivos .rts como uma linguagem customizada
+*.rts linguist-language=RustTS
+*.rts linguist-detectable=true

@@ -1,8 +1,8 @@
 {
   "name": "rustts-lang",
   "displayName": "RustTS (.rts) — Deterministic Systems & Engine Language",
-  "description": "Official syntax highlighting, capability colorization, and snippets for RustTS (.rts) v2.0.0-rts",
-  "version": "2.0.0",
+  "description": "Official syntax highlighting, file icons, capability colorization, and snippets for RustTS (.rts) v2.1.0-rts",
+  "version": "2.1.0",
   "publisher": "Rootszera",
   "engines": {
     "vscode": "^1.85.0"
@@ -11,6 +11,7 @@
     "Programming Languages",
     "Snippets"
   ],
+  "icon": "icons/rustts.png",
   "contributes": {
     "languages": [
       {
@@ -23,7 +24,11 @@
         "extensions": [
           ".rts"
         ],
-        "configuration": "./language-configuration.json"
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icons/rustts.png",
+          "dark": "./icons/rustts.png"
+        }
       }
     ],
     "grammars": [

@@ -13,7 +13,8 @@ module-decl     ::= "module" ws1 module-path ws ";" ws
 import-decl     ::= "import" ws1 module-path ws ";" ws
 module-path     ::= ident ("." ident)*
 
-item            ::= attribute-list (struct-decl | enum-decl | extern-fn-decl | impl-decl | fn-decl)
+item            ::= attribute-list (const-decl | struct-decl | enum-decl | extern-fn-decl | impl-decl | fn-decl)
+const-decl      ::= ("pub" ws1)? "const" ws1 ident ws ":" ws type-expr ws "=" ws expr ws ";"
 extern-fn-decl  ::= ("pub" ws1)? "extern" (ws1 string-lit)? ws1 "fn" ws1 ident ws "(" ws param-list? ws ")" (ws "->" ws type-expr)? ws ";"
 impl-decl       ::= "impl" ws1 ident ws "{" ws (attribute-list fn-decl ws)* "}"
 
@@ -21,6 +22,7 @@ attribute-list  ::= (attribute ws)*
 attribute       ::= "@component"
                   | "@gpu_kernel"
                   | "@shader_shared"
+                  | "@repr_c"
                   | "@sealed_sig"
                   | "@open_sig"
                   | "@system" ws "(" ws "stage" ws "=" ws string-lit ws ")"
@@ -38,18 +40,19 @@ enum-variant    ::= ident (ws "(" ws type-expr ws ")")? ws ","?
 
 fn-decl         ::= ("pub" ws1)? "fn" ws1 ident ws "(" ws param-list? ws ")" (ws "->" ws type-expr)? ws block
 param-list      ::= param (ws "," ws param)* ws ","?
-param           ::= ident ws ":" ws ("cap" ws1 capability-spec | type-expr)
+param           ::= ident ws ":" ws ("cap" ws1 capability-spec | ("inout" ws1)? type-expr)
 
-capability-spec ::= cap-domain (ws "<" ws (ident | hex-lit | int-lit) ws ">")?
+capability-spec ::= cap-domain (ws "<" ws (type-expr | ident | hex-lit | int-lit) ws ">")?
 cap-domain      ::= "I2CBus" | "I2CRead" | "I2CPort" | "PWMPin" | "PWMWrite"
                   | "GPIOPin" | "SPIBus" | "DMAChannel" | "Interrupt"
                   | "MonotonicClock" | "TimeStep"
-                  | "ReadColumn" | "MutColumn" | "Read" | "Mut"
+                  | "ReadColumn" | "MutColumn" | "ReadSlice" | "MutSlice" | "Read" | "Mut"
                   | "StaticArena" | "LevelArena" | "SessionArena" | "FrameArena" | "RequestArena" | "TaskArena"
                   | "ReadFrameArena" | "ReadRequestArena" | "ReadTaskArena"
                   | "NetSocket" | "TcpSocket" | "UdpTick" | "HttpRoute"
                   | "SqlRead" | "SqlWrite"
                   | "GpuQueue" | "WebGpuDevice" | "CanvasContext" | "AudioBuffer"
+                  | "WindowHost" | "InputDevice" | "FileSystem" | "AudioDevice"
 
 type-expr       ::= primitive-type
                   | math-type
@@ -61,7 +64,7 @@ type-expr       ::= primitive-type
 
 primitive-type  ::= "i8" | "i16" | "i32" | "i64"
                   | "u8" | "u16" | "u32" | "u64" | "usize"
-                  | "f32" | "f64" | "fix32" | "bool" | "str"
+                  | "f32" | "f64" | "fix32" | "bool" | "str" | "str64" | "str128" | "str256"
                   | "int8" | "int16" | "int32" | "int64"
                   | "uint8" | "uint16" | "uint32" | "uint64"
                   | "sbyte" | "short" | "int" | "long"
@@ -84,7 +87,7 @@ stmt            ::= let-stmt
                   | "continue" ws ";"
                   | assign-or-expr-stmt
 
-let-stmt        ::= "let" ws1 ("mut" ws1)? ident (ws ":" ws type-expr)? ws "=" ws expr ws ";"
+let-stmt        ::= "let" ws1 ("mut" ws1)? ident (ws ":" ws ("cap" ws1 capability-spec | type-expr))? ws "=" ws expr ws ";"
 return-stmt     ::= "return" (ws1 expr)? ws ";"
 if-stmt         ::= "if" ws1 expr ws block (ws "else" ws (if-stmt | block))?
 match-stmt      ::= "match" ws1 expr ws "{" ws (match-arm ws)* "}"
@@ -95,18 +98,21 @@ match-pattern   ::= "_"
                   | ident ("::" ident)? (ws "(" ws ident ws ")")?
 for-stmt        ::= "for" ws1 ident ws1 "in" ws1 expr ws ".." ws expr ws block
 while-stmt      ::= "while" ws1 expr ws block
-assign-or-expr-stmt ::= expr (ws "=" ws expr)? ws ";"
+assign-op       ::= "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>="
+assign-or-expr-stmt ::= expr (ws assign-op ws expr)? ws ";"
 
 expr            ::= unary-expr (ws binary-op ws unary-expr)*
 unary-expr      ::= (unary-op ws)* postfix-expr
-unary-op        ::= "-" | "!"
+unary-op        ::= "-" | "!" | "~"
 postfix-expr    ::= primary-expr (postfix-op)*
 postfix-op      ::= "." ident (ws "(" ws arg-list? ws ")")?
                   | "[" ws expr ws "]"
                   | "?"
                   | ws1 "as" ws1 type-expr
 
+if-expr         ::= "if" ws1 expr ws "{" ws expr ws "}" ws "else" ws (if-expr | "{" ws expr ws "}")
 primary-expr    ::= "|" ws ident ws "|" ws expr
+                  | if-expr
                   | float-lit
                   | hex-lit
                   | int-lit
@@ -120,11 +126,12 @@ primary-expr    ::= "|" ws ident ws "|" ws expr
                   | "[" ws (expr (ws "," ws expr)*)? ws "]"
                   | "(" ws expr ws ")"
 
-arg-list        ::= expr (ws "," ws expr)*
+arg-list        ::= call-arg (ws "," ws call-arg)*
+call-arg        ::= ("inout" ws1)? expr
 field-init-list ::= field-init (ws "," ws field-init)* ws ","?
 field-init      ::= ident ws ":" ws expr
 
-binary-op       ::= "+" | "-" | "*" | "/" | "==" | "!=" | "<=" | ">=" | "<" | ">" | "&&" | "||"
+binary-op       ::= "+" | "-" | "*" | "/" | "%" | "&" | "|" | "^" | "<<" | ">>" | "==" | "!=" | "<=" | ">=" | "<" | ">" | "&&" | "||"
 
 ident           ::= [a-zA-Z_] [a-zA-Z0-9_]*
 hex-lit         ::= "0x" [0-9a-fA-F_]+

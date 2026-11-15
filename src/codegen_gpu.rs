@@ -356,6 +356,7 @@ impl GpuCodegen {
                 match op {
                     UnaryOp::Neg => format!("-({})", inner_s),
                     UnaryOp::Not => format!("!({})", inner_s),
+                    UnaryOp::BitNot => format!("~({})", inner_s),
                 }
             }
             Expr::Binary {
@@ -368,6 +369,12 @@ impl GpuCodegen {
                     BinaryOp::Sub => "-",
                     BinaryOp::Mul => "*",
                     BinaryOp::Div => "/",
+                    BinaryOp::Rem => "%",
+                    BinaryOp::BitAnd => "&",
+                    BinaryOp::BitOr => "|",
+                    BinaryOp::BitXor => "^",
+                    BinaryOp::Shl => "<<",
+                    BinaryOp::Shr => ">>",
                     BinaryOp::Eq => "==",
                     BinaryOp::NotEq => "!=",
                     BinaryOp::Lt => "<",
@@ -480,6 +487,17 @@ impl GpuCodegen {
             Expr::TryOp { expr: inner, .. } | Expr::ErrorMapClosure { body: inner, .. } => {
                 Self::lower_wgsl_expr(inner, ctx)
             }
+            Expr::IfExpr {
+                cond,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                let c = Self::lower_wgsl_expr(cond, ctx);
+                let t = Self::lower_wgsl_expr(then_branch, ctx);
+                let e = Self::lower_wgsl_expr(else_branch, ctx);
+                format!("select({}, {}, {})", e, t, c)
+            }
         }
     }
 
@@ -498,7 +516,10 @@ impl GpuCodegen {
                 | PrimitiveType::Usize => "u32".to_string(),
                 PrimitiveType::F32 | PrimitiveType::F64 => "f32".to_string(),
                 PrimitiveType::Bool => "bool".to_string(),
-                PrimitiveType::Str => "u32".to_string(),
+                PrimitiveType::Str
+                | PrimitiveType::Str64
+                | PrimitiveType::Str128
+                | PrimitiveType::Str256 => "u32".to_string(),
             },
             TypeExpr::Math(m) => match m {
                 MathType::Vec2 => "vec2<f32>".to_string(),
@@ -905,6 +926,12 @@ impl GpuCodegen {
                     BinaryOp::Sub => "OpFSub %float",
                     BinaryOp::Mul => "OpFMul %float",
                     BinaryOp::Div => "OpFDiv %float",
+                    BinaryOp::Rem => "OpSRem %int",
+                    BinaryOp::BitAnd => "OpBitwiseAnd %int",
+                    BinaryOp::BitOr => "OpBitwiseOr %int",
+                    BinaryOp::BitXor => "OpBitwiseXor %int",
+                    BinaryOp::Shl => "OpShiftLeftLogical %int",
+                    BinaryOp::Shr => "OpShiftRightArithmetic %int",
                     _ => "OpFOrdLessThan %bool",
                 };
                 out.push_str(&format!("  {} = {} {} {}\n", dst, spv_op, l, r));

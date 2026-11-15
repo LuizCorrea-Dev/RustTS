@@ -1606,9 +1606,1078 @@ pub fn tentar_mutar_let_imutavel(dose_inicial: f32) -> f32 {
 
     #[test]
     fn test_v200_compiler_version_and_full_diagnostic_taxonomy_homologation() {
-        assert_eq!(diagnostics::COMPILER_VERSION, "2.0.0-rts");
+        assert_eq!(diagnostics::COMPILER_VERSION, "2.1.0-rts");
         let ok_report = diagnostics::CompilerDiagnosticsReport::ok();
-        assert_eq!(ok_report.compiler_version, "2.0.0-rts");
+        assert_eq!(ok_report.compiler_version, "2.1.0-rts");
         assert_eq!(ok_report.status, "ok");
+    }
+
+    #[test]
+    fn test_v210_fase1_const_bitwise_compound_ifexpr_and_dual_codegen() {
+        let src = r#"
+module systems.framebuffer_core;
+
+const MAX_NATIVE_WIDTH: i32 = 1920;
+pub const PIXEL_COUNT: i32 = MAX_NATIVE_WIDTH * 1080;
+const COLOR_MASK: u32 = (1 << 8) | 0x0F;
+const PALETTE: [u32; 4] = [0xFF0000FF, 0x00FF00FF, 0x0000FFFF, 0xFFFFFFFF];
+
+@sealed_sig
+pub fn mix_pixel(raw: u32, idx: i32, boost: bool) -> u32 {
+    let mut acc: u32 = raw & COLOR_MASK;
+    acc |= (PALETTE[idx % 4] >> 24) & 0xFF;
+    acc ^= ~0x0F;
+    acc <<= 1;
+    acc += 4;
+    acc -= 2;
+    let delta: u32 = if boost { acc + 10 } else if idx > 1 { acc } else { 0 };
+    return delta;
+}
+"#;
+        let (module_opt, report) = compile_and_check(src, "test_v210_fase1.rts");
+        assert_eq!(
+            report.status, "ok",
+            "Diagnósticos inesperados: {:?}",
+            report.diagnostics
+        );
+        let module = module_opt.expect("AST válida");
+
+        // 1. Native C99 backend
+        let c99 = codegen_native::NativeCodegen::emit_c99(&module);
+        assert!(c99.contains("RTS_UNUSED static const int32_t MAX_NATIVE_WIDTH = 1920u;"));
+        assert!(c99.contains("RTS_UNUSED static const int32_t PIXEL_COUNT = 2073600u;"));
+        assert!(c99.contains("RTS_UNUSED static const uint32_t COLOR_MASK = 271u;"));
+        assert!(c99.contains("RTS_UNUSED static const uint32_t PALETTE[4] = { 4278190335u, 16711935u, 65535u, 4294967295u };"));
+        assert!(c99.contains("(~15u)"));
+        assert!(c99.contains("? ("));
+
+        // 2. Direct LLVM IR backend
+        let llvm_ir = codegen_llvm::LlvmIrCodegen::emit_llvm_ir(&module);
+        assert!(llvm_ir.contains("@PALETTE = internal constant [4 x i32]"));
+        assert!(llvm_ir.contains("getelementptr inbounds [4 x i32], ptr @PALETTE"));
+        assert!(llvm_ir.contains("xor i32"));
+        assert!(llvm_ir.contains("lshr i32"));
+        assert!(llvm_ir.contains("shl i32"));
+        assert!(llvm_ir.contains("ifexpr.then."));
+        assert!(llvm_ir.contains("ifexpr.else."));
+
+        // 3. Formal GBNF includes Fase 1 productions
+        let gbnf = gbnf_exporter::export_rustts_gbnf();
+        assert!(gbnf.contains("const-decl"));
+        assert!(gbnf.contains("if-expr"));
+        assert!(gbnf.contains("\"<<=\""));
+        assert!(gbnf.contains("\"|=\""));
+    }
+
+    #[test]
+    fn test_v210_fase1_const_immutability_and_bitwise_type_guards() {
+        // 1. Reatribuir `const` deve emitir RTS-E0405
+        let src_const_mut = r#"
+module safety.const_mut;
+
+const LIMIT: i32 = 64;
+
+@sealed_sig
+pub fn fail_reassign_const() -> i32 {
+    LIMIT += 1;
+    return LIMIT;
+}
+"#;
+        let (_m1, rep1) = compile_and_check(src_const_mut, "test_const_mut.rts");
+        assert_eq!(rep1.status, "error");
+        assert!(
+            rep1.diagnostics.iter().any(|d| d.error_code == "RTS-E0405"),
+            "Esperado RTS-E0405 ao mutar const LIMIT: {:?}",
+            rep1.diagnostics
+        );
+
+        // 2. Operação bitwise com float deve emitir RTS-E0301
+        let src_float_bit = r#"
+module safety.float_bitwise;
+
+@sealed_sig
+pub fn fail_float_shift(x: f32) -> f32 {
+    let y: f32 = x << 2;
+    return y;
+}
+"#;
+        let (_m2, rep2) = compile_and_check(src_float_bit, "test_float_bit.rts");
+        assert_eq!(rep2.status, "error");
+        assert!(
+            rep2.diagnostics.iter().any(|d| d.error_code == "RTS-E0301"),
+            "Esperado RTS-E0301 ao aplicar '<<' em f32: {:?}",
+            rep2.diagnostics
+        );
+
+        // 3. Bitwise NOT `~` em float deve emitir RTS-E0301
+        let src_float_not = r#"
+module safety.float_bitnot;
+
+@sealed_sig
+pub fn fail_float_bitnot(x: f32) -> f32 {
+    return ~x;
+}
+"#;
+        let (_m3, rep3) = compile_and_check(src_float_not, "test_float_bitnot.rts");
+        assert_eq!(rep3.status, "error");
+        assert!(
+            rep3.diagnostics.iter().any(|d| d.error_code == "RTS-E0301"),
+            "Esperado RTS-E0301 ao aplicar '~' em f32: {:?}",
+            rep3.diagnostics
+        );
+    }
+
+    #[test]
+    fn test_v210_fase1_ifexpr_type_guards_and_nested_generics_parsing() {
+        // 1. Nested generics `Option<Handle<Entity>>` must not collide with `>>` token
+        let src_ok = r#"
+module parser.nested_generics;
+
+struct Entity {
+    id: u32,
+}
+
+@sealed_sig
+pub fn check_entity(ent: Option<Handle<Entity>>, mask: u32) -> u32 {
+    let high: u32 = mask >> 8;
+    let out: u32 = if high > 0 { high } else { 0 };
+    return out;
+}
+"#;
+        let (_m_ok, rep_ok) = compile_and_check(src_ok, "test_nested_generics.rts");
+        assert_eq!(
+            rep_ok.status, "ok",
+            "Generics aninhados Option<Handle<Entity>> falharam: {:?}",
+            rep_ok.diagnostics
+        );
+
+        // 2. IfExpr com condição não-booleana deve emitir RTS-E0301
+        let src_bad_cond = r#"
+module safety.ifexpr_cond;
+
+@sealed_sig
+pub fn bad_cond(x: i32) -> i32 {
+    return if x { 1 } else { 2 };
+}
+"#;
+        let (_m_bad1, rep_bad1) = compile_and_check(src_bad_cond, "test_ifexpr_cond.rts");
+        assert_eq!(rep_bad1.status, "error");
+        assert!(
+            rep_bad1.diagnostics.iter().any(|d| d.error_code == "RTS-E0301"),
+            "Esperado RTS-E0301 para condição inteira em IfExpr"
+        );
+
+        // 3. IfExpr com ramos incompatíveis deve emitir RTS-E0301
+        let src_bad_branches = r#"
+module safety.ifexpr_branches;
+
+@sealed_sig
+pub fn bad_branches(flag: bool) -> i32 {
+    return if flag { 1 } else { false };
+}
+"#;
+        let (_m_bad2, rep_bad2) = compile_and_check(src_bad_branches, "test_ifexpr_branches.rts");
+        assert_eq!(rep_bad2.status, "error");
+        assert!(
+            rep_bad2.diagnostics.iter().any(|d| d.error_code == "RTS-E0301"),
+            "Esperado RTS-E0301 para ramos incompatíveis em IfExpr"
+        );
+    }
+
+    #[test]
+    fn test_37_bitwise_modulo_and_compound_assign_codegen() {
+        let source = r#"
+module engine.color;
+import core.math;
+
+@sealed_sig
+pub fn scale_argb(col: uint, factor: float, green_tint: boolean) -> uint {
+    let f = math::clamp(factor, 0.0, 1.3);
+    let g_mult = if green_tint { f * 1.45 } else { f };
+    let b_mult = if green_tint { f * 0.65 } else { f };
+
+    let mut mask: uint = 0xFF000000;
+    let r = (math::clamp((((col >> 16) & 255) as float) * f, 0.0, 255.0) as uint) << 16;
+    let g = (math::clamp((((col >> 8) & 255) as float) * g_mult, 0.0, 255.0) as uint) << 8;
+    let b = (math::clamp(((col & 255) as float) * b_mult, 0.0, 255.0) as uint) % 256;
+
+    mask |= r;
+    mask |= g;
+    mask |= b;
+    return mask;
+}
+"#;
+
+        let (ast_opt, report) = compile_and_check(source, "test_37_scale_argb.rts");
+        assert_eq!(
+            report.status, "ok",
+            "Falha ao validar bitwise, % e if-expr: {:?}",
+            report.diagnostics
+        );
+        let ast = ast_opt.expect("AST válida");
+
+        // 1. Verifica emissão no backend C99 nativo
+        let c99_code = codegen_native::NativeCodegen::emit_c99(&ast);
+        assert!(c99_code.contains(">> 16u"));
+        assert!(c99_code.contains("<< 16u"));
+        assert!(c99_code.contains("% 256u"));
+        assert!(c99_code.contains("?"));
+
+        // 2. Verifica emissão direta no backend LLVM IR (Zero C)
+        let llvm_ir = codegen_llvm::LlvmIrCodegen::emit_llvm_ir(&ast);
+        assert!(llvm_ir.contains("lshr i32"));
+        assert!(llvm_ir.contains("shl i32"));
+        assert!(llvm_ir.contains("and i32"));
+        assert!(llvm_ir.contains("or i32"));
+        assert!(llvm_ir.contains("urem i32"));
+        assert!(llvm_ir.contains("select i1"));
+    }
+
+    #[test]
+    fn test_38_module_level_const_scalar_and_fixed_array() {
+        let source = r#"
+module game.constants;
+
+const MAX_NATIVE_WIDTH: usize = 3840;
+const KRASTOV_SAVE_MAGIC: uint = 0x5A505356;
+const MOD_COSTS: [uint; 4] = [100, 250, 500, 1000];
+
+@sealed_sig
+pub fn verificar_cabecalho(magic: uint, nivel: usize) -> uint {
+    if magic == KRASTOV_SAVE_MAGIC && MAX_NATIVE_WIDTH == 3840 {
+        return MOD_COSTS[nivel];
+    }
+    return 0;
+}
+"#;
+
+        let (ast_opt, report) = compile_and_check(source, "test_38_constants.rts");
+        assert_eq!(
+            report.status, "ok",
+            "Constantes de módulo devem compilar sem erro: {:?}",
+            report.diagnostics
+        );
+        let ast = ast_opt.expect("AST válida");
+        let llvm_ir = codegen_llvm::LlvmIrCodegen::emit_llvm_ir(&ast);
+        assert!(llvm_ir.contains("@MAX_NATIVE_WIDTH = internal constant i64 3840"));
+        assert!(llvm_ir.contains("@KRASTOV_SAVE_MAGIC = internal constant i32 1515213654"));
+        assert!(llvm_ir.contains("@MOD_COSTS = internal constant [4 x i32]"));
+    }
+
+    #[test]
+    fn test_39_const_mutation_triggers_rts_e0405() {
+        let source = r#"
+module game.illegal_const_mut;
+
+const MAX_PROJECTILES: uint = 32;
+
+@sealed_sig
+pub fn tentar_alterar_constante() -> uint {
+    MAX_PROJECTILES += 8;
+    return MAX_PROJECTILES;
+}
+"#;
+
+        let (_ast_opt, report) = compile_and_check(source, "test_39_const_mut.rts");
+        assert_eq!(report.status, "error");
+        let err = report
+            .diagnostics
+            .iter()
+            .find(|d| d.error_code == "RTS-E0405")
+            .expect("Mutação de const deve falhar com RTS-E0405");
+        assert_eq!(err.category, DiagnosticCategory::AliasingViolation);
+    }
+
+    #[test]
+    fn test_40_bitwise_on_float_triggers_rts_e0301() {
+        let source = r#"
+module game.illegal_float_bits;
+
+@sealed_sig
+pub fn shift_invalido(x: float) -> float {
+    let invalido = x << 2.0;
+    return invalido;
+}
+"#;
+
+        let (_ast_opt, report) = compile_and_check(source, "test_40_float_bits.rts");
+        assert_eq!(report.status, "error");
+        let err = report
+            .diagnostics
+            .iter()
+            .find(|d| d.error_code == "RTS-E0301")
+            .expect("Bitwise em float deve falhar com RTS-E0301");
+        assert_eq!(err.category, DiagnosticCategory::TypeMismatch);
+    }
+
+    #[test]
+    fn test_41_if_expr_branch_type_mismatch_triggers_rts_e0301() {
+        let source = r#"
+module game.illegal_if_expr;
+
+@sealed_sig
+pub fn ramos_incompativeis(ativo: boolean) -> uint {
+    let valor = if ativo { 100 } else { "ERRO_TIPO" };
+    return valor;
+}
+"#;
+
+        let (_ast_opt, report) = compile_and_check(source, "test_41_if_expr.rts");
+        assert_eq!(report.status, "error");
+        assert!(
+            report.diagnostics.iter().any(|d| d.error_code == "RTS-E0301"),
+            "Ramos de tipos distintos no if-expr devem falhar com RTS-E0301"
+        );
+    }
+
+    #[test]
+    fn test_42_gbnf_grammar_includes_const_bitwise_and_if_expr() {
+        let grammar = gbnf_exporter::export_rustts_gbnf();
+        assert!(grammar.contains("const-decl"));
+        assert!(grammar.contains("if-expr"));
+        assert!(grammar.contains("\"<<\""));
+        assert!(grammar.contains("\">>\""));
+        assert!(grammar.contains("\"|=\""));
+        assert!(grammar.contains("\"&=\""));
+    }
+
+    #[test]
+    fn test_43_inout_param_mutation_and_dual_codegen() {
+        let source = r#"
+module zone.operator_sim;
+import core.math;
+
+struct StalkerOperator {
+    hp: float,
+    gas_filter_pct: float,
+    rad_msv: float,
+}
+
+@sealed_sig
+pub fn forward_filter_tick(stalker: inout StalkerOperator) {
+    stalker.gas_filter_pct = math::clamp(stalker.gas_filter_pct - 0.5, 0.0, 100.0);
+}
+
+@sealed_sig
+pub fn step_operator(stalker: inout StalkerOperator, target_dmg: inout int, incoming_rad: float) {
+    forward_filter_tick(inout stalker);
+    stalker.hp = math::clamp(stalker.hp - (target_dmg as float), 0.0, 100.0);
+    stalker.rad_msv += incoming_rad;
+    target_dmg = 0;
+}
+
+@sealed_sig
+pub fn main() -> int {
+    let mut s = StalkerOperator { hp: 100.0, gas_filter_pct: 50.0, rad_msv: 0.0 };
+    let mut hits: int = 3;
+    step_operator(inout s, inout hits, 12.5);
+    return hits;
+}
+"#;
+
+        let (ast_opt, report) = compile_and_check(source, "test_43_inout.rts");
+        assert_eq!(
+            report.status, "ok",
+            "inout válido deve compilar sem erros: {:?}",
+            report.diagnostics
+        );
+        let ast = ast_opt.expect("AST válida");
+
+        let c99_code = codegen_native::NativeCodegen::emit_c99(&ast);
+        assert!(c99_code.contains("RTS_RESTRICT stalker"));
+        assert!(c99_code.contains("RTS_RESTRICT target_dmg"));
+        assert!(c99_code.contains("(*stalker).gas_filter_pct"));
+        assert!(c99_code.contains("(*target_dmg) = 0u"));
+        assert!(c99_code.contains("&(s)"));
+
+        let llvm_ir = codegen_llvm::LlvmIrCodegen::emit_llvm_ir(&ast);
+        assert!(llvm_ir.contains("ptr noalias noundef %arg_stalker"));
+        assert!(llvm_ir.contains("ptr noalias noundef %arg_target_dmg"));
+    }
+
+    #[test]
+    fn test_44_mut_slice_and_read_slice_downgrade_codegen() {
+        let source = r#"
+module engine.framebuffer;
+import core.math;
+
+@sealed_sig
+pub fn draw_rect_fast(fb: cap MutSlice<uint>, bw: usize, x0: usize, y0: usize, w: usize, h: usize, color: uint) {
+    let x1 = x0 + w;
+    let y1 = y0 + h;
+    for y in y0..y1 {
+        let row_offset = y * bw;
+        for x in x0..x1 {
+            fb[row_offset + x] = color;
+        }
+    }
+}
+
+@sealed_sig
+pub fn ler_celula_mapa(grid: cap ReadSlice<byte>, idx: usize) -> byte {
+    return grid[idx];
+}
+
+@sealed_sig
+pub fn render_and_clear(arena: cap StaticArena, grid: cap MutSlice<byte>) -> int {
+    let fb: cap MutSlice<uint> = arena.alloc_slice(1024);
+    fb.fill(0);
+    draw_rect_fast(fb, 32, 0, 0, 8, 8, 0xFF00FF00);
+    let _cell = ler_celula_mapa(grid, 0);
+    return (fb.len() as int);
+}
+"#;
+
+        let (ast_opt, report) = compile_and_check(source, "test_44_slices.rts");
+        assert_eq!(
+            report.status, "ok",
+            "MutSlice/ReadSlice e downgrade seguro devem compilar: {:?}",
+            report.diagnostics
+        );
+        let ast = ast_opt.expect("AST válida");
+
+        let c99_code = codegen_native::NativeCodegen::emit_c99(&ast);
+        assert!(c99_code.contains("rts_slice_t fb"));
+        assert!(c99_code.contains("const rts_slice_t grid"));
+        assert!(c99_code.contains("RTS_SLICE_AT(uint32_t, fb,"));
+        assert!(c99_code.contains("RTS_SLICE_FILL(uint32_t, fb,"));
+        assert!(c99_code.contains("RTS_ARENA_ALLOC_SLICE(uint32_t,"));
+        assert!(c99_code.contains("fb.len"));
+
+        let llvm_ir = codegen_llvm::LlvmIrCodegen::emit_llvm_ir(&ast);
+        assert!(llvm_ir.contains("%rts_slice_t = type { ptr, i64 }"));
+        assert!(llvm_ir.contains("declare ptr @calloc(i64, i64)"));
+        assert!(llvm_ir.contains("extractvalue %rts_slice_t"));
+        assert!(llvm_ir.contains("getelementptr inbounds i32, ptr"));
+
+        let grammar = gbnf_exporter::export_rustts_gbnf();
+        assert!(grammar.contains("inout"));
+        assert!(grammar.contains("MutSlice"));
+        assert!(grammar.contains("ReadSlice"));
+    }
+
+    #[test]
+    fn test_45_inout_rvalue_and_readonly_blocked_rts_e0405() {
+        let source = r#"
+module zone.illegal_inout;
+
+@sealed_sig
+pub fn step_val(x: inout int) {
+    x += 1;
+}
+
+@sealed_sig
+pub fn bad_caller() {
+    let fixo: int = 10;
+    step_val(inout fixo);
+    step_val(42);
+}
+"#;
+
+        let (_ast_opt, report) = compile_and_check(source, "test_45_illegal_inout.rts");
+        assert_eq!(report.status, "error");
+        let e0405_count = report
+            .diagnostics
+            .iter()
+            .filter(|d| d.error_code == "RTS-E0405" && d.category == DiagnosticCategory::AliasingViolation)
+            .count();
+        assert!(
+            e0405_count >= 2,
+            "Binding imutável e rvalue literal em inout devem disparar RTS-E0405, obtido: {:?}",
+            report.diagnostics
+        );
+    }
+
+    #[test]
+    fn test_46_aliasing_same_binding_twice_blocked_rts_e0405() {
+        let source = r#"
+module zone.illegal_aliasing;
+
+@sealed_sig
+pub fn swap_ints(a: inout int, b: inout int) {
+    let tmp = a;
+    a = b;
+    b = tmp;
+}
+
+@sealed_sig
+pub fn blend_buffers(dst: cap MutSlice<uint>, src: cap MutSlice<uint>) {
+    dst[0] = src[0];
+}
+
+@sealed_sig
+pub fn bad_caller(buf: cap MutSlice<uint>) {
+    let mut v: int = 7;
+    swap_ints(inout v, inout v);
+    blend_buffers(buf, buf);
+}
+"#;
+
+        let (_ast_opt, report) = compile_and_check(source, "test_46_aliasing.rts");
+        assert_eq!(report.status, "error");
+        let e0405_count = report
+            .diagnostics
+            .iter()
+            .filter(|d| d.error_code == "RTS-E0405" && d.category == DiagnosticCategory::AliasingViolation)
+            .count();
+        assert!(
+            e0405_count >= 2,
+            "Aliasing O(1) de inout e MutSlice na mesma call deve disparar RTS-E0405, obtido: {:?}",
+            report.diagnostics
+        );
+    }
+
+    #[test]
+    fn test_47_read_slice_mutation_and_escalation_blocked_rts_e0402() {
+        let source = r#"
+module engine.illegal_slice_write;
+
+@sealed_sig
+pub fn clear_mut(buf: cap MutSlice<byte>) {
+    buf[0] = 0;
+}
+
+@sealed_sig
+pub fn tentar_corromper(grid: cap ReadSlice<byte>) {
+    grid[0] = 9;
+    clear_mut(grid);
+}
+"#;
+
+        let (_ast_opt, report) = compile_and_check(source, "test_47_read_slice.rts");
+        assert_eq!(report.status, "error");
+        let e0402_count = report
+            .diagnostics
+            .iter()
+            .filter(|d| d.error_code == "RTS-E0402" && d.category == DiagnosticCategory::CapabilityViolation)
+            .count();
+        assert!(
+            e0402_count >= 2,
+            "Mutação e escalonamento de ReadSlice devem falhar com RTS-E0402, obtido: {:?}",
+            report.diagnostics
+        );
+    }
+
+    #[test]
+    fn test_48_slice_in_struct_and_return_blocked_rts_e0501() {
+        let source = r#"
+module engine.illegal_slice_escape;
+
+struct MaliciousHolder {
+    leaked: cap MutSlice<uint>,
+}
+
+@sealed_sig
+pub fn leak_slice(arena: cap StaticArena) -> cap MutSlice<uint> {
+    let buf: cap MutSlice<uint> = arena.alloc_slice(64);
+    return buf;
+}
+"#;
+
+        let (_ast_opt, report) = compile_and_check(source, "test_48_slice_escape.rts");
+        assert_eq!(report.status, "error");
+        let e0501_count = report
+            .diagnostics
+            .iter()
+            .filter(|d| {
+                d.error_code == "RTS-E0501"
+                    && d.category == DiagnosticCategory::ArenaLifetimeEscape
+            })
+            .count();
+        assert!(
+            e0501_count >= 2,
+            "MutSlice em campo de struct e em return devem disparar RTS-E0501, obtido: {:?}",
+            report.diagnostics
+        );
+    }
+
+    #[test]
+    fn test_49_fixed_string_hud_formatting_c99_and_llvm() {
+        let source = r#"
+module engine.hud_text;
+import core.io;
+
+@sealed_sig
+pub fn format_hud(rad: float, wave: uint, delta: int, magic: uint) -> usize {
+    let mut hud: str256 = str256::new();
+    let tag: str128 = str128::from("KANORI-");
+    hud.clear();
+    hud.push_str(tag.as_str());
+    hud.push_str("W:");
+    hud.push_u32(wave);
+    hud.push_str(" D:");
+    hud.push_i32(delta);
+    hud.push_str(" R:");
+    hud.push_f32(rad, 2);
+    hud.push_str(" ");
+    hud.push_hex(magic);
+    io::println(hud.as_str());
+    return hud.len() + hud.capacity();
+}
+"#;
+
+        let (ast_opt, report) = compile_and_check(source, "test_49_hud_text.rts");
+        assert_eq!(
+            report.status, "ok",
+            "Falha ao compilar str256/str128 HUD formatting: {:?}",
+            report.diagnostics
+        );
+        let module = ast_opt.unwrap();
+
+        let c99 = codegen_native::NativeCodegen::emit_c99(&module);
+        assert!(c99.contains("rts_str256_t"));
+        assert!(c99.contains("rts_str128_from("));
+        assert!(c99.contains("rts_fixed_str_clear("));
+        assert!(c99.contains("rts_fixed_str_push_cstr("));
+        assert!(c99.contains("rts_fixed_str_push_u32("));
+        assert!(c99.contains("rts_fixed_str_push_i32("));
+        assert!(c99.contains("rts_fixed_str_push_f32("));
+        assert!(c99.contains("rts_fixed_str_push_hex("));
+
+        let llvm = codegen_llvm::LlvmIrCodegen::emit_llvm_ir(&module);
+        assert!(llvm.contains("%rts_str256_t = type { i32, [256 x i8] }"));
+        assert!(llvm.contains("@__rts_fixed_str_clear"));
+        assert!(llvm.contains("@__rts_fixed_str_push_cstr"));
+        assert!(llvm.contains("@__rts_fixed_str_push_f32"));
+        assert!(llvm.contains("@.str.fs_hex"));
+    }
+
+    #[test]
+    fn test_50_repr_c_nested_structs_and_fixed_strings_abi() {
+        let source = r#"
+module engine.save_abi;
+
+@repr_c
+struct BunkerHubState {
+    black_market_credits: int,
+    status_note: str64,
+}
+
+@repr_c
+struct BunkerSaveData {
+    magic: uint,
+    bunker: BunkerHubState,
+    inventory: [int; 8],
+}
+
+@sealed_sig
+pub fn patch_save(save: inout BunkerSaveData, creditos: int) {
+    save.magic = 0x5A4F4E45;
+    save.bunker.black_market_credits = creditos;
+    save.bunker.status_note.clear();
+    save.bunker.status_note.push_str("SYNC:");
+    save.bunker.status_note.push_i32(creditos);
+}
+"#;
+
+        let (ast_opt, report) = compile_and_check(source, "test_50_repr_c_abi.rts");
+        assert_eq!(
+            report.status, "ok",
+            "@repr_c aninhado com str64 deveria validar sem erros: {:?}",
+            report.diagnostics
+        );
+        let module = ast_opt.unwrap();
+
+        let c99 = codegen_native::NativeCodegen::emit_c99(&module);
+        assert!(c99.contains("BunkerHubState_t"));
+        assert!(c99.contains("BunkerSaveData_t"));
+        assert!(c99.contains("rts_str64_t status_note;"));
+
+        let llvm = codegen_llvm::LlvmIrCodegen::emit_llvm_ir(&module);
+        assert!(llvm.contains("%BunkerHubState_t = type"));
+        assert!(llvm.contains("%BunkerSaveData_t = type"));
+        assert!(llvm.contains("%rts_str64_t"));
+    }
+
+    #[test]
+    fn test_51_repr_c_rejects_non_pod_and_cap_fields_rts_e0602() {
+        let source = r#"
+module engine.bad_repr_c;
+
+struct UnsafeHolder {
+    text_ptr: str,
+}
+
+@repr_c
+struct BadSaveWithPtr {
+    raw_msg: str,
+    nested: UnsafeHolder,
+}
+
+@repr_c
+struct BadSaveWithHandle {
+    owner: Handle<UnsafeHolder>,
+}
+"#;
+
+        let (_ast_opt, report) = compile_and_check(source, "test_51_bad_repr_c.rts");
+        assert_eq!(report.status, "error");
+        let e0602_count = report
+            .diagnostics
+            .iter()
+            .filter(|d| {
+                d.error_code == "RTS-E0602"
+                    && d.category == DiagnosticCategory::GpuLayoutAlignmentViolation
+            })
+            .count();
+        assert!(
+            e0602_count >= 3,
+            "Campos str, struct nao-@repr_c e Handle dentro de @repr_c devem disparar RTS-E0602, obtido: {:?}",
+            report.diagnostics
+        );
+    }
+
+    #[test]
+    fn test_52_immutable_fixed_string_mutation_blocked_rts_e0405() {
+        let source = r#"
+module engine.immutable_fixed_str;
+
+@sealed_sig
+pub fn try_mutate() {
+    let banner: str64 = str64::from("SEALED");
+    banner.push_str("_EDIT");
+    banner.clear();
+}
+"#;
+
+        let (_ast_opt, report) = compile_and_check(source, "test_52_immutable_str.rts");
+        assert_eq!(report.status, "error");
+        let e0405_count = report
+            .diagnostics
+            .iter()
+            .filter(|d| {
+                d.error_code == "RTS-E0405"
+                    && d.category == DiagnosticCategory::AliasingViolation
+            })
+            .count();
+        assert!(
+            e0405_count >= 2,
+            "Mutacao em str64 sem 'let mut' deve disparar RTS-E0405, obtido: {:?}",
+            report.diagnostics
+        );
+    }
+
+    #[test]
+    fn test_53_fixed_string_inout_param_and_accessors() {
+        let source = r#"
+module engine.fixed_str_inout;
+
+@sealed_sig
+pub fn append_badge(buf: inout str64, sector: uint) -> usize {
+    buf.push_str("-SEC");
+    buf.push_u32(sector);
+    return buf.len();
+}
+
+@sealed_sig
+pub fn test_caller() -> usize {
+    let mut tag: str64 = str64::from("ZONE");
+    let used: usize = append_badge(inout tag, 42);
+    return used + tag.capacity();
+}
+"#;
+
+        let (ast_opt, report) = compile_and_check(source, "test_53_fixed_str_inout.rts");
+        assert_eq!(
+            report.status, "ok",
+            "inout str64 deveria compilar sem erros: {:?}",
+            report.diagnostics
+        );
+        let module = ast_opt.unwrap();
+        let c99 = codegen_native::NativeCodegen::emit_c99(&module);
+        assert!(c99.contains("rts_str64_t* RTS_RESTRICT buf"));
+        let llvm = codegen_llvm::LlvmIrCodegen::emit_llvm_ir(&module);
+        assert!(llvm.contains("ptr noalias noundef %arg_buf"));
+    }
+
+    #[test]
+    fn test_54_gbnf_grammar_includes_fase3_repr_c_and_fixed_strings() {
+        let gbnf = gbnf_exporter::export_rustts_gbnf();
+        assert!(gbnf.contains("@repr_c"));
+        assert!(gbnf.contains("\"str64\""));
+        assert!(gbnf.contains("\"str128\""));
+        assert!(gbnf.contains("\"str256\""));
+    }
+
+    #[test]
+    fn test_55_hal_window_and_input_capabilities_codegen() {
+        let source = r#"
+module test.hal_window;
+
+@sealed_sig
+pub fn render_step(
+    win: cap WindowHost,
+    inp: cap InputDevice,
+    clk: cap MonotonicClock,
+    fb: cap MutSlice<uint>
+) -> bool {
+    if !win.poll_events() {
+        return false;
+    }
+    inp.poll();
+    fb.fill(0xFF050505);
+    win.present_rgba(fb);
+    let mut hud: str64 = str64::from("ZONE OK");
+    win.draw_text(16, 16, 0xFFFFFFFF, hud.as_str());
+    let _pad: bool = inp.gamepad_connected();
+    clk.tick_frame_fps(60);
+    let _dt: float = clk.last_frame_ms();
+    return win.width() > 0;
+}
+
+pub fn main(arena: cap StaticArena) -> int {
+    let win = WindowHost::new();
+    let inp = InputDevice::new();
+    let clk = MonotonicClock::new();
+    let fb: cap MutSlice<uint> = arena.alloc_slice(6400);
+    if win.open_headless(80, 80, 3) {
+        let _ok = render_step(win, inp, clk, fb);
+        win.close();
+    }
+    return 0;
+}
+"#;
+
+        let (ast_opt, report) = compile_and_check(source, "test_55_hal_window.rts");
+        assert_eq!(
+            report.status, "ok",
+            "HAL window/input deveria compilar sem erros: {:?}",
+            report.diagnostics
+        );
+        let checked = ast_opt.unwrap();
+        let c99 = codegen_native::NativeCodegen::emit_c99(&checked);
+        assert!(c99.contains("rts_window_open_headless"));
+        assert!(c99.contains("rts_window_present_rgba"));
+        assert!(c99.contains("rts_input_poll"));
+        assert!(c99.contains("rts_clock_tick_frame_fps"));
+
+        let llvm = codegen_llvm::LlvmIrCodegen::emit_llvm_ir(&checked);
+        assert!(llvm.contains("define internal i1 @__rts_window_open_headless"));
+        assert!(llvm.contains("define internal void @__rts_window_present_rgba"));
+        assert!(llvm.contains("define internal void @__rts_input_poll"));
+        assert!(llvm.contains("define internal float @__rts_clock_tick_frame_fps"));
+    }
+
+    #[test]
+    fn test_56_hal_filesystem_and_audio_repr_c_roundtrip() {
+        let source = r#"
+module test.hal_fs_audio;
+
+@repr_c
+struct BunkerSave {
+    magic: uint,
+    hp: int,
+    rad: float,
+}
+
+@sealed_sig
+pub fn save_and_beep(fs: cap FileSystem, audio: cap AudioDevice, save_data: BunkerSave) -> bool {
+    let _dir = fs.create_dir("scratch_test");
+    let _txt = fs.write_text("scratch_test/status.txt", "KRASTOV");
+    if !fs.write_struct("scratch_test/save.bin", save_data) {
+        return false;
+    }
+    let mut loaded: BunkerSave = BunkerSave { magic: 0, hp: 0, rad: 0.0 };
+    let ok = fs.read_struct("scratch_test/save.bin", loaded);
+    let _wav = audio.write_synth_wav("scratch_test/geiger.wav", 22050, 440, 1);
+    return ok && (loaded.magic == save_data.magic);
+}
+
+pub fn main() -> int {
+    let fs = FileSystem::new();
+    let audio = AudioDevice::new();
+    let data = BunkerSave { magic: 0x4B524153, hp: 100, rad: 0.25 };
+    let _ok = save_and_beep(fs, audio, data);
+    return 0;
+}
+"#;
+
+        let (ast_opt, report) = compile_and_check(source, "test_56_hal_fs_audio.rts");
+        assert_eq!(
+            report.status, "ok",
+            "HAL filesystem/audio deveria compilar sem erros: {:?}",
+            report.diagnostics
+        );
+        let checked = ast_opt.unwrap();
+        let c99 = codegen_native::NativeCodegen::emit_c99(&checked);
+        assert!(c99.contains("rts_fs_write_bytes"));
+        assert!(c99.contains("rts_fs_read_bytes"));
+        assert!(c99.contains("rts_audio_write_synth_wav"));
+
+        let llvm = codegen_llvm::LlvmIrCodegen::emit_llvm_ir(&checked);
+        assert!(llvm.contains("define internal i1 @__rts_fs_write_bytes"));
+        assert!(llvm.contains("define internal i1 @__rts_fs_read_bytes"));
+        assert!(llvm.contains("define internal i1 @__rts_audio_write_synth_wav"));
+    }
+
+    #[test]
+    fn test_57_hal_filesystem_rejects_non_repr_c_and_immutable_target() {
+        let source_non_repr_c = r#"
+module test.hal_fs_bad_struct;
+
+struct UnsafeSave {
+    hp: int,
+}
+
+@sealed_sig
+pub fn try_write(fs: cap FileSystem, s: UnsafeSave) -> bool {
+    return fs.write_struct("bad.bin", s);
+}
+"#;
+        let (_ast1, report1) = compile_and_check(source_non_repr_c, "test_57a.rts");
+        assert_eq!(report1.status, "error");
+        assert!(
+            report1.diagnostics.iter().any(|d| {
+                d.error_code == "RTS-E0602"
+                    && d.category == DiagnosticCategory::GpuLayoutAlignmentViolation
+            }),
+            "Esperado RTS-E0602 GpuLayoutAlignmentViolation para struct sem @repr_c, obtido: {:?}",
+            report1.diagnostics
+        );
+
+        let source_immutable_read = r#"
+module test.hal_fs_immut_read;
+
+@repr_c
+struct GoodSave {
+    hp: int,
+}
+
+@sealed_sig
+pub fn try_read(fs: cap FileSystem) -> bool {
+    let target = GoodSave { hp: 0 };
+    return fs.read_struct("good.bin", target);
+}
+"#;
+        let (_ast2, report2) = compile_and_check(source_immutable_read, "test_57b.rts");
+        assert_eq!(report2.status, "error");
+        assert!(
+            report2.diagnostics.iter().any(|d| {
+                d.error_code == "RTS-E0405"
+                    && d.category == DiagnosticCategory::AliasingViolation
+            }),
+            "Esperado RTS-E0405 AliasingViolation para alvo imutavel em read_struct, obtido: {:?}",
+            report2.diagnostics
+        );
+    }
+
+    #[test]
+    fn test_58_hal_capability_forgery_outside_main_blocked() {
+        let source = r#"
+module test.hal_forgery;
+
+@sealed_sig
+pub fn sneak_fs() -> bool {
+    let fs = FileSystem::new();
+    return fs.write_text("pwned.txt", "oops");
+}
+"#;
+        let (_ast, report) = compile_and_check(source, "test_58_hal_forgery.rts");
+        assert_eq!(report.status, "error");
+        assert!(
+            report.diagnostics.iter().any(|d| {
+                d.error_code == "RTS-E0404"
+                    && d.category == DiagnosticCategory::CapabilityForgeryAttempt
+            }),
+            "Esperado RTS-E0404 CapabilityForgeryAttempt fora de main, obtido: {:?}",
+            report.diagnostics
+        );
+    }
+
+    #[test]
+    fn test_59_hal_capability_mismatch_and_undeclared_blocked() {
+        let source_mismatch = r#"
+module test.hal_mismatch;
+
+@sealed_sig
+pub fn needs_fs(fs: cap FileSystem) -> bool {
+    return fs.write_text("ok.txt", "ok");
+}
+
+pub fn main() -> int {
+    let win = WindowHost::new();
+    let _bad = needs_fs(win);
+    return 0;
+}
+"#;
+        let (_ast, report) = compile_and_check(source_mismatch, "test_59_hal_mismatch.rts");
+        assert_eq!(report.status, "error");
+        assert!(
+            report.diagnostics.iter().any(|d| {
+                d.error_code == "RTS-E0402"
+                    && d.category == DiagnosticCategory::CapabilityViolation
+            }),
+            "Esperado RTS-E0402 CapabilityViolation ao passar WindowHost para cap FileSystem, obtido: {:?}",
+            report.diagnostics
+        );
+    }
+
+    #[test]
+    fn test_60_gbnf_grammar_includes_fase4_hal_domains() {
+        let gbnf = gbnf_exporter::export_rustts_gbnf();
+        for domain in [
+            "\"WindowHost\"",
+            "\"InputDevice\"",
+            "\"FileSystem\"",
+            "\"AudioDevice\"",
+            "\"MonotonicClock\"",
+        ] {
+            assert!(
+                gbnf.contains(domain),
+                "Gramatica GBNF deveria conter o dominio HAL {}",
+                domain
+            );
+        }
+    }
+
+    #[test]
+    fn test_61_window_host_auto_smoke_test_detection_dual_codegen() {
+        let source = r#"
+module engine.smoke_guard;
+
+@sealed_sig
+pub fn iniciar_motor_seguro(
+    win: cap WindowHost,
+    audio: cap AudioDevice,
+    clk: cap MonotonicClock
+) -> int {
+    if !win.open_fullscreen("KRASTOV: Zone Protocol", 1920, 1080) {
+        return 1;
+    }
+    if !win.is_smoke_test() {
+        audio.play_wav_async("assets/audio/extraction_alarm.wav");
+    }
+    let mut frames: int = 0;
+    while win.poll_events() {
+        let _dt: float = clk.tick_frame_fps(60);
+        frames += 1;
+    }
+    win.close();
+    return frames;
+}
+
+pub fn main() -> int {
+    let win = WindowHost::new();
+    let audio = AudioDevice::new();
+    let clk = MonotonicClock::new();
+    return iniciar_motor_seguro(win, audio, clk);
+}
+"#;
+
+        let (ast_opt, report) = compile_and_check(source, "test_61_smoke_guard.rts");
+        assert_eq!(
+            report.status, "ok",
+            "win.is_smoke_test() deve compilar sem erro: {:?}",
+            report.diagnostics
+        );
+        let checked = ast_opt.unwrap();
+
+        let c99 = codegen_native::NativeCodegen::emit_c99(&checked);
+        assert!(c99.contains("rts_window_is_smoke_test"));
+        assert!(c99.contains("--smoke-test"));
+
+        let llvm = codegen_llvm::LlvmIrCodegen::emit_llvm_ir(&checked);
+        assert!(llvm.contains("@__rts_window_is_smoke_test"));
+        assert!(llvm.contains("--smoke-test"));
     }
 }

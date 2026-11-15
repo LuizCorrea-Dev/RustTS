@@ -70,6 +70,10 @@ impl Parser {
             Ok(Item::Struct(self.parse_struct(attributes)?))
         } else if self.check(&TokenKind::KwEnum) {
             Ok(Item::Enum(self.parse_enum()?))
+        } else if self.check(&TokenKind::KwConst)
+            || (self.check(&TokenKind::KwPub) && self.peek_next_is(&TokenKind::KwConst))
+        {
+            Ok(Item::Const(self.parse_const()?))
         } else if self.check(&TokenKind::KwExtern)
             || (self.check(&TokenKind::KwPub) && self.peek_next_is_extern())
         {
@@ -79,7 +83,7 @@ impl Parser {
         } else {
             Err(ParseError {
                 message: format!(
-                    "Expected 'struct', 'enum', 'impl', 'extern', 'pub fn', or 'fn', found '{}'",
+                    "Expected 'const', 'struct', 'enum', 'impl', 'extern', 'pub fn', or 'fn', found '{}'",
                     self.peek_lexeme()
                 ),
                 span: self.current_span(),
@@ -87,11 +91,34 @@ impl Parser {
         }
     }
 
+    fn peek_next_is(&self, kind: &TokenKind) -> bool {
+        self.tokens
+            .get(self.pos + 1)
+            .map(|t| &t.kind == kind)
+            .unwrap_or(false)
+    }
+
     fn peek_next_is_extern(&self) -> bool {
-        matches!(
-            self.tokens.get(self.pos + 1).map(|t| &t.kind),
-            Some(TokenKind::KwExtern)
-        )
+        self.peek_next_is(&TokenKind::KwExtern)
+    }
+
+    fn parse_const(&mut self) -> Result<ConstDecl, ParseError> {
+        let start = self.current_span();
+        let is_pub = self.match_token(&TokenKind::KwPub);
+        self.expect(&TokenKind::KwConst)?;
+        let name = self.expect_ident()?;
+        self.expect(&TokenKind::Colon)?;
+        let ty = self.parse_type_expr()?;
+        self.expect(&TokenKind::Assign)?;
+        let value = self.parse_expr()?;
+        let end = self.expect(&TokenKind::Semicolon)?.span;
+        Ok(ConstDecl {
+            is_pub,
+            name,
+            ty,
+            value,
+            span: start.merge(end),
+        })
     }
 
     fn parse_extern_fn(&mut self, attributes: Vec<Attribute>) -> Result<ExternFnDecl, ParseError> {
@@ -111,24 +138,7 @@ impl Parser {
 
         let mut params = Vec::new();
         while !self.check(&TokenKind::RParen) && !self.is_at_end() {
-            let p_start = self.current_span();
-            let p_name = self.expect_ident()?;
-            self.expect(&TokenKind::Colon)?;
-            let is_cap = self.match_token(&TokenKind::KwCap);
-            let (ty, capability) = if is_cap {
-                let cap = self.parse_capability_spec()?;
-                (TypeExpr::Capability(cap.clone()), Some(cap))
-            } else {
-                (self.parse_type_expr()?, None)
-            };
-            let p_end = self.previous_span();
-            params.push(FnParam {
-                name: p_name,
-                is_cap,
-                ty,
-                capability,
-                span: p_start.merge(p_end),
-            });
+            params.push(self.parse_fn_param()?);
             let _ = self.match_token(&TokenKind::Comma);
         }
         self.expect(&TokenKind::RParen)?;
@@ -188,6 +198,10 @@ impl Parser {
                 Some(TokenKind::AttrShaderShared) => {
                     self.advance();
                     attrs.push(Attribute::ShaderShared);
+                }
+                Some(TokenKind::AttrReprC) => {
+                    self.advance();
+                    attrs.push(Attribute::ReprC);
                 }
                 Some(TokenKind::AttrSealedSig) => {
                     self.advance();
@@ -350,24 +364,7 @@ impl Parser {
 
         let mut params = Vec::new();
         while !self.check(&TokenKind::RParen) && !self.is_at_end() {
-            let p_start = self.current_span();
-            let p_name = self.expect_ident()?;
-            self.expect(&TokenKind::Colon)?;
-            let is_cap = self.match_token(&TokenKind::KwCap);
-            let (ty, capability) = if is_cap {
-                let cap = self.parse_capability_spec()?;
-                (TypeExpr::Capability(cap.clone()), Some(cap))
-            } else {
-                (self.parse_type_expr()?, None)
-            };
-            let p_end = self.previous_span();
-            params.push(FnParam {
-                name: p_name,
-                is_cap,
-                ty,
-                capability,
-                span: p_start.merge(p_end),
-            });
+            params.push(self.parse_fn_param()?);
             let _ = self.match_token(&TokenKind::Comma);
         }
         self.expect(&TokenKind::RParen)?;
@@ -392,6 +389,33 @@ impl Parser {
         })
     }
 
+    fn parse_fn_param(&mut self) -> Result<FnParam, ParseError> {
+        let p_start = self.current_span();
+        let p_name = self.expect_ident()?;
+        self.expect(&TokenKind::Colon)?;
+        let is_cap = self.match_token(&TokenKind::KwCap);
+        let is_inout = if !is_cap {
+            self.match_token(&TokenKind::KwInout)
+        } else {
+            false
+        };
+        let (ty, capability) = if is_cap {
+            let cap = self.parse_capability_spec()?;
+            (TypeExpr::Capability(cap.clone()), Some(cap))
+        } else {
+            (self.parse_type_expr()?, None)
+        };
+        let p_end = self.previous_span();
+        Ok(FnParam {
+            name: p_name,
+            is_cap,
+            is_inout,
+            ty,
+            capability,
+            span: p_start.merge(p_end),
+        })
+    }
+
     fn parse_capability_spec(&mut self) -> Result<CapabilitySpec, ParseError> {
         let domain_name = self.expect_ident()?;
         let generic_arg = if self.match_token(&TokenKind::LAngle) {
@@ -402,17 +426,52 @@ impl Parser {
                     CapGenericArg::HardwareAddress(v)
                 }
                 _ => {
-                    let ty_name = self.expect_ident()?;
-                    CapGenericArg::TypeName(ty_name)
+                    let ty = self.parse_type_expr()?;
+                    if let TypeExpr::Named { name, generics } = &ty {
+                        if generics.is_empty() {
+                            CapGenericArg::TypeName(name.clone())
+                        } else {
+                            CapGenericArg::ElementType(Box::new(ty))
+                        }
+                    } else {
+                        CapGenericArg::ElementType(Box::new(ty))
+                    }
                 }
             };
-            self.expect(&TokenKind::RAngle)?;
+            self.expect_closing_rangle()?;
             Some(arg)
         } else {
             None
         };
 
         Ok(CapabilitySpec::from_name_and_arg(&domain_name, generic_arg))
+    }
+
+    fn expect_closing_rangle(&mut self) -> Result<Span, ParseError> {
+        if self.match_token(&TokenKind::RAngle) {
+            return Ok(self.previous_span());
+        }
+        if let Some(tok) = self.tokens.get_mut(self.pos) {
+            if tok.kind == TokenKind::Shr {
+                let first_span = Span::new(
+                    tok.span.line_start,
+                    tok.span.col_start,
+                    tok.span.line_start,
+                    tok.span.col_start + 1,
+                    tok.span.byte_start,
+                    tok.span.byte_start + 1,
+                );
+                tok.kind = TokenKind::RAngle;
+                tok.lexeme = ">".to_string();
+                tok.span.col_start += 1;
+                tok.span.byte_start += 1;
+                return Ok(first_span);
+            }
+        }
+        Err(ParseError {
+            message: format!("Expected '>', found '{}'", self.peek_lexeme()),
+            span: self.current_span(),
+        })
     }
 
     fn parse_type_expr(&mut self) -> Result<TypeExpr, ParseError> {
@@ -464,6 +523,9 @@ impl Parser {
             TokenKind::TyFix32 => Ok(TypeExpr::Primitive(PrimitiveType::Fix32)),
             TokenKind::TyBool => Ok(TypeExpr::Primitive(PrimitiveType::Bool)),
             TokenKind::TyStr => Ok(TypeExpr::Primitive(PrimitiveType::Str)),
+            TokenKind::TyStr64 => Ok(TypeExpr::Primitive(PrimitiveType::Str64)),
+            TokenKind::TyStr128 => Ok(TypeExpr::Primitive(PrimitiveType::Str128)),
+            TokenKind::TyStr256 => Ok(TypeExpr::Primitive(PrimitiveType::Str256)),
             TokenKind::TyVec2 => Ok(TypeExpr::Math(MathType::Vec2)),
             TokenKind::TyVec3 => Ok(TypeExpr::Math(MathType::Vec3)),
             TokenKind::TyVec4 => Ok(TypeExpr::Math(MathType::Vec4)),
@@ -473,7 +535,7 @@ impl Parser {
             TokenKind::TyOption => {
                 self.expect(&TokenKind::LAngle)?;
                 let inner = self.parse_type_expr()?;
-                self.expect(&TokenKind::RAngle)?;
+                self.expect_closing_rangle()?;
                 Ok(TypeExpr::Option(Box::new(inner)))
             }
             TokenKind::TyResult => {
@@ -481,24 +543,27 @@ impl Parser {
                 let ok_ty = self.parse_type_expr()?;
                 self.expect(&TokenKind::Comma)?;
                 let err_ty = self.parse_type_expr()?;
-                self.expect(&TokenKind::RAngle)?;
+                self.expect_closing_rangle()?;
                 Ok(TypeExpr::Result(Box::new(ok_ty), Box::new(err_ty)))
             }
             TokenKind::TyHandle => {
                 self.expect(&TokenKind::LAngle)?;
                 let inner = self.parse_type_expr()?;
-                self.expect(&TokenKind::RAngle)?;
+                self.expect_closing_rangle()?;
                 Ok(TypeExpr::Handle(Box::new(inner)))
             }
             TokenKind::Ident(name) => {
                 let name_cloned = name.clone();
                 let mut generics = Vec::new();
                 if self.match_token(&TokenKind::LAngle) {
-                    while !self.check(&TokenKind::RAngle) && !self.is_at_end() {
+                    while !self.check(&TokenKind::RAngle)
+                        && !self.check(&TokenKind::Shr)
+                        && !self.is_at_end()
+                    {
                         generics.push(self.parse_type_expr()?);
                         let _ = self.match_token(&TokenKind::Comma);
                     }
-                    self.expect(&TokenKind::RAngle)?;
+                    self.expect_closing_rangle()?;
                 }
                 Ok(TypeExpr::Named {
                     name: name_cloned,
@@ -660,6 +725,35 @@ impl Parser {
                 span: start.merge(end),
             });
         }
+        if let Some(compound_op) = match self.peek_kind() {
+            Some(TokenKind::PlusEq) => Some(BinaryOp::Add),
+            Some(TokenKind::MinusEq) => Some(BinaryOp::Sub),
+            Some(TokenKind::StarEq) => Some(BinaryOp::Mul),
+            Some(TokenKind::SlashEq) => Some(BinaryOp::Div),
+            Some(TokenKind::PercentEq) => Some(BinaryOp::Rem),
+            Some(TokenKind::AmpEq) => Some(BinaryOp::BitAnd),
+            Some(TokenKind::PipeEq) => Some(BinaryOp::BitOr),
+            Some(TokenKind::CaretEq) => Some(BinaryOp::BitXor),
+            Some(TokenKind::ShlEq) => Some(BinaryOp::Shl),
+            Some(TokenKind::ShrEq) => Some(BinaryOp::Shr),
+            _ => None,
+        } {
+            self.advance();
+            let rhs = self.parse_expr()?;
+            let end = self.expect(&TokenKind::Semicolon)?.span;
+            let full_span = start.merge(end);
+            let value = Expr::Binary {
+                left: Box::new(expr.clone()),
+                op: compound_op,
+                right: Box::new(rhs),
+                span: full_span,
+            };
+            return Ok(Stmt::Assign {
+                target: expr,
+                value,
+                span: full_span,
+            });
+        }
 
         let end = self.expect(&TokenKind::Semicolon)?.span;
         Ok(Stmt::ExprStmt {
@@ -772,7 +866,7 @@ impl Parser {
     }
 
     fn parse_comparison(&mut self) -> Result<Expr, ParseError> {
-        let mut left = self.parse_additive()?;
+        let mut left = self.parse_bit_or()?;
         while let Some(op) = match self.peek_kind() {
             Some(TokenKind::EqEq) => Some(BinaryOp::Eq),
             Some(TokenKind::NotEq) => Some(BinaryOp::NotEq),
@@ -780,6 +874,71 @@ impl Parser {
             Some(TokenKind::LtEq) => Some(BinaryOp::LtEq),
             Some(TokenKind::RAngle) => Some(BinaryOp::Gt),
             Some(TokenKind::GtEq) => Some(BinaryOp::GtEq),
+            _ => None,
+        } {
+            self.advance();
+            let right = self.parse_bit_or()?;
+            let span = left.span().merge(right.span());
+            left = Expr::Binary {
+                left: Box::new(left),
+                op,
+                right: Box::new(right),
+                span,
+            };
+        }
+        Ok(left)
+    }
+
+    fn parse_bit_or(&mut self) -> Result<Expr, ParseError> {
+        let mut left = self.parse_bit_xor()?;
+        while self.match_token(&TokenKind::Pipe) {
+            let right = self.parse_bit_xor()?;
+            let span = left.span().merge(right.span());
+            left = Expr::Binary {
+                left: Box::new(left),
+                op: BinaryOp::BitOr,
+                right: Box::new(right),
+                span,
+            };
+        }
+        Ok(left)
+    }
+
+    fn parse_bit_xor(&mut self) -> Result<Expr, ParseError> {
+        let mut left = self.parse_bit_and()?;
+        while self.match_token(&TokenKind::Caret) {
+            let right = self.parse_bit_and()?;
+            let span = left.span().merge(right.span());
+            left = Expr::Binary {
+                left: Box::new(left),
+                op: BinaryOp::BitXor,
+                right: Box::new(right),
+                span,
+            };
+        }
+        Ok(left)
+    }
+
+    fn parse_bit_and(&mut self) -> Result<Expr, ParseError> {
+        let mut left = self.parse_shift()?;
+        while self.match_token(&TokenKind::Amp) {
+            let right = self.parse_shift()?;
+            let span = left.span().merge(right.span());
+            left = Expr::Binary {
+                left: Box::new(left),
+                op: BinaryOp::BitAnd,
+                right: Box::new(right),
+                span,
+            };
+        }
+        Ok(left)
+    }
+
+    fn parse_shift(&mut self) -> Result<Expr, ParseError> {
+        let mut left = self.parse_additive()?;
+        while let Some(op) = match self.peek_kind() {
+            Some(TokenKind::Shl) => Some(BinaryOp::Shl),
+            Some(TokenKind::Shr) => Some(BinaryOp::Shr),
             _ => None,
         } {
             self.advance();
@@ -820,6 +979,7 @@ impl Parser {
         while let Some(op) = match self.peek_kind() {
             Some(TokenKind::Star) => Some(BinaryOp::Mul),
             Some(TokenKind::Slash) => Some(BinaryOp::Div),
+            Some(TokenKind::Percent) => Some(BinaryOp::Rem),
             _ => None,
         } {
             self.advance();
@@ -851,6 +1011,15 @@ impl Parser {
             let span = start.merge(operand.span());
             return Ok(Expr::Unary {
                 op: UnaryOp::Not,
+                expr: Box::new(operand),
+                span,
+            });
+        }
+        if self.match_token(&TokenKind::Tilde) {
+            let operand = self.parse_unary()?;
+            let span = start.merge(operand.span());
+            return Ok(Expr::Unary {
+                op: UnaryOp::BitNot,
                 expr: Box::new(operand),
                 span,
             });
@@ -915,6 +1084,30 @@ impl Parser {
 
     fn parse_primary(&mut self) -> Result<Expr, ParseError> {
         let start = self.current_span();
+
+        // Expressão condicional inline determinística: `if cond { a } else { b }`
+        if self.match_token(&TokenKind::KwIf) {
+            let cond = self.parse_expr()?;
+            self.expect(&TokenKind::LBrace)?;
+            let then_branch = self.parse_expr()?;
+            self.expect(&TokenKind::RBrace)?;
+            self.expect(&TokenKind::KwElse)?;
+            let else_branch = if self.check(&TokenKind::KwIf) {
+                self.parse_primary()?
+            } else {
+                self.expect(&TokenKind::LBrace)?;
+                let eb = self.parse_expr()?;
+                self.expect(&TokenKind::RBrace)?;
+                eb
+            };
+            let end = self.previous_span();
+            return Ok(Expr::IfExpr {
+                cond: Box::new(cond),
+                then_branch: Box::new(then_branch),
+                else_branch: Box::new(else_branch),
+                span: start.merge(end),
+            });
+        }
 
         // Closure curta `|_| ...` para `.map_err(|_| ...)`
         if self.match_token(&TokenKind::Pipe) {
@@ -1002,6 +1195,24 @@ impl Parser {
                     span: tok.span.merge(end),
                 })
             }
+            TokenKind::TyStr64 | TokenKind::TyStr128 | TokenKind::TyStr256 => {
+                let ns = match tok.kind {
+                    TokenKind::TyStr64 => "str64",
+                    TokenKind::TyStr128 => "str128",
+                    _ => "str256",
+                };
+                self.expect(&TokenKind::ColonColon)?;
+                let func = self.expect_ident()?;
+                self.expect(&TokenKind::LParen)?;
+                let args = self.parse_arg_list()?;
+                let end = self.expect(&TokenKind::RParen)?.span;
+                Ok(Expr::StaticCall {
+                    namespace: ns.to_string(),
+                    func,
+                    args,
+                    span: tok.span.merge(end),
+                })
+            }
             TokenKind::Ident(ident_str) => {
                 let name = ident_str.clone();
                 // Chamada ou Enum `Namespace::member`
@@ -1072,6 +1283,7 @@ impl Parser {
     fn parse_arg_list(&mut self) -> Result<Vec<Expr>, ParseError> {
         let mut args = Vec::new();
         while !self.check(&TokenKind::RParen) && !self.is_at_end() {
+            let _explicit_inout = self.match_token(&TokenKind::KwInout);
             args.push(self.parse_expr()?);
             let _ = self.match_token(&TokenKind::Comma);
         }

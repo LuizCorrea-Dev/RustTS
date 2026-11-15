@@ -16,10 +16,20 @@ pub struct Module {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Item {
+    Const(ConstDecl),
     Struct(StructDecl),
     Enum(EnumDecl),
     Function(FnDecl),
     ExternFn(ExternFnDecl),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConstDecl {
+    pub is_pub: bool,
+    pub name: String,
+    pub ty: TypeExpr,
+    pub value: Expr,
+    pub span: Span,
 }
 
 /// Atributos declarativos fixos do compilador (proíbe macros procedurais arbitrárias)
@@ -41,6 +51,8 @@ pub enum Attribute {
     GpuKernel,
     /// `@shader_shared`: Struct com alinhamento determinístico CPU/GPU
     ShaderShared,
+    /// `@repr_c`: Struct com layout binário ABI C estrito (sem ponteiros/caps)
+    ReprC,
     /// `@route("GET", "/api/v1/users/:id")`: Endpoint de servidor com `RequestArena`
     Route { method: String, path: String },
     /// `@sealed_sig`: Contrato de assinatura imutável (padrão de segurança: IA proibida de escalar privilégios)
@@ -55,6 +67,14 @@ pub struct StructDecl {
     pub name: String,
     pub fields: Vec<StructField>,
     pub span: Span,
+}
+
+impl StructDecl {
+    pub fn is_repr_c(&self) -> bool {
+        self.attributes
+            .iter()
+            .any(|a| matches!(a, Attribute::ReprC))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -134,11 +154,12 @@ impl FnDecl {
     }
 }
 
-/// Parâmetro de função com suporte explícito ao modificador de capacidade `cap`
+/// Parâmetro de função com suporte explícito aos modificadores `cap` e `inout`
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FnParam {
     pub name: String,
     pub is_cap: bool,
+    pub is_inout: bool,
     pub ty: TypeExpr,
     pub capability: Option<CapabilitySpec>,
     pub span: Span,
@@ -152,6 +173,8 @@ impl fmt::Display for FnParam {
             } else {
                 write!(f, "{}: cap {}", self.name, self.ty)
             }
+        } else if self.is_inout {
+            write!(f, "{}: inout {}", self.name, self.ty)
         } else {
             write!(f, "{}: {}", self.name, self.ty)
         }
@@ -187,6 +210,10 @@ pub enum CapabilityKind {
     ReadColumn,
     /// Acesso de escrita exclusiva a coluna ECS SoA (`MutColumn<T>`)
     MutColumn,
+    /// Acesso de leitura contígua zero-copy a buffer (`ReadSlice<T>`)
+    ReadSlice,
+    /// Acesso de escrita contígua exclusiva zero-copy a buffer (`MutSlice<T>`)
+    MutSlice,
     /// Acesso de leitura a um objeto/recurso (`Read<T>`)
     ReadResource,
     /// Acesso de escrita a um objeto/recurso (`Mut<T>`)
@@ -203,6 +230,14 @@ pub enum CapabilityKind {
     SqlWrite,
     /// Fila de GPU / Áudio (`GpuQueue`, `WebGpuDevice`, `AudioBuffer`)
     DeviceQueue,
+    /// Janela nativa / Framebuffer OS (`WindowHost`)
+    WindowHost,
+    /// Dispositivos de entrada teclado/mouse/gamepad (`InputDevice`)
+    InputDevice,
+    /// Sistema de arquivos e persistência determinística (`FileSystem`)
+    FileSystem,
+    /// Síntese e reprodução de áudio nativo (`AudioDevice`)
+    AudioDevice,
     /// Capacidade customizada definida pelo domínio
     Custom,
 }
@@ -235,11 +270,31 @@ impl ArenaScope {
 pub enum CapGenericArg {
     /// Argumento de tipo (ex: `Transform` em `MutColumn<Transform>`)
     TypeName(String),
+    /// Tipo genérico completo (ex: `uint`, `byte`, `[u8; 4]` em `MutSlice<uint>` / `ReadSlice<byte>`)
+    ElementType(Box<TypeExpr>),
     /// Endereço de hardware ou pino constante (ex: `0x48` em `I2CBus<0x48>`, `4` em `PWMPin<4>`)
     HardwareAddress(u64),
 }
 
 impl CapabilitySpec {
+    pub fn slice_element_type(&self) -> Option<TypeExpr> {
+        match &self.generic_arg {
+            Some(CapGenericArg::ElementType(te)) => Some((**te).clone()),
+            Some(CapGenericArg::TypeName(name)) => Some(TypeExpr::Named {
+                name: name.clone(),
+                generics: vec![],
+            }),
+            _ => None,
+        }
+    }
+
+    pub fn is_slice(&self) -> bool {
+        matches!(
+            self.kind,
+            CapabilityKind::ReadSlice | CapabilityKind::MutSlice
+        )
+    }
+
     pub fn from_name_and_arg(name: &str, arg: Option<CapGenericArg>) -> Self {
         let kind = match name {
             "I2CBus" | "I2CRead" | "I2CPort" => CapabilityKind::I2CBus,
@@ -248,6 +303,8 @@ impl CapabilitySpec {
             "MonotonicClock" | "TimeStep" => CapabilityKind::Clock,
             "ReadColumn" => CapabilityKind::ReadColumn,
             "MutColumn" => CapabilityKind::MutColumn,
+            "ReadSlice" => CapabilityKind::ReadSlice,
+            "MutSlice" => CapabilityKind::MutSlice,
             "Read" => CapabilityKind::ReadResource,
             "Mut" => CapabilityKind::MutResource,
             "StaticArena" => CapabilityKind::ScopedArena(ArenaScope::Static),
@@ -266,6 +323,10 @@ impl CapabilitySpec {
             "GpuQueue" | "WebGpuDevice" | "CanvasContext" | "AudioBuffer" => {
                 CapabilityKind::DeviceQueue
             }
+            "WindowHost" => CapabilityKind::WindowHost,
+            "InputDevice" => CapabilityKind::InputDevice,
+            "FileSystem" => CapabilityKind::FileSystem,
+            "AudioDevice" => CapabilityKind::AudioDevice,
             _ => CapabilityKind::Custom,
         };
         Self {
@@ -280,6 +341,7 @@ impl fmt::Display for CapabilitySpec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.generic_arg {
             Some(CapGenericArg::TypeName(t)) => write!(f, "{}<{}>", self.domain_name, t),
+            Some(CapGenericArg::ElementType(te)) => write!(f, "{}<{}>", self.domain_name, te),
             Some(CapGenericArg::HardwareAddress(addr)) => {
                 if self.domain_name.starts_with("I2C") {
                     write!(f, "{}<0x{:02X}>", self.domain_name, addr)
@@ -309,6 +371,20 @@ pub enum PrimitiveType {
     Fix32,
     Bool,
     Str,
+    Str64,
+    Str128,
+    Str256,
+}
+
+impl PrimitiveType {
+    pub fn fixed_str_capacity(&self) -> Option<u32> {
+        match self {
+            PrimitiveType::Str64 => Some(64),
+            PrimitiveType::Str128 => Some(128),
+            PrimitiveType::Str256 => Some(256),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -342,6 +418,19 @@ pub enum TypeExpr {
     },
 }
 
+impl TypeExpr {
+    pub fn is_slice_capability(&self) -> bool {
+        match self {
+            TypeExpr::Capability(cap) => cap.is_slice(),
+            TypeExpr::Option(inner) | TypeExpr::Array(inner, _) | TypeExpr::Handle(inner) => {
+                inner.is_slice_capability()
+            }
+            TypeExpr::Result(ok, err) => ok.is_slice_capability() || err.is_slice_capability(),
+            _ => false,
+        }
+    }
+}
+
 impl fmt::Display for TypeExpr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -361,6 +450,9 @@ impl fmt::Display for TypeExpr {
                     PrimitiveType::Fix32 => "fix32",
                     PrimitiveType::Bool => "bool",
                     PrimitiveType::Str => "str",
+                    PrimitiveType::Str64 => "str64",
+                    PrimitiveType::Str128 => "str128",
+                    PrimitiveType::Str256 => "str256",
                 };
                 write!(f, "{}", s)
             }
@@ -486,6 +578,7 @@ pub enum MatchPattern {
 pub enum UnaryOp {
     Neg,
     Not,
+    BitNot,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -494,6 +587,12 @@ pub enum BinaryOp {
     Sub,
     Mul,
     Div,
+    Rem,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
     Eq,
     NotEq,
     Lt,
@@ -585,6 +684,13 @@ pub enum Expr {
         elements: Vec<Expr>,
         span: Span,
     },
+    /// Expressão condicional inline determinística: `if cond { a } else { b }`
+    IfExpr {
+        cond: Box<Expr>,
+        then_branch: Box<Expr>,
+        else_branch: Box<Expr>,
+        span: Span,
+    },
 }
 
 impl Expr {
@@ -606,7 +712,8 @@ impl Expr {
             | Expr::Cast { span: s, .. }
             | Expr::TryOp { span: s, .. }
             | Expr::ErrorMapClosure { span: s, .. }
-            | Expr::ArrayLit { span: s, .. } => *s,
+            | Expr::ArrayLit { span: s, .. }
+            | Expr::IfExpr { span: s, .. } => *s,
         }
     }
 }

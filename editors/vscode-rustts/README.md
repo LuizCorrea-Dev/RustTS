@@ -1,6 +1,6 @@
-# Extensão Oficial RustTS (`.rts`) para VS Code e Antigravity IDE (`v2.0.0`)
+# Extensão Oficial RustTS (`.rts`) para VS Code e Antigravity IDE (`v2.1.0`)
 
-Pacote oficial de realce de sintaxe (TextMate), configuração de linguagem e snippets para a linguagem determinística **RustTS (`.rts`)** (`rtsc v2.0.0-rts`).
+Pacote oficial de realce de sintaxe (TextMate), ícones de arquivo (`.png`/`.ico`), configuração de linguagem e snippets para a linguagem determinística **RustTS (`.rts`)** (`rtsc v2.1.0-rts`).
 
 ## Recursos Inclusos
 - **Colorização Semântica Dedicada:** Destaque em alto contraste para o modificador `cap`, domínios de capacidades (`I2CBus`, `PWMPin`, `StdIO`, `FrameArena`, `ReadFrameArena`, `MutColumn`, `ReadColumn`, `MonotonicClock`, `TimeStep`), atributos de compilador (`@component`, `@system`, `@parallel_system`, `@sealed_sig`, `@open_sig`, `@unreal_actor`, `@gpu_kernel`, `@shader_shared`) e operador de propagação `?`.
@@ -19,7 +19,7 @@ Pacote oficial de realce de sintaxe (TextMate), configuração de linguagem e sn
 1. Abra o **VS Code** ou o **Antigravity IDE**.
 2. Pressione **`Ctrl + Shift + P`** (ou `Cmd + Shift + P` no macOS).
 3. Digite **`Extensions: Install from VSIX...`** e pressione **Enter**.
-4. Selecione o arquivo [`editors/rustts-lang-2.0.0.vsix`](../rustts-lang-2.0.0.vsix) deste repositório.
+4. Selecione o arquivo [`editors/rustts-lang-2.1.0.vsix`](../rustts-lang-2.1.0.vsix) deste repositório.
 5. Pressione **`Ctrl + Shift + P`** e execute **`Developer: Reload Window`**.
 
 ### Método B — Carregar Diretamente da Pasta (`Install Extension from Location`)
@@ -33,7 +33,7 @@ Pacote oficial de realce de sintaxe (TextMate), configuração de linguagem e sn
 ```powershell
 foreach ($base in @("$env:USERPROFILE\.antigravity\extensions", "$env:USERPROFILE\.vscode\extensions")) {
     if (Test-Path (Split-Path $base -Parent)) {
-        $dest = "$base\rootszera.rustts-lang-2.0.0"
+        $dest = "$base\rootszera.rustts-lang-2.1.0"
         Remove-Item $dest -Recurse -Force -ErrorAction SilentlyContinue
         New-Item -ItemType Directory -Force -Path $dest | Out-Null
         Copy-Item -Path "editors\vscode-rustts\*" -Destination $dest -Recurse -Force
@@ -43,9 +43,9 @@ foreach ($base in @("$env:USERPROFILE\.antigravity\extensions", "$env:USERPROFIL
 
 **Linux / macOS (Bash / Zsh):**
 ```bash
-mkdir -p ~/.vscode/extensions/rootszera.rustts-lang-2.0.0
-cp -r editors/vscode-rustts/* ~/.vscode/extensions/rootszera.rustts-lang-2.0.0/
+mkdir -p ~/.vscode/extensions/rootszera.rustts-lang-2.1.0
+cp -r editors/vscode-rustts/* ~/.vscode/extensions/rootszera.rustts-lang-2.1.0/
 
-mkdir -p ~/.antigravity/extensions/rootszera.rustts-lang-2.0.0
-cp -r editors/vscode-rustts/* ~/.antigravity/extensions/rootszera.rustts-lang-2.0.0/
+mkdir -p ~/.antigravity/extensions/rootszera.rustts-lang-2.1.0
+cp -r editors/vscode-rustts/* ~/.antigravity/extensions/rootszera.rustts-lang-2.1.0/
 ```

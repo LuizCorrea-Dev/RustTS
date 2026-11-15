@@ -94,7 +94,7 @@
         },
         {
           "name": "support.type.capability.rustts",
-          "match": "\\b(I2CBus|I2CRead|I2CPort|SPIBus|PWMPin|PWMWrite|GPIOPin|GPIOOut|GPIOIn|DMAChannel|Interrupt|MonotonicClock|TimeStep|StdIO|NetSocket|TcpSocket|UdpTick|HttpRoute|SqlRead|SqlWrite|AudioBus|AudioBuffer|GpuQueue|WebGpuDevice|CanvasContext|StaticArena|LevelArena|SessionArena|FrameArena|RequestArena|TaskArena|ReadFrameArena|ReadRequestArena|ReadTaskArena|AllocArena|ReadColumn|MutColumn|Read|Mut|ECSWorld|World)\\b"
+          "match": "\\b(WindowHost|InputDevice|FileSystem|AudioDevice|I2CBus|I2CRead|I2CPort|SPIBus|PWMPin|PWMWrite|GPIOPin|GPIOOut|GPIOIn|DMAChannel|Interrupt|MonotonicClock|TimeStep|StdIO|NetSocket|TcpSocket|UdpTick|HttpRoute|SqlRead|SqlWrite|AudioBus|AudioBuffer|GpuQueue|WebGpuDevice|CanvasContext|StaticArena|LevelArena|SessionArena|FrameArena|RequestArena|TaskArena|ReadFrameArena|ReadRequestArena|ReadTaskArena|AllocArena|ReadSlice|MutSlice|ReadColumn|MutColumn|Read|Mut|ECSWorld|World)\\b"
         }
       ]
     },
@@ -106,7 +106,7 @@
         },
         {
           "name": "keyword.declaration.rustts",
-          "match": "\\b(module|import|pub|fn|extern|struct|component|enum|impl|let|mut|arena)\\b"
+          "match": "\\b(module|import|pub|fn|extern|struct|component|enum|impl|let|mut|const|inout|arena)\\b"
         },
         {
           "name": "constant.language.rustts",
@@ -122,7 +122,7 @@
       "patterns": [
         {
           "name": "storage.type.primitive.rustts",
-          "match": "\\b(i8|i16|i32|i64|u8|u16|u32|u64|usize|f32|f64|fix32|bool|str|int8|int16|int32|int64|uint8|uint16|uint32|uint64|sbyte|short|int|long|byte|ushort|uint|ulong|size_t|uintptr|float32|float64|float|double|number|fixed32|boolean|string|vec2|vec3|vec4|quat|mat3|mat4|Vec2|Vec3|Vec4|Quat|Mat3|Mat4|SoA|Result|Option|Handle|Json)\\b"
+          "match": "\\b(i8|i16|i32|i64|u8|u16|u32|u64|usize|f32|f64|fix32|bool|str|str64|str128|str256|void|char|int8|int16|int32|int64|uint8|uint16|uint32|uint64|sbyte|short|int|long|byte|ushort|uint|ulong|size_t|uintptr|float32|float64|float|double|number|fixed32|boolean|string|vec2|vec3|vec4|quat|mat3|mat4|Vec2|Vec3|Vec4|Quat|Mat3|Mat4|SoA|Result|Option|Handle|Json)\\b"
         },
         {
           "name": "entity.name.type.rustts",
@@ -178,7 +178,7 @@
         },
         {
           "name": "keyword.operator.arithmetic.rustts",
-          "match": "\\+|-|\\*|/|="
+          "match": "(<<=|>>=|\\+=|-=|\\*=|/=|%=|&=|\\|=|\\^=|<<|>>|[+\\-*/%&|^~=])"
         }
       ]
     }

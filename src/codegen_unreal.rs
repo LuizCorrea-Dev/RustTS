@@ -365,6 +365,7 @@ impl UnrealCodegen {
                 let op_str = match op {
                     UnaryOp::Neg => "-",
                     UnaryOp::Not => "!",
+                    UnaryOp::BitNot => "~",
                 };
                 format!("({}{})", op_str, Self::lower_unreal_expr(inner))
             }
@@ -424,6 +425,12 @@ impl UnrealCodegen {
                     BinaryOp::Sub => "-",
                     BinaryOp::Mul => "*",
                     BinaryOp::Div => "/",
+                    BinaryOp::Rem => "%",
+                    BinaryOp::BitAnd => "&",
+                    BinaryOp::BitOr => "|",
+                    BinaryOp::BitXor => "^",
+                    BinaryOp::Shl => "<<",
+                    BinaryOp::Shr => ">>",
                     BinaryOp::Eq => "==",
                     BinaryOp::NotEq => "!=",
                     BinaryOp::Lt => "<",
@@ -478,6 +485,19 @@ impl UnrealCodegen {
             Expr::ArrayLit { elements, .. } => {
                 let elems: Vec<String> = elements.iter().map(Self::lower_unreal_expr).collect();
                 format!("{{ {} }}", elems.join(", "))
+            }
+            Expr::IfExpr {
+                cond,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                format!(
+                    "(({}) ? ({}) : ({}))",
+                    Self::lower_unreal_expr(cond),
+                    Self::lower_unreal_expr(then_branch),
+                    Self::lower_unreal_expr(else_branch)
+                )
             }
         }
     }
