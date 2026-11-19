@@ -4,7 +4,7 @@
 pub fn export_rustts_gbnf() -> &'static str {
     r#"# ==============================================================================
 # RustTS (.rts) Official Formal Grammar for Constrained LLM Decoding (GBNF)
-# Compiler: rtsc 2.0.0-rts | Specification: RustTS_guia.md (One Canonical Way)
+# Compiler: rtsc 2.2.0-rts | Specification: README.md / MANUAL_TIPOS_RUSTTS.md (One Canonical Way)
 # ==============================================================================
 
 root            ::= ws module-decl? (import-decl)* (item ws)*
@@ -21,6 +21,8 @@ impl-decl       ::= "impl" ws1 ident ws "{" ws (attribute-list fn-decl ws)* "}"
 attribute-list  ::= (attribute ws)*
 attribute       ::= "@component"
                   | "@gpu_kernel"
+                  | "@vertex_shader"
+                  | "@fragment_shader"
                   | "@shader_shared"
                   | "@repr_c"
                   | "@sealed_sig"

@@ -2,11 +2,11 @@
   <img src="./rustts_language_logo.png" alt="RustTS Logo" width="220">
 </p>
 
-# RustTS (`rtsc`) — Devlog de Evolução Arquitetural, Versões e Testes (`v0.1.0-rts` → `v2.0.0-rts`)
+# RustTS (`rtsc`) — Devlog de Evolução Arquitetural, Versões e Testes (`v0.1.0-rts` → `v2.2.0-rts`)
 
 Registro técnico cronológico da criação, auditorias de especificação, otimizações SIMD/memória, evolução semântica e validação em hardware real do compilador **RustTS (`rtsc`)**.
 
-- **Repositório Oficial:** [LuizCorrea-Dev/RustTS](https://github.com/LuizCorrea-Dev/RustTS) (`main`, tag `v2.0.0`)
+- **Repositório Oficial:** [LuizCorrea-Dev/RustTS](https://github.com/LuizCorrea-Dev/RustTS) (`main`, `v2.2.0-rts`)
 - **Autor:** Luiz Correa — Rootszera
 - **Toolchain Nativa Verificada:** `rustc 1.99.1` / `cargo 1.99.1` + `LLVM/Clang 22.1.3` (`-std=c11 -O3 -mavx2 -mfma -Wall -Wextra -Werror`)
 
@@ -38,6 +38,7 @@ Registro técnico cronológico da criação, auditorias de especificação, otim
 | **`v1.8.0-rts`** | Ciclo 2 (Fase 8: 70%): GPU Compute (`@gpu_kernel`) $\rightarrow$ SPIR-V 1.5 & WGSL | Novo módulo `src/codegen_gpu.rs` (`.wgsl`, `.spvasm`, `.spv` binário magic `0x07230203`) + verificador semântico GPU (`RTS-E0601`–`E0603`) | **`cargo test`: 30/30 PASS** (`test_v180_gpu_sema_*`, `test_v180_wgsl_*`, `test_v180_spirv_*`) |
 | **`v1.9.0-rts`** | Ciclo 2 (Fase 9: 90%): Sandbox WASI com *Fuel Metering* (`--target=wasi`/`wasm`) | Novo módulo `src/codegen_wasi.rs` (`.wat` e `.wasm` magic `\0asm` com lowering real da AST + `--fuel-limit`) + verificador `RTS-E0701` | **`cargo test`: 33/33 PASS** (`test_v190_wasi_sema_rts_e0701_*`, `test_v190_wasi_wat_*`, `test_v190_wasm_binary_*`) |
 | **`v2.0.0-rts`** | Ciclo 2 (Fase 10: 100%): Pipeline Heterogêneo Unificado & Auditoria `v2.0.0` | Showcase `examples/kanori_gpu_wasi_sim/`, lowering real da AST em `.wasm` (`emit_wasm_binary`), checagem de imutabilidade local `let` vs `let mut` (`RTS-E0405`) e extensão VS Code `2.0.0` | **`cargo test`: 36/36 PASS** (`test_v200_kanori_heterogeneous_*`, `test_v200_immutable_let_*`, `test_v200_compiler_version_*`) |
+| **`v2.2.0-rts`** | Motor Gráfico Nativo 2D/3D Vulkan + Ponte Linguagem→GPU | RHI Vulkan + `VramArena`, `Renderer3D`, `SpriteBatch2D` multi-textura, decodificador PNG/BMP/TGA + DMA Staging, loader `.OBJ`, áudio WAV (`engine.audio`), input completo + `rtsc_time_now_sec()`, `@vertex_shader`/`@fragment_shader` (`--target spirv-vert`/`spirv-frag`, `PushConstant Mat4`, `Sampler2D`) e demos `demo_2d.rts` / `demo_3d.rts` / `demo_shader.rts` | **`cargo test`: 73/73 PASS**; execução validada em GPU NVIDIA RTX 3050 Ti (C99 & `--llvm`) |
 
 ---
 

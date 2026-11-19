@@ -1,0 +1,126 @@
+module engine.physics.aabb;
+import core.math;
+import engine.math.vec3;
+
+// Física Discreta, Raycasting 2D/3D e Spatial Hashing
+
+@repr_c
+pub struct AABB3D {
+    pub min: vec3::Vec3,
+    pub max: vec3::Vec3,
+    pub layer_mask: u32,
+    pub entity_id: u32,
+}
+
+@repr_c
+pub struct CollisionManifold {
+    pub normal: vec3::Vec3,
+    pub penetration_depth: float,
+    pub hit_entity_a: u32,
+    pub hit_entity_b: u32,
+    pub colliding: bool,
+}
+
+@sealed_sig
+pub fn aabb_from_center_extents(
+    center: vec3::Vec3,
+    half_extents: vec3::Vec3,
+    layer_mask: u32,
+    entity_id: u32
+) -> AABB3D {
+    return AABB3D {
+        min: vec3::vec3_sub(center, half_extents),
+        max: vec3::vec3_add(center, half_extents),
+        layer_mask: layer_mask,
+        entity_id: entity_id,
+    };
+}
+
+@sealed_sig
+pub fn aabb_center(box: AABB3D) -> vec3::Vec3 {
+    return vec3::vec3_scale(vec3::vec3_add(box.min, box.max), 0.5);
+}
+
+@sealed_sig
+pub fn aabb_half_extents(box: AABB3D) -> vec3::Vec3 {
+    return vec3::vec3_scale(vec3::vec3_sub(box.max, box.min), 0.5);
+}
+
+@sealed_sig
+pub fn aabb_translate(box: AABB3D, delta: vec3::Vec3) -> AABB3D {
+    return AABB3D {
+        min: vec3::vec3_add(box.min, delta),
+        max: vec3::vec3_add(box.max, delta),
+        layer_mask: box.layer_mask,
+        entity_id: box.entity_id,
+    };
+}
+
+// Teste booleano rapido com filtragem agnostica por bitmask
+@sealed_sig
+pub fn aabb_overlaps(a: AABB3D, b: AABB3D, active_mask: u32) -> bool {
+    if ((a.layer_mask & b.layer_mask) & active_mask) == 0 {
+        return false;
+    }
+    if a.max.x < b.min.x || a.min.x > b.max.x { return false; }
+    if a.max.y < b.min.y || a.min.y > b.max.y { return false; }
+    if a.max.z < b.min.z || a.min.z > b.max.z { return false; }
+    return true;
+}
+
+// Calcula o Minimum Translation Vector (MTV) para resolver colisao com deslizamento suave em X, Y ou Z
+@sealed_sig
+pub fn aabb_compute_manifold(a: AABB3D, b: AABB3D) -> CollisionManifold {
+    let center_a = aabb_center(a);
+    let center_b = aabb_center(b);
+    let ext_a = aabb_half_extents(a);
+    let ext_b = aabb_half_extents(b);
+
+    let dx = center_b.x - center_a.x;
+    let px = (ext_a.x + ext_b.x) - math::abs(dx);
+    if px <= 0.0 {
+        return CollisionManifold { normal: vec3::vec3_zero(), penetration_depth: 0.0, hit_entity_a: a.entity_id, hit_entity_b: b.entity_id, colliding: false };
+    }
+
+    let dy = center_b.y - center_a.y;
+    let py = (ext_a.y + ext_b.y) - math::abs(dy);
+    if py <= 0.0 {
+        return CollisionManifold { normal: vec3::vec3_zero(), penetration_depth: 0.0, hit_entity_a: a.entity_id, hit_entity_b: b.entity_id, colliding: false };
+    }
+
+    let dz = center_b.z - center_a.z;
+    let pz = (ext_a.z + ext_b.z) - math::abs(dz);
+    if pz <= 0.0 {
+        return CollisionManifold { normal: vec3::vec3_zero(), penetration_depth: 0.0, hit_entity_a: a.entity_id, hit_entity_b: b.entity_id, colliding: false };
+    }
+
+    // Seleciona o eixo de menor penetracao para expulsao deterministica
+    if px < py && px < pz {
+        let sx = if dx < 0.0 { -1.0 } else { 1.0 };
+        return CollisionManifold {
+            normal: vec3::Vec3 { x: sx, y: 0.0, z: 0.0 },
+            penetration_depth: px,
+            hit_entity_a: a.entity_id,
+            hit_entity_b: b.entity_id,
+            colliding: true,
+        };
+    } else if py < pz {
+        let sy = if dy < 0.0 { -1.0 } else { 1.0 };
+        return CollisionManifold {
+            normal: vec3::Vec3 { x: 0.0, y: sy, z: 0.0 },
+            penetration_depth: py,
+            hit_entity_a: a.entity_id,
+            hit_entity_b: b.entity_id,
+            colliding: true,
+        };
+    } else {
+        let sz = if dz < 0.0 { -1.0 } else { 1.0 };
+        return CollisionManifold {
+            normal: vec3::Vec3 { x: 0.0, y: 0.0, z: sz },
+            penetration_depth: pz,
+            hit_entity_a: a.entity_id,
+            hit_entity_b: b.entity_id,
+            colliding: true,
+        };
+    }
+}

@@ -2,9 +2,9 @@
   <img src="./rustts_language_logo.png" alt="RustTS Logo" width="220">
 </p>
 
-# Manual Oficial de Tipos e Referência da Linguagem — RustTS (`rtsc v2.0.0-rts`)
+# Manual Oficial de Tipos e Referência da Linguagem — RustTS (`rtsc v2.2.0-rts`)
 
-Este manual documenta todas as categorias de tipos, aliases ergonômicos (TypeScript / C / C# / Unreal Engine 5), estruturas de memória, tokens de capacidade (`cap`), atributos declarativos e intrínsecos da linguagem **RustTS (`.rts`)** na versão **`v2.0.0-rts`**.
+Este manual documenta todas as categorias de tipos, aliases ergonômicos (TypeScript / C / C# / Unreal Engine 5), estruturas de memória, tokens de capacidade (`cap`), atributos declarativos e intrínsecos da linguagem **RustTS (`.rts`)** na versão **`v2.2.0-rts`**.
 
 ---
 
@@ -265,7 +265,7 @@ Nenhuma função pode acessar hardware, rede, banco de dados, relógio ou arenas
 
 ## 7. Atributos Declarativos e Intrínsecos (`core.math` / `core.io`)
 
-* **Atributos Fixos:** `@component`, `@system(stage = "...")`, `@parallel_system(stage = "...")`, `@sealed_sig`, `@open_sig`, `@unreal_actor(replicate = bool, category = "...")`, `@unreal_impl(Struct)`, `@uproperty(...)`, `@route("METHOD", "/path")`, `@gpu_kernel`, `@shader_shared`.
+* **Atributos Fixos:** `@component`, `@system(stage = "...")`, `@parallel_system(stage = "...")`, `@sealed_sig`, `@open_sig`, `@repr_c`, `@unreal_actor(replicate = bool, category = "...")`, `@unreal_impl(Struct)`, `@uproperty(...)`, `@route("METHOD", "/path")`, `@gpu_kernel`, `@vertex_shader`, `@fragment_shader`, `@shader_shared`.
 * **Matemática (`core.math`):** `math::clamp`, `math::lerp`, `math::min`, `math::max`, `math::abs`, `math::sqrt`, `math::sin`, `math::cos`, `math::atan2`, `math::floor`, `math::ceil`.
 * **Saída Determinística (`core.io`):** `io::println(str)`, `io::print_f32(str, f32)`, `io::print_i32(str, i32)`, `io::print_u32(str, u32)`.
 * **Domínios Web Tradicionais Banidos (`RTS-E0900`):** `DOM`, `DOMNode`, `Document`, `HtmlElement`, `CssStyle`, `VirtualDom`, `ReactComponent`, `WindowDom`.

@@ -1,0 +1,59 @@
+module engine.math.quat;
+import core.math;
+import engine.math.vec3;
+
+@repr_c
+pub struct Quat {
+    pub x: float,
+    pub y: float,
+    pub z: float,
+    pub w: float,
+}
+
+@sealed_sig
+pub fn quat_identity() -> Quat {
+    return Quat { x: 0.0, y: 0.0, z: 0.0, w: 1.0 };
+}
+
+@sealed_sig
+pub fn quat_from_axis_angle(axis: vec3::Vec3, angle_rad: float) -> Quat {
+    let half_angle = angle_rad * 0.5;
+    let s = math::sin(half_angle);
+    let n = vec3::vec3_normalize(axis);
+    return Quat {
+        x: n.x * s,
+        y: n.y * s,
+        z: n.z * s,
+        w: math::cos(half_angle),
+    };
+}
+
+@sealed_sig
+pub fn quat_normalize(q: Quat) -> Quat {
+    let len_sq = (q.x * q.x) + (q.y * q.y) + (q.z * q.z) + (q.w * q.w);
+    if len_sq <= 0.0000001 {
+        return quat_identity();
+    }
+    let inv = 1.0 / math::sqrt(len_sq);
+    return Quat { x: q.x * inv, y: q.y * inv, z: q.z * inv, w: q.w * inv };
+}
+
+@sealed_sig
+pub fn quat_mul(a: Quat, b: Quat) -> Quat {
+    return Quat {
+        x: (a.w * b.x) + (a.x * b.w) + (a.y * b.z) - (a.z * b.y),
+        y: (a.w * b.y) - (a.x * b.z) + (a.y * b.w) + (a.z * b.x),
+        z: (a.w * b.z) + (a.x * b.y) - (a.y * b.x) + (a.z * b.w),
+        w: (a.w * b.w) - (a.x * b.x) - (a.y * b.y) - (a.z * b.z),
+    };
+}
+
+@sealed_sig
+pub fn quat_rotate_vec3(q: Quat, v: vec3::Vec3) -> vec3::Vec3 {
+    let u = vec3::Vec3 { x: q.x, y: q.y, z: q.z };
+    let uv = vec3::vec3_cross(u, v);
+    let uuv = vec3::vec3_cross(u, uv);
+    let uv_scaled = vec3::vec3_scale(uv, 2.0 * q.w);
+    let uuv_scaled = vec3::vec3_scale(uuv, 2.0);
+    return vec3::vec3_add(v, vec3::vec3_add(uv_scaled, uuv_scaled));
+}

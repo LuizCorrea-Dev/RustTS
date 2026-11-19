@@ -1,0 +1,182 @@
+module engine.mesh;
+import core.math;
+import engine.math.vec3;
+import engine.math.vec4;
+
+// 48 bytes exatos (3 x Vec4 de 16 bytes) — alinhamento ótimo para cache de GPU NVIDIA/AMD
+@repr_c
+pub struct Vertex3D {
+    pub pos_u: vec4::Vec4,  // x, y, z = Posição | w = UV.u
+    pub norm_v: vec4::Vec4, // x, y, z = Normal  | w = UV.v
+    pub color: vec4::Vec4,  // r, g, b, a
+}
+
+pub const VERTEX3D_STRIDE_BYTES: u64 = 48;
+pub const DEG_TO_RAD: float          = 0.0174532925;
+pub const BOX_VERTEX_COUNT: usize    = 24;
+pub const BOX_INDEX_COUNT: usize     = 36;
+
+// Paleta de materiais persistida no campo material_override_id do arquivo .pak
+@sealed_sig
+pub fn mesh_material_color(material_id: u32, is_selected: bool) -> vec4::Vec4 {
+    let mut base = vec4::vec4_new(0.38, 0.66, 0.88, 1.0); // 1 = Aço Industrial (Azul)
+    if material_id == 2 {
+        base = vec4::vec4_new(0.78, 0.34, 0.22, 1.0); // 2 = Tijolo / Alvenaria
+    } else if material_id == 3 {
+        base = vec4::vec4_new(0.36, 0.56, 0.32, 1.0); // 3 = Militar (Verde Oliva)
+    } else if material_id == 4 {
+        base = vec4::vec4_new(0.72, 0.54, 0.30, 1.0); // 4 = Madeira / Galpão
+    } else if material_id == 5 {
+        base = vec4::vec4_new(0.62, 0.65, 0.68, 1.0); // 5 = Concreto Urbano
+    }
+
+    if is_selected {
+        // Realce âmbar quando selecionado no Inspector
+        return vec4::Vec4 {
+            x: math::min(1.0, (base.x * 0.45) + 0.55),
+            y: math::min(1.0, (base.y * 0.45) + 0.32),
+            z: base.z * 0.25,
+            w: 1.0,
+        };
+    }
+    return base;
+}
+
+@sealed_sig
+pub fn mesh_rotate_y(lx: float, lz: float, cos_y: float, sin_y: float) -> vec3::Vec3 {
+    return vec3::Vec3 {
+        x: (lx * cos_y) + (lz * sin_y),
+        y: 0.0,
+        z: (0.0 - (lx * sin_y)) + (lz * cos_y),
+    };
+}
+
+// Iluminação direcional solar (L = [0.45, 0.80, 0.38]) calculada por face normal
+@sealed_sig
+pub fn mesh_shade_face(base: vec4::Vec4, norm: vec3::Vec3) -> vec4::Vec4 {
+    let dot_l = (norm.x * 0.45) + (norm.y * 0.80) + (norm.z * 0.38);
+    let diff = math::clamp(dot_l, -0.40, 1.0);
+    let intensity = math::clamp(0.64 + (diff * 0.36), 0.34, 1.12);
+    return vec4::Vec4 {
+        x: math::clamp(base.x * intensity, 0.0, 1.0),
+        y: math::clamp(base.y * intensity, 0.0, 1.0),
+        z: math::clamp(base.z * intensity, 0.0, 1.0),
+        w: base.w,
+    };
+}
+
+@sealed_sig
+pub fn mesh_emit_quad_face(
+    verts: cap MutSlice<Vertex3D>,
+    inds: cap MutSlice<u32>,
+    v_off: usize,
+    i_off: usize,
+    p0: vec3::Vec3,
+    p1: vec3::Vec3,
+    p2: vec3::Vec3,
+    p3: vec3::Vec3,
+    norm: vec3::Vec3,
+    base_color: vec4::Vec4
+) {
+    let f_col = mesh_shade_face(base_color, norm);
+    let n_v4 = vec4::vec4_new(norm.x, norm.y, norm.z, 0.0);
+
+    verts[v_off + 0] = Vertex3D { pos_u: vec4::vec4_new(p0.x, p0.y, p0.z, 0.0), norm_v: n_v4, color: f_col };
+    verts[v_off + 1] = Vertex3D { pos_u: vec4::vec4_new(p1.x, p1.y, p1.z, 1.0), norm_v: n_v4, color: f_col };
+    verts[v_off + 2] = Vertex3D { pos_u: vec4::vec4_new(p2.x, p2.y, p2.z, 1.0), norm_v: n_v4, color: f_col };
+    verts[v_off + 3] = Vertex3D { pos_u: vec4::vec4_new(p3.x, p3.y, p3.z, 0.0), norm_v: n_v4, color: f_col };
+
+    let b = v_off as u32;
+    inds[i_off + 0] = b + 0; inds[i_off + 1] = b + 1; inds[i_off + 2] = b + 2;
+    inds[i_off + 3] = b + 0; inds[i_off + 4] = b + 2; inds[i_off + 5] = b + 3;
+}
+
+// Gera 24 vértices (6 faces independentes com normais rotacionadas) e 36 índices
+@sealed_sig
+pub fn mesh_write_box_rotated(
+    verts: cap MutSlice<Vertex3D>,
+    inds: cap MutSlice<u32>,
+    v_base: usize,
+    i_base: usize,
+    center: vec3::Vec3,
+    half_ext: vec3::Vec3,
+    yaw_deg: float,
+    color: vec4::Vec4
+) {
+    let rad = yaw_deg * DEG_TO_RAD;
+    let cy = math::cos(rad);
+    let sy = math::sin(rad);
+
+    let hx = half_ext.x;
+    let hy = half_ext.y;
+    let hz = half_ext.z;
+
+    let c0 = mesh_rotate_y(0.0 - hx, hz,       cy, sy);
+    let c1 = mesh_rotate_y(hx,       hz,       cy, sy);
+    let c2 = mesh_rotate_y(0.0 - hx, 0.0 - hz, cy, sy);
+    let c3 = mesh_rotate_y(hx,       0.0 - hz, cy, sy);
+
+    let y0 = center.y - hy;
+    let y1 = center.y + hy;
+
+    let v00 = vec3::vec3_new(center.x + c0.x, y0, center.z + c0.z);
+    let v10 = vec3::vec3_new(center.x + c1.x, y0, center.z + c1.z);
+    let v11 = vec3::vec3_new(center.x + c1.x, y1, center.z + c1.z);
+    let v01 = vec3::vec3_new(center.x + c0.x, y1, center.z + c0.z);
+
+    let v20 = vec3::vec3_new(center.x + c2.x, y0, center.z + c2.z);
+    let v30 = vec3::vec3_new(center.x + c3.x, y0, center.z + c3.z);
+    let v31 = vec3::vec3_new(center.x + c3.x, y1, center.z + c3.z);
+    let v21 = vec3::vec3_new(center.x + c2.x, y1, center.z + c2.z);
+
+    let n_front = mesh_rotate_y(0.0,  1.0, cy, sy);
+    let n_back  = mesh_rotate_y(0.0, -1.0, cy, sy);
+    let n_right = mesh_rotate_y(1.0,  0.0, cy, sy);
+    let n_left  = mesh_rotate_y(-1.0, 0.0, cy, sy);
+    let n_top   = vec3::vec3_new(0.0,  1.0, 0.0);
+    let n_bot   = vec3::vec3_new(0.0, -1.0, 0.0);
+
+    mesh_emit_quad_face(verts, inds, v_base + 0,  i_base + 0,  v00, v10, v11, v01, n_front, color);
+    mesh_emit_quad_face(verts, inds, v_base + 4,  i_base + 6,  v30, v20, v21, v31, n_back,  color);
+    mesh_emit_quad_face(verts, inds, v_base + 8,  i_base + 12, v01, v11, v31, v21, n_top,   color);
+    mesh_emit_quad_face(verts, inds, v_base + 12, i_base + 18, v20, v30, v10, v00, n_bot,   color);
+    mesh_emit_quad_face(verts, inds, v_base + 16, i_base + 24, v10, v30, v31, v11, n_right, color);
+    mesh_emit_quad_face(verts, inds, v_base + 20, i_base + 30, v20, v00, v01, v21, n_left,  color);
+}
+
+@sealed_sig
+pub fn mesh_write_box(
+    verts: cap MutSlice<Vertex3D>,
+    inds: cap MutSlice<u32>,
+    v_base: usize,
+    i_base: usize,
+    center: vec3::Vec3,
+    half_ext: vec3::Vec3,
+    color: vec4::Vec4
+) {
+    mesh_write_box_rotated(verts, inds, v_base, i_base, center, half_ext, 0.0, color);
+}
+
+@sealed_sig
+pub extern "C" fn rtsc_mesh_load_obj(
+    path: str,
+    dst_verts_ptr: u64,
+    v_base: u32,
+    max_verts: u32,
+    dst_inds_ptr: u64,
+    i_base: u32,
+    max_inds: u32
+) -> u64;
+
+@sealed_sig
+pub fn mesh_load_obj(
+    path: str,
+    dst_verts_ptr: u64,
+    v_base: u32,
+    max_verts: u32,
+    dst_inds_ptr: u64,
+    i_base: u32,
+    max_inds: u32
+) -> u64 {
+    return rtsc_mesh_load_obj(path, dst_verts_ptr, v_base, max_verts, dst_inds_ptr, i_base, max_inds);
+}

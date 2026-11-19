@@ -1,0 +1,89 @@
+module engine.vfs.pak_format;
+
+// Sistema VFS Binário O(1) Sem Python
+
+// Assinatura magica "RTSP" (RustTS Pak) em Little-Endian
+pub const PAK_MAGIC: u32   = 0x50535452;
+pub const PAK_VERSION: u32 = 1;
+
+// Tipos de Assets suportados nativamente pelo motor
+pub const ASSET_MESH: u32       = 1;
+pub const ASSET_TEXTURE: u32    = 2;
+pub const ASSET_PREFAB: u32     = 3;
+pub const ASSET_MAP_SCENE: u32  = 4;
+pub const ASSET_ANIM_CLIP: u32  = 5;
+pub const ASSET_SHADER_BIN: u32 = 6;
+
+// Cabecalho binario de 32 bytes no inicio do arquivo .pak
+@repr_c
+pub struct PakHeader {
+    pub magic: u32,
+    pub version: u32,
+    pub entry_count: u32,
+    pub flags: u32,
+    pub index_table_offset: u64,
+    pub data_payload_offset: u64,
+}
+
+// Descritor de 48 bytes por asset na tabela de indice
+@repr_c
+pub struct PakAssetEntry {
+    pub name_hash: u64,         // Hash FNV-1a de 64 bits do caminho (ex: "prefabs/casa1")
+    pub offset_bytes: u64,      // Offset absoluto dentro do .pak (alinhado a 64 bytes)
+    pub size_bytes: u64,        // Tamanho dos dados em bytes
+    pub uncompressed_size: u64, // Tamanho original
+    pub asset_type: u32,        // ASSET_MESH, ASSET_PREFAB, etc.
+    pub sub_format: u32,        // Formato especifico (BC7, RGBA8, Vertex3D)
+    pub vertex_or_width: u32,   // Metadado rapido sem precisar parsear o payload
+    pub index_or_height: u32,   // Metadado rapido
+}
+
+// Descritor de Instancia de Objeto para salvar/carregar mapas (Estilo DayZ Editor .dze / .pak)
+@repr_c
+pub struct WorldObjectRecord {
+    pub prefab_hash: u64,
+    pub pos_x: float,
+    pub pos_y: float,
+    pub pos_z: float,
+    pub rot_x: float,
+    pub rot_y: float,
+    pub rot_z: float,
+    pub scale_x: float,
+    pub scale_y: float,
+    pub scale_z: float,
+    pub material_override_id: u32,
+    pub collision_flags: u32,
+    pub reserved_pad: u32,
+}
+
+// Hash FNV-1a 64-bit deterministico sobre bytes de identificador
+@sealed_sig
+pub fn vfs_hash_bytes(data: cap ReadSlice<u8>, length: usize) -> u64 {
+    let mut hash: u64 = 14695981039346656037;
+    let prime: u64 = 1099511628211;
+    let mut i: usize = 0;
+    while i < length {
+        hash = hash ^ (data[i] as u64);
+        hash = hash * prime;
+        i += 1;
+    }
+    return hash;
+}
+
+@sealed_sig
+pub fn pak_header_criar(entry_count: u32) -> PakHeader {
+    let header_size: u64 = 32;
+    let table_size: u64 = (entry_count as u64) * 48;
+    let raw_payload_start = header_size + table_size;
+    // Alinha o inicio dos dados a 64 bytes (Cache Line da CPU / Upload GPU)
+    let aligned_payload = (raw_payload_start + 63) & (~63);
+
+    return PakHeader {
+        magic: PAK_MAGIC,
+        version: PAK_VERSION,
+        entry_count: entry_count,
+        flags: 0,
+        index_table_offset: header_size,
+        data_payload_offset: aligned_payload,
+    };
+}

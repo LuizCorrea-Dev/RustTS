@@ -1,0 +1,94 @@
+module engine.gpu.vram_arena;
+import core.mem;
+
+pub const GPU_CBUFFER_ALIGNMENT: u64 = 256;
+pub const GPU_VERTEX_ALIGNMENT: u64  = 16;
+
+@repr_c
+pub struct VramArena {
+    pub heap_handle: u64,
+    pub buffer_handle: u64,
+    pub mapped_cpu_ptr: u64,
+    pub capacity_bytes: u64,
+    pub head_offset: u64,
+    pub frame_temp_mark: u64,
+}
+
+@repr_c
+pub struct VramAllocation {
+    pub buffer_handle: u64,
+    pub offset: u64,
+    pub size: u64,
+    pub valid: bool,
+}
+
+@sealed_sig
+pub fn vram_align_up(value: u64, alignment: u64) -> u64 {
+    let mask = alignment - 1;
+    return (value + mask) & (~mask);
+}
+
+@sealed_sig
+pub fn vram_arena_init(heap_h: u64, buf_h: u64, cpu_ptr: u64, capacity: u64) -> VramArena {
+    return VramArena {
+        heap_handle: heap_h,
+        buffer_handle: buf_h,
+        mapped_cpu_ptr: cpu_ptr,
+        capacity_bytes: capacity,
+        head_offset: 0,
+        frame_temp_mark: 0,
+    };
+}
+
+@sealed_sig
+pub fn vram_arena_alloc_aligned(
+    arena: inout VramArena,
+    size_bytes: u64,
+    alignment: u64
+) -> VramAllocation {
+    let aligned_offset = vram_align_up(arena.head_offset, alignment);
+    let next_head = aligned_offset + size_bytes;
+
+    if next_head > arena.capacity_bytes {
+        return VramAllocation {
+            buffer_handle: 0,
+            offset: 0,
+            size: 0,
+            valid: false,
+        };
+    }
+
+    arena.head_offset = next_head;
+    return VramAllocation {
+        buffer_handle: arena.buffer_handle,
+        offset: aligned_offset,
+        size: size_bytes,
+        valid: true,
+    };
+}
+
+// Copia bytes diretamente para o bloco mapeado da VramArena usando a intrínseca core.mem::copy
+@sealed_sig
+pub fn vram_arena_write_raw(
+    arena: VramArena,
+    alloc: VramAllocation,
+    src_ptr: u64,
+    size_bytes: u64
+) -> bool {
+    if !alloc.valid || arena.mapped_cpu_ptr == 0 || src_ptr == 0 || size_bytes > alloc.size {
+        return false;
+    }
+    let dst_addr = arena.mapped_cpu_ptr + alloc.offset;
+    mem::copy(dst_addr, src_ptr, size_bytes);
+    return true;
+}
+
+@sealed_sig
+pub fn vram_arena_mark_static_end(arena: inout VramArena) {
+    arena.frame_temp_mark = arena.head_offset;
+}
+
+@sealed_sig
+pub fn vram_arena_reset_frame(arena: inout VramArena) {
+    arena.head_offset = arena.frame_temp_mark;
+}

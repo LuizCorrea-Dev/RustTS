@@ -1,0 +1,192 @@
+module engine.gpu.rhi;
+import engine.gpu.vram_arena;
+import engine.gpu.barrier;
+import engine.gpu.vulkan_defs;
+import engine.gpu.dx12_defs;
+
+pub const BACKEND_VULKAN: u32 = 1;
+pub const BACKEND_DX12: u32   = 2;
+
+pub const PIPELINE_3D: u64        = 1;
+pub const PIPELINE_UI: u64        = 2;
+pub const PIPELINE_3D_INST: u64   = 3;
+pub const PIPELINE_SPRITE_2D: u64 = 4;
+
+@repr_c
+pub struct RhiDevice {
+    pub backend_api: u32,
+    pub native_device_h: u64,
+    pub width: u32,
+    pub height: u32,
+    pub arena: vram_arena::VramArena,
+    pub is_valid: bool,
+}
+
+@repr_c
+pub struct RhiCommandList {
+    pub backend_api: u32,
+    pub native_cmd_h: u64,
+    pub is_recording: bool,
+}
+
+@sealed_sig
+pub fn rhi_device_init(
+    backend: u32,
+    window_handle: u64,
+    width: u32,
+    height: u32,
+    vram_pool_bytes: u64,
+    enable_debug: bool
+) -> RhiDevice {
+    let mut dev_h: u64 = 0;
+    let mut buf_h: u64 = 0;
+    let mut cpu_ptr: u64 = 0;
+    let mut heap_h: u64 = 0;
+
+    if backend == BACKEND_DX12 {
+        dev_h = dx12_defs::rtsc_dx12_init_device(window_handle, width, height, enable_debug);
+        if dev_h != 0 {
+            heap_h = dx12_defs::rtsc_dx12_alloc_vram_arena(dev_h, vram_pool_bytes, inout buf_h, inout cpu_ptr);
+        }
+    } else {
+        dev_h = vulkan_defs::rtsc_vk_init_device(window_handle, width, height, enable_debug);
+        if dev_h != 0 {
+            heap_h = vulkan_defs::rtsc_vk_alloc_vram_arena(dev_h, vram_pool_bytes, inout buf_h, inout cpu_ptr);
+        }
+    }
+
+    let arena = vram_arena::vram_arena_init(heap_h, buf_h, cpu_ptr, vram_pool_bytes);
+    return RhiDevice {
+        backend_api: backend,
+        native_device_h: dev_h,
+        width: width,
+        height: height,
+        arena: arena,
+        is_valid: (dev_h != 0) && (heap_h != 0),
+    };
+}
+
+@sealed_sig
+pub fn rhi_begin_frame(dev: inout RhiDevice) -> RhiCommandList {
+    vram_arena::vram_arena_reset_frame(inout dev.arena);
+
+    let mut cmd_h: u64 = 0;
+    if dev.backend_api == BACKEND_DX12 {
+        cmd_h = dx12_defs::rtsc_dx12_begin_command_list(dev.native_device_h);
+    } else {
+        cmd_h = vulkan_defs::rtsc_vk_begin_command_buffer(dev.native_device_h);
+    }
+
+    return RhiCommandList {
+        backend_api: dev.backend_api,
+        native_cmd_h: cmd_h,
+        is_recording: cmd_h != 0,
+    };
+}
+
+@sealed_sig
+pub fn rhi_cmd_texture_barrier(cmd: RhiCommandList, bar: barrier::GpuTextureBarrier) {
+    if !cmd.is_recording { return; }
+    if cmd.backend_api == BACKEND_DX12 {
+        dx12_defs::rtsc_dx12_cmd_resource_barrier(cmd.native_cmd_h, bar.texture_handle, bar.state_before, bar.state_after);
+    } else {
+        vulkan_defs::rtsc_vk_cmd_image_barrier(cmd.native_cmd_h, bar.texture_handle, bar.state_before, bar.state_after);
+    }
+}
+
+@sealed_sig
+pub fn rhi_cmd_bind_pipeline(cmd: RhiCommandList, pipeline_handle: u64) {
+    if !cmd.is_recording { return; }
+    if cmd.backend_api == BACKEND_DX12 {
+        dx12_defs::rtsc_dx12_cmd_set_pipeline_state(cmd.native_cmd_h, pipeline_handle);
+    } else {
+        vulkan_defs::rtsc_vk_cmd_bind_pipeline(cmd.native_cmd_h, pipeline_handle);
+    }
+}
+
+@sealed_sig
+pub fn rhi_cmd_bind_mesh_and_uniforms(
+    cmd: RhiCommandList,
+    vbo: vram_arena::VramAllocation,
+    ibo: vram_arena::VramAllocation,
+    ubo: vram_arena::VramAllocation
+) {
+    if !cmd.is_recording { return; }
+    if cmd.backend_api == BACKEND_DX12 {
+        dx12_defs::rtsc_dx12_cmd_bind_buffers(
+            cmd.native_cmd_h,
+            vbo.buffer_handle, vbo.offset,
+            ibo.buffer_handle, ibo.offset,
+            ubo.buffer_handle, ubo.offset
+        );
+    } else {
+        vulkan_defs::rtsc_vk_cmd_bind_buffers(
+            cmd.native_cmd_h,
+            vbo.buffer_handle, vbo.offset,
+            ibo.buffer_handle, ibo.offset,
+            ubo.buffer_handle, ubo.offset
+        );
+    }
+}
+
+@sealed_sig
+pub fn rhi_cmd_draw_indexed(cmd: RhiCommandList, index_count: u32, first_index: u32, vertex_offset: i32) {
+    if !cmd.is_recording { return; }
+    if cmd.backend_api == BACKEND_DX12 {
+        dx12_defs::rtsc_dx12_cmd_draw_indexed_instanced(cmd.native_cmd_h, index_count, first_index, vertex_offset);
+    } else {
+        vulkan_defs::rtsc_vk_cmd_draw_indexed(cmd.native_cmd_h, index_count, first_index, vertex_offset);
+    }
+}
+
+@sealed_sig
+pub fn rhi_end_frame_and_present(dev: RhiDevice, cmd: inout RhiCommandList) -> bool {
+    if !cmd.is_recording { return false; }
+    cmd.is_recording = false;
+
+    let mut res: i32 = -1;
+    if dev.backend_api == BACKEND_DX12 {
+        res = dx12_defs::rtsc_dx12_execute_and_present(dev.native_device_h, cmd.native_cmd_h);
+    } else {
+        res = vulkan_defs::rtsc_vk_end_and_present(dev.native_device_h, cmd.native_cmd_h);
+    }
+    return res == 0;
+}
+
+@sealed_sig
+pub fn rhi_texture_load(dev: RhiDevice, path: str) -> u64 {
+    if !dev.is_valid { return 0; }
+    return vulkan_defs::rtsc_vk_load_texture(dev.native_device_h, path);
+}
+
+@sealed_sig
+pub fn rhi_texture_create_rgba(dev: RhiDevice, width: u32, height: u32, rgba_ptr: u64) -> u64 {
+    if !dev.is_valid { return 0; }
+    return vulkan_defs::rtsc_vk_create_texture_rgba_ptr(dev.native_device_h, width, height, rgba_ptr);
+}
+
+@sealed_sig
+pub fn rhi_cmd_bind_texture(cmd: RhiCommandList, tex_h: u64) {
+    if !cmd.is_recording { return; }
+    vulkan_defs::rtsc_vk_cmd_bind_texture(cmd.native_cmd_h, tex_h);
+}
+
+@sealed_sig
+pub fn rhi_create_graphics_pipeline(
+    dev: RhiDevice,
+    vs_ptr: u64,
+    vs_bytes: u64,
+    fs_ptr: u64,
+    fs_bytes: u64,
+    vertex_stride: u32
+) -> u64 {
+    if !dev.is_valid { return 0; }
+    return vulkan_defs::rtsc_vk_create_pipeline_from_spirv(
+        dev.native_device_h,
+        vs_ptr,
+        vs_bytes,
+        fs_ptr,
+        fs_bytes,
+        vertex_stride
+    );
+}

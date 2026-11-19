@@ -1,0 +1,66 @@
+module engine.physics.spatial_hash;
+import core.math;
+import engine.math.vec3;
+
+// Constantes da Tabela Hash Espacial O(1) em Arena Estatica
+pub const SPATIAL_BUCKETS_COUNT: usize = 4096; // Potencia de 2 para mascara binaria
+pub const MAX_ENTITIES_PER_CELL: usize = 16;
+
+@repr_c
+pub struct SpatialBucket {
+    pub count: u32,
+    pub entity_ids: [u32; 16],
+}
+
+@repr_c
+pub struct SpatialGridConfig {
+    pub cell_size: float,
+    pub inv_cell_size: float,
+}
+
+@sealed_sig
+pub fn spatial_grid_init(cell_size: float) -> SpatialGridConfig {
+    let valid_size = if cell_size > 0.1 { cell_size } else { 4.0 };
+    return SpatialGridConfig {
+        cell_size: valid_size,
+        inv_cell_size: 1.0 / valid_size,
+    };
+}
+
+// Hash espacial 3D infinito (Teschner et al.) mapeado para [0, SPATIAL_BUCKETS_COUNT - 1]
+@sealed_sig
+pub fn spatial_hash_coords(ix: i32, iy: i32, iz: i32) -> usize {
+    let ux = (ix as u32) * 73856093;
+    let uy = (iy as u32) * 19349663;
+    let uz = (iz as u32) * 83492791;
+    let h = ux ^ uy ^ uz;
+    return (h as usize) & (SPATIAL_BUCKETS_COUNT - 1);
+}
+
+@sealed_sig
+pub fn spatial_clear_buckets(buckets: cap MutSlice<SpatialBucket>) {
+    let mut i: usize = 0;
+    while i < SPATIAL_BUCKETS_COUNT {
+        buckets[i].count = 0;
+        i += 1;
+    }
+}
+
+@sealed_sig
+pub fn spatial_insert_point(
+    cfg: SpatialGridConfig,
+    buckets: cap MutSlice<SpatialBucket>,
+    pos: vec3::Vec3,
+    entity_id: u32
+) {
+    let ix = math::floor(pos.x * cfg.inv_cell_size) as i32;
+    let iy = math::floor(pos.y * cfg.inv_cell_size) as i32;
+    let iz = math::floor(pos.z * cfg.inv_cell_size) as i32;
+
+    let bucket_idx = spatial_hash_coords(ix, iy, iz);
+    let c = buckets[bucket_idx].count as usize;
+    if c < MAX_ENTITIES_PER_CELL {
+        buckets[bucket_idx].entity_ids[c] = entity_id;
+        buckets[bucket_idx].count = (c + 1) as u32;
+    }
+}

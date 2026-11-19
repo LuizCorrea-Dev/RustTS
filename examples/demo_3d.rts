@@ -1,0 +1,107 @@
+module examples.demo_3d;
+
+import core.mem;
+import core.math;
+import engine.platform.window;
+import engine.gpu.rhi;
+import engine.gpu.vram_arena;
+import engine.camera;
+import engine.math.vec3;
+import engine.math.vec4;
+import engine.mesh;
+import engine.renderer_3d;
+
+@sealed_sig
+pub fn main(arena: cap StaticArena) -> int {
+    let win_w: u32 = 1280;
+    let win_h: u32 = 720;
+    let win_hnd = window::rtsc_window_create(win_w, win_h);
+    let mut dev = rhi::rhi_device_init(
+        rhi::BACKEND_VULKAN,
+        win_hnd,
+        win_w,
+        win_h,
+        64 * 1024 * 1024,
+        true
+    );
+    if !dev.is_valid {
+        return 1;
+    }
+
+    let mut cam = camera::camera_init_orbit(1280.0 / 720.0, 28.0, 5.0, 85.0, 50.0, 18.0);
+    cam.target = vec3::Vec3 { x: 0.0, y: 1.0, z: 0.0 };
+
+    let max_verts: u32 = 256;
+    let max_inds: u32 = 384;
+    let mut r3d = renderer_3d::r3d_init(max_verts, max_inds);
+    let verts: cap MutSlice<mesh::Vertex3D> = arena.alloc_slice(max_verts as usize);
+    let inds: cap MutSlice<u32> = arena.alloc_slice(max_inds as usize);
+    let cam_buf: cap MutSlice<camera::CameraUniform> = arena.alloc_slice(1);
+
+    let mut angle_deg: float = 0.0;
+    let mut mx: float = 0.0;
+    let mut my: float = 0.0;
+    let mut prev_mx: float = 0.0;
+    let mut prev_my: float = 0.0;
+    let mut first_mouse: bool = true;
+    let mut mbtns: u32 = 0;
+    let mut keys: u32 = 0;
+    let mut prev_t: float = window::rtsc_time_now_sec();
+
+    while window::rtsc_window_poll(win_hnd, inout mx, inout my, inout mbtns, inout keys) {
+        if (keys & window::KEY_ESC_BIT) != 0 {
+            return 0;
+        }
+        let now_t = window::rtsc_time_now_sec();
+        let mut dt = now_t - prev_t;
+        prev_t = now_t;
+        if dt <= 0.0 || dt > 0.1 { dt = 0.016; }
+
+        let packed = window::rtsc_window_get_size_packed(win_hnd);
+        let cur_w = (packed >> 32) as float;
+        let cur_h = (packed & 0xFFFFFFFF) as float;
+        if cur_w > 1.0 && cur_h > 1.0 {
+            cam.aspect = cur_w / cur_h;
+        }
+
+        if first_mouse {
+            prev_mx = mx;
+            prev_my = my;
+            first_mouse = false;
+        }
+        let dx = mx - prev_mx;
+        let dy = my - prev_my;
+        prev_mx = mx;
+        prev_my = my;
+
+        if (mbtns & window::MOUSE_RIGHT_BIT) != 0 {
+            camera::camera_rotate(inout cam, -dx * 0.35, dy * 0.35);
+        }
+        if (keys & window::KEY_Z_BIT) != 0 { camera::camera_zoom(inout cam, -12.0 * dt); }
+        if (keys & window::KEY_X_BIT) != 0 { camera::camera_zoom(inout cam, 12.0 * dt); }
+
+        angle_deg = angle_deg + 45.0 * dt;
+
+        let mut cmd = rhi::rhi_begin_frame(inout dev);
+        let cam_uni = camera::camera_build_uniform(inout cam, cur_w, cur_h, true);
+        cam_buf[0] = cam_uni;
+        let cam_ubo = vram_arena::vram_arena_alloc_aligned(inout dev.arena, 256, vram_arena::GPU_CBUFFER_ALIGNMENT);
+        vram_arena::vram_arena_write_raw(dev.arena, cam_ubo, mem::slice_ptr(cam_buf), 256);
+
+        renderer_3d::r3d_begin(inout r3d);
+        renderer_3d::r3d_add_box(inout r3d, verts, inds, vec3::vec3_new(0.0, -0.25, 0.0), vec3::vec3_new(10.0, 0.25, 10.0), 0.0, vec4::vec4_new(0.24, 0.28, 0.34, 1.0));
+        let mut p: usize = 0;
+        while p < 4 {
+            let px: float = if (p % 2) == 0 { -5.0 } else { 5.0 };
+            let pz: float = if p < 2 { -5.0 } else { 5.0 };
+            renderer_3d::r3d_add_box(inout r3d, verts, inds, vec3::vec3_new(px, 2.0, pz), vec3::vec3_new(0.6, 2.0, 0.6), 0.0, vec4::vec4_new(0.65, 0.70, 0.78, 1.0));
+            p = p + 1;
+        }
+        renderer_3d::r3d_add_box(inout r3d, verts, inds, vec3::vec3_new(0.0, 1.8, 0.0), vec3::vec3_new(1.4, 1.4, 1.4), angle_deg, vec4::vec4_new(0.95, 0.55, 0.18, 1.0));
+        renderer_3d::r3d_flush(inout r3d, inout dev, cmd, verts, inds, cam_ubo);
+
+        let _ok = rhi::rhi_end_frame_and_present(dev, inout cmd);
+    }
+
+    return 0;
+}

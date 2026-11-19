@@ -221,6 +221,10 @@ pub enum TokenKind {
     AttrUProperty,
     #[token("@gpu_kernel")]
     AttrGpuKernel,
+    #[token("@vertex_shader")]
+    AttrVertexShader,
+    #[token("@fragment_shader")]
+    AttrFragmentShader,
     #[token("@shader_shared")]
     AttrShaderShared,
     #[token("@repr_c")]

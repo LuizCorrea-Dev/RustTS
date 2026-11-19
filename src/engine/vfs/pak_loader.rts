@@ -1,0 +1,73 @@
+module engine.vfs.pak_loader;
+import engine.vfs.pak_format;
+
+@repr_c
+pub struct PakArchiveView {
+    pub base_memory_ptr: u64,
+    pub total_file_bytes: u64,
+    pub entry_count: u32,
+    pub is_mounted: bool,
+}
+
+@repr_c
+pub struct AssetSliceResult {
+    pub data_ptr: u64,
+    pub size_bytes: u64,
+    pub vertex_or_width: u32,
+    pub index_or_height: u32,
+    pub found: bool,
+}
+
+// Monta um arquivo .pak carregado na arena estatica em O(1)
+@sealed_sig
+pub fn pak_mount_from_memory(
+    header: pak_format::PakHeader,
+    base_ptr: u64,
+    total_bytes: u64
+) -> PakArchiveView {
+    if header.magic != pak_format::PAK_MAGIC || header.version != pak_format::PAK_VERSION {
+        return PakArchiveView {
+            base_memory_ptr: 0,
+            total_file_bytes: 0,
+            entry_count: 0,
+            is_mounted: false,
+        };
+    }
+
+    return PakArchiveView {
+        base_memory_ptr: base_ptr,
+        total_file_bytes: total_bytes,
+        entry_count: header.entry_count,
+        is_mounted: true,
+    };
+}
+
+// Busca um asset na tabela e retorna o ponteiro direto para DMA / Upload na VramArena
+@sealed_sig
+pub fn pak_find_asset(
+    archive: PakArchiveView,
+    entries: cap ReadSlice<pak_format::PakAssetEntry>,
+    target_hash: u64
+) -> AssetSliceResult {
+    if !archive.is_mounted {
+        return AssetSliceResult { data_ptr: 0, size_bytes: 0, vertex_or_width: 0, index_or_height: 0, found: false };
+    }
+
+    let count = archive.entry_count as usize;
+    let mut i: usize = 0;
+    while i < count {
+        let entry = entries[i];
+        if entry.name_hash == target_hash {
+            return AssetSliceResult {
+                data_ptr: archive.base_memory_ptr + entry.offset_bytes,
+                size_bytes: entry.size_bytes,
+                vertex_or_width: entry.vertex_or_width,
+                index_or_height: entry.index_or_height,
+                found: true,
+            };
+        }
+        i += 1;
+    }
+
+    return AssetSliceResult { data_ptr: 0, size_bytes: 0, vertex_or_width: 0, index_or_height: 0, found: false };
+}

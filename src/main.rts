@@ -1,0 +1,115 @@
+module main;
+
+import core.io;
+import core.mem;
+import core.math;
+import engine.core.logger;
+import engine.platform.window;
+import engine.audio;
+import engine.gpu.rhi;
+import engine.gpu.vram_arena;
+import engine.math.vec3;
+import engine.math.vec4;
+import engine.camera;
+import engine.mesh;
+import engine.renderer_3d;
+import engine.renderer_2d;
+import engine.ui.imgui_rts;
+
+pub const VRAM_POOL_SIZE_BYTES: u64 = 67108864; // 64 MB
+
+@sealed_sig
+pub fn main(arena: cap StaticArena) -> int {
+    io::println("======================================================================");
+    io::println(" RUSTTS ENGINE v2.2.0-rts — MOTOR GRAFICO 2D/3D NATIVO (VULKAN + RHI)");
+    io::println("======================================================================");
+
+    let log_entries: cap MutSlice<logger::LogEntry> = arena.alloc_slice(logger::LOG_RING_CAP);
+    let mut log = logger::logger_init(logger::LOG_INFO);
+
+    let win_w: u32 = 1280;
+    let win_h: u32 = 720;
+    let win_hnd = window::rtsc_window_create(win_w, win_h);
+    let mut dev = rhi::rhi_device_init(
+        rhi::BACKEND_VULKAN,
+        win_hnd,
+        win_w,
+        win_h,
+        VRAM_POOL_SIZE_BYTES,
+        true
+    );
+    if !dev.is_valid {
+        logger::log_error(inout log, log_entries, logger::CAT_RHI, 1001, "Falha ao inicializar RHI Vulkan");
+        return 1;
+    }
+    logger::log_info(inout log, log_entries, logger::CAT_RHI, "RHI Vulkan + VramArena (64 MB) inicializados");
+
+    let mut cam = camera::camera_init_orbit(1280.0 / 720.0, 25.0, 5.0, 85.0, 50.0, 14.0);
+    cam.target = vec3::Vec3 { x: 0.0, y: 0.5, z: 0.0 };
+
+    let mut r3d = renderer_3d::r3d_init(256, 384);
+    let verts_3d: cap MutSlice<mesh::Vertex3D> = arena.alloc_slice(256);
+    let inds_3d: cap MutSlice<u32> = arena.alloc_slice(384);
+
+    let mut batch_2d = renderer_2d::sprite2d_init(64);
+    let verts_2d: cap MutSlice<imgui_rts::UiVertex> = arena.alloc_slice(256);
+    let inds_2d: cap MutSlice<u32> = arena.alloc_slice(384);
+    let cam_buf: cap MutSlice<camera::CameraUniform> = arena.alloc_slice(1);
+
+    let mut mx: float = 0.0;
+    let mut my: float = 0.0;
+    let mut mbtns: u32 = 0;
+    let mut keys: u32 = 0;
+    let mut angle: float = 0.0;
+    let mut prev_t: float = window::rtsc_time_now_sec();
+
+    while window::rtsc_window_poll(win_hnd, inout mx, inout my, inout mbtns, inout keys) {
+        if (keys & window::KEY_ESC_BIT) != 0 {
+            break;
+        }
+        let now_t = window::rtsc_time_now_sec();
+        let mut dt = now_t - prev_t;
+        prev_t = now_t;
+        if dt <= 0.0 || dt > 0.1 { dt = 0.016; }
+
+        let packed = window::rtsc_window_get_size_packed(win_hnd);
+        let cur_w = (packed >> 32) as float;
+        let cur_h = (packed & 0xFFFFFFFF) as float;
+        if cur_w > 1.0 && cur_h > 1.0 {
+            cam.aspect = cur_w / cur_h;
+        }
+
+        angle = angle + 35.0 * dt;
+
+        let mut cmd = rhi::rhi_begin_frame(inout dev);
+        let cam_uni = camera::camera_build_uniform(inout cam, cur_w, cur_h, true);
+        cam_buf[0] = cam_uni;
+        let cam_ubo = vram_arena::vram_arena_alloc_aligned(inout dev.arena, 256, vram_arena::GPU_CBUFFER_ALIGNMENT);
+        vram_arena::vram_arena_write_raw(dev.arena, cam_ubo, mem::slice_ptr(cam_buf), 256);
+
+        // 3D Pass
+        renderer_3d::r3d_begin(inout r3d);
+        renderer_3d::r3d_add_box(inout r3d, verts_3d, inds_3d, vec3::vec3_new(0.0, -0.2, 0.0), vec3::vec3_new(6.0, 0.2, 6.0), 0.0, vec4::vec4_new(0.22, 0.25, 0.30, 1.0));
+        renderer_3d::r3d_add_box(inout r3d, verts_3d, inds_3d, vec3::vec3_new(0.0, 1.0, 0.0), vec3::vec3_new(1.0, 1.0, 1.0), angle, vec4::vec4_new(0.30, 0.65, 0.95, 1.0));
+        renderer_3d::r3d_flush(inout r3d, inout dev, cmd, verts_3d, inds_3d, cam_ubo);
+
+        // 2D Overlay Pass (opcional via SpriteBatch2D)
+        let mut cam2d = camera::camera_init_orbit(cam.aspect, 0.0, -89.0, 89.0, 45.0, 10.0);
+        cam2d.mode = camera::MODE_ORTHO_2D;
+        cam2d.proj_type = camera::PROJ_ORTHOGRAPHIC;
+        cam2d.ortho_half_height = 10.0;
+        cam_buf[0] = camera::camera_build_uniform(inout cam2d, cur_w, cur_h, true);
+        let cam2d_ubo = vram_arena::vram_arena_alloc_aligned(inout dev.arena, 256, vram_arena::GPU_CBUFFER_ALIGNMENT);
+        vram_arena::vram_arena_write_raw(dev.arena, cam2d_ubo, mem::slice_ptr(cam_buf), 256);
+
+        renderer_2d::sprite2d_begin(inout batch_2d, 0);
+        renderer_2d::sprite2d_draw_rect(inout batch_2d, verts_2d, inds_2d, -16.0, 8.5, 4.0, 0.6, 0xFF33CC88);
+        renderer_2d::sprite2d_flush(inout batch_2d, inout dev, cmd, verts_2d, inds_2d, cam2d_ubo);
+
+        let _ok = rhi::rhi_end_frame_and_present(dev, inout cmd);
+    }
+
+    audio::audio_stop_all();
+    logger::log_info(inout log, log_entries, logger::CAT_CORE, "Engine encerrada com sucesso");
+    return 0;
+}

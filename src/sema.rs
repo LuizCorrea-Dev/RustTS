@@ -1026,7 +1026,12 @@ impl SemanticAnalyzer {
             });
         }
 
-        if func.attributes.iter().any(|a| matches!(a, Attribute::GpuKernel)) {
+        if func.attributes.iter().any(|a| {
+            matches!(
+                a,
+                Attribute::GpuKernel | Attribute::VertexShader | Attribute::FragmentShader
+            )
+        }) {
             self.check_gpu_kernel_constraints(func, sym_table);
         }
 
@@ -1822,6 +1827,48 @@ impl SemanticAnalyzer {
                         ],
                     });
                 }
+                if namespace == "mem" || namespace == "core.mem" {
+                    for a in args {
+                        self.check_expr(func, env, sym_table, a);
+                    }
+                    let expected_arity = match called_fn.as_str() {
+                        "addr_of" | "slice_ptr" | "free_aligned" | "str_len" => Some(1usize),
+                        "zero" | "alloc_aligned" | "str_byte" => Some(2usize),
+                        "copy" => Some(3usize),
+                        _ => None,
+                    };
+                    match expected_arity {
+                        Some(exp) if args.len() != exp => {
+                            self.diagnostics.push(DiagnosticEntry {
+                                error_code: "RTS-E0301".to_string(),
+                                category: DiagnosticCategory::TypeMismatch,
+                                file: self.file_path.clone(),
+                                span: *span,
+                                ast_node: format!("MemIntrinsic({}::{})", namespace, called_fn),
+                                message: format!(
+                                    "Intrinsic 'mem::{}()' in '{}' expected {} argument(s), found {}.",
+                                    called_fn, func.name, exp, args.len()
+                                ),
+                                deterministic_fixes: vec![],
+                            });
+                        }
+                        None => {
+                            self.diagnostics.push(DiagnosticEntry {
+                                error_code: "RTS-E0301".to_string(),
+                                category: DiagnosticCategory::TypeMismatch,
+                                file: self.file_path.clone(),
+                                span: *span,
+                                ast_node: format!("MemIntrinsic({}::{})", namespace, called_fn),
+                                message: format!(
+                                    "Unknown 'core.mem' intrinsic 'mem::{}()' in '{}'.",
+                                    called_fn, func.name
+                                ),
+                                deterministic_fixes: vec![],
+                            });
+                        }
+                        _ => {}
+                    }
+                }
                 // 3. Resolução Simbólica e Propagação Transitiva no Call Graph (`SymbolTable`)
                 else {
                     let qualified_key = if namespace == "self" {
@@ -1831,7 +1878,7 @@ impl SemanticAnalyzer {
                     };
                     let is_builtin_ns = matches!(
                         namespace.as_str(),
-                        "io" | "math" | "core" | "time" | "physics" | "net" | "fs"
+                        "io" | "math" | "core" | "mem" | "time" | "physics" | "net" | "fs"
                     );
                     let lookup_key = if sym_table.functions.contains_key(&qualified_key)
                         || is_builtin_ns
@@ -2663,6 +2710,16 @@ impl SemanticAnalyzer {
                         _ => {}
                     }
                 }
+                if namespace == "mem" || namespace == "core.mem" {
+                    return match called_fn.as_str() {
+                        "addr_of" | "slice_ptr" | "alloc_aligned" => {
+                            Some(TypeExpr::Primitive(PrimitiveType::U64))
+                        }
+                        "str_len" => Some(TypeExpr::Primitive(PrimitiveType::Usize)),
+                        "str_byte" => Some(TypeExpr::Primitive(PrimitiveType::U8)),
+                        _ => None,
+                    };
+                }
                 let qualified_key = if namespace == "self" {
                     called_fn.clone()
                 } else {
@@ -2670,7 +2727,7 @@ impl SemanticAnalyzer {
                 };
                 let is_builtin_ns = matches!(
                     namespace.as_str(),
-                    "io" | "math" | "core" | "time" | "physics" | "net" | "fs"
+                    "io" | "math" | "core" | "mem" | "time" | "physics" | "net" | "fs"
                 );
                 let lookup_key = if sym_table.fn_return_types.contains_key(&qualified_key)
                     || is_builtin_ns
@@ -2695,6 +2752,16 @@ impl SemanticAnalyzer {
                 ..
             } => {
                 if let Some(en) = enum_name {
+                    if payload.is_none() && !sym_table.enums.contains_key(en) {
+                        let qualified_const = format!("{}__{}", en, variant);
+                        if let Some(c_ty) = sym_table
+                            .consts
+                            .get(&qualified_const)
+                            .or_else(|| sym_table.consts.get(variant))
+                        {
+                            return Some(c_ty.clone());
+                        }
+                    }
                     return Some(TypeExpr::Named {
                         name: en.clone(),
                         generics: vec![],
@@ -2839,7 +2906,7 @@ impl SemanticAnalyzer {
             | "gamepad_fire_down"
             | "was_gamepad_pressed"
             | "set_vibration" => Some(CapabilitySpec::from_name_and_arg("InputDevice", None)),
-            "create_dir" | "write_text" | "write_struct" | "read_struct" => {
+            "create_dir" | "write_text" | "write_struct" | "read_struct" | "write_raw" | "read_raw" => {
                 Some(CapabilitySpec::from_name_and_arg("FileSystem", None))
             }
             "write_synth_wav" | "play_wav_async" => {
@@ -3034,8 +3101,11 @@ impl SemanticAnalyzer {
             (CapabilityKind::InputDevice, "poll" | "set_vibration") => v,
             (
                 CapabilityKind::FileSystem,
-                "create_dir" | "write_text" | "write_struct" | "read_struct",
+                "create_dir" | "write_text" | "write_struct" | "read_struct" | "write_raw",
             ) => b,
+            (CapabilityKind::FileSystem, "read_raw") => {
+                Some(Some(TypeExpr::Primitive(PrimitiveType::U64)))
+            }
             (CapabilityKind::AudioDevice, "write_synth_wav") => b,
             (CapabilityKind::AudioDevice, "play_wav_async") => v,
             (CapabilityKind::Clock, "tick_frame_fps" | "last_frame_ms") => f,
@@ -3104,6 +3174,10 @@ impl SemanticAnalyzer {
             (CapabilityKind::FileSystem, "create_dir") => Some(vec![str_ty.clone()]),
             (CapabilityKind::FileSystem, "write_text") => {
                 Some(vec![str_ty.clone(), str_ty.clone()])
+            }
+            (CapabilityKind::FileSystem, "write_raw" | "read_raw") => {
+                let u64_ty = TypeExpr::Primitive(PrimitiveType::U64);
+                Some(vec![str_ty.clone(), u64_ty.clone(), u64_ty])
             }
             (CapabilityKind::FileSystem, "write_struct" | "read_struct") => {
                 if args.len() != 2 {

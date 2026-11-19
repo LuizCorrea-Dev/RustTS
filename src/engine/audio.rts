@@ -1,0 +1,17 @@
+module engine.audio;
+
+@sealed_sig
+pub extern "C" fn rtsc_audio_play_wav(path: str, loop_play: bool) -> bool;
+
+@sealed_sig
+pub extern "C" fn rtsc_audio_stop_all();
+
+@sealed_sig
+pub fn audio_play_wav(path: str, loop_play: bool) -> bool {
+    return rtsc_audio_play_wav(path, loop_play);
+}
+
+@sealed_sig
+pub fn audio_stop_all() {
+    rtsc_audio_stop_all();
+}

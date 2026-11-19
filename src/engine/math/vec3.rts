@@ -1,0 +1,86 @@
+module engine.math.vec3;
+import core.math;
+
+@repr_c
+pub struct Vec3 {
+    pub x: float,
+    pub y: float,
+    pub z: float,
+}
+
+@sealed_sig
+pub fn vec3_new(x: float, y: float, z: float) -> Vec3 {
+    return Vec3 { x: x, y: y, z: z };
+}
+
+@sealed_sig
+pub fn vec3_zero() -> Vec3 {
+    return Vec3 { x: 0.0, y: 0.0, z: 0.0 };
+}
+
+@sealed_sig
+pub fn vec3_up() -> Vec3 {
+    return Vec3 { x: 0.0, y: 1.0, z: 0.0 };
+}
+
+@sealed_sig
+pub fn vec3_add(a: Vec3, b: Vec3) -> Vec3 {
+    return Vec3 { x: a.x + b.x, y: a.y + b.y, z: a.z + b.z };
+}
+
+@sealed_sig
+pub fn vec3_sub(a: Vec3, b: Vec3) -> Vec3 {
+    return Vec3 { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z };
+}
+
+@sealed_sig
+pub fn vec3_scale(v: Vec3, s: float) -> Vec3 {
+    return Vec3 { x: v.x * s, y: v.y * s, z: v.z * s };
+}
+
+@sealed_sig
+pub fn vec3_dot(a: Vec3, b: Vec3) -> float {
+    return (a.x * b.x) + (a.y * b.y) + (a.z * b.z);
+}
+
+@sealed_sig
+pub fn vec3_cross(a: Vec3, b: Vec3) -> Vec3 {
+    return Vec3 {
+        x: (a.y * b.z) - (a.z * b.y),
+        y: (a.z * b.x) - (a.x * b.z),
+        z: (a.x * b.y) - (a.y * b.x),
+    };
+}
+
+@sealed_sig
+pub fn vec3_length_sq(v: Vec3) -> float {
+    return (v.x * v.x) + (v.y * v.y) + (v.z * v.z);
+}
+
+@sealed_sig
+pub fn vec3_length(v: Vec3) -> float {
+    return math::sqrt(vec3_length_sq(v));
+}
+
+@sealed_sig
+pub fn vec3_normalize(v: Vec3) -> Vec3 {
+    let len_sq = vec3_length_sq(v);
+    if len_sq <= 0.0000001 {
+        return Vec3 { x: 0.0, y: 0.0, z: 0.0 };
+    }
+    let inv_len = 1.0 / math::sqrt(len_sq);
+    return Vec3 {
+        x: v.x * inv_len,
+        y: v.y * inv_len,
+        z: v.z * inv_len,
+    };
+}
+
+@sealed_sig
+pub fn vec3_clamp(v: Vec3, min_val: float, max_val: float) -> Vec3 {
+    return Vec3 {
+        x: math::clamp(v.x, min_val, max_val),
+        y: math::clamp(v.y, min_val, max_val),
+        z: math::clamp(v.z, min_val, max_val),
+    };
+}

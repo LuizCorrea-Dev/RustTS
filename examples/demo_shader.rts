@@ -1,0 +1,77 @@
+module examples.demo_shader;
+
+import core.mem;
+import engine.platform.window;
+import engine.gpu.rhi;
+import engine.gpu.vram_arena;
+import engine.math.vec4;
+
+@sealed_sig
+pub fn main(arena: cap StaticArena) -> int {
+    let win_w: u32 = 1280;
+    let win_h: u32 = 720;
+    let win_hnd = window::rtsc_window_create(win_w, win_h);
+    let mut dev = rhi::rhi_device_init(
+        rhi::BACKEND_VULKAN,
+        win_hnd,
+        win_w,
+        win_h,
+        64 * 1024 * 1024,
+        true
+    );
+    if !dev.is_valid {
+        return 1;
+    }
+
+    let fs = FileSystem::new();
+    let vs_buf: cap MutSlice<u8> = arena.alloc_slice(16384);
+    let fs_buf: cap MutSlice<u8> = arena.alloc_slice(16384);
+    let vs_len = fs.read_raw("build/custom_vs.spv", mem::slice_ptr(vs_buf), 16384);
+    let fs_len = fs.read_raw("build/custom_fs.spv", mem::slice_ptr(fs_buf), 16384);
+
+    let custom_pipe = rhi::rhi_create_graphics_pipeline(
+        dev,
+        mem::slice_ptr(vs_buf),
+        vs_len,
+        mem::slice_ptr(fs_buf),
+        fs_len,
+        16
+    );
+    if custom_pipe == 0 && dev.native_device_h != 0 {
+        return 2;
+    }
+
+    // Triangle vertices (vec4 clip-space positions, 16 bytes each)
+    let verts: cap MutSlice<vec4::Vec4> = arena.alloc_slice(3);
+    verts[0] = vec4::vec4_new(0.0, -0.6, 0.0, 1.0);
+    verts[1] = vec4::vec4_new(0.6,  0.6, 0.0, 1.0);
+    verts[2] = vec4::vec4_new(-0.6, 0.6, 0.0, 1.0);
+
+    let inds: cap MutSlice<u32> = arena.alloc_slice(3);
+    inds[0] = 0;
+    inds[1] = 1;
+    inds[2] = 2;
+
+    let mut mx: float = 0.0;
+    let mut my: float = 0.0;
+    let mut mbtns: u32 = 0;
+    let mut keys: u32 = 0;
+
+    while window::rtsc_window_poll(win_hnd, inout mx, inout my, inout mbtns, inout keys) {
+        let mut cmd = rhi::rhi_begin_frame(inout dev);
+        let vbo = vram_arena::vram_arena_alloc_aligned(inout dev.arena, 48, vram_arena::GPU_VERTEX_ALIGNMENT);
+        let ibo = vram_arena::vram_arena_alloc_aligned(inout dev.arena, 12, vram_arena::GPU_VERTEX_ALIGNMENT);
+        let ubo = vram_arena::vram_arena_alloc_aligned(inout dev.arena, 64, vram_arena::GPU_CBUFFER_ALIGNMENT);
+
+        vram_arena::vram_arena_write_raw(dev.arena, vbo, mem::slice_ptr(verts), 48);
+        vram_arena::vram_arena_write_raw(dev.arena, ibo, mem::slice_ptr(inds), 12);
+
+        rhi::rhi_cmd_bind_pipeline(cmd, custom_pipe);
+        rhi::rhi_cmd_bind_mesh_and_uniforms(cmd, vbo, ibo, ubo);
+        rhi::rhi_cmd_draw_indexed(cmd, 3, 0, 0);
+
+        let _ok = rhi::rhi_end_frame_and_present(dev, inout cmd);
+    }
+
+    return 0;
+}

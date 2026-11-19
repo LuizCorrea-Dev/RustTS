@@ -1,0 +1,93 @@
+module engine.editor.gizmo;
+import core.math;
+import engine.math.vec3;
+import engine.physics.raycast;
+
+// Núcleo Agnóstico do Editor Visual e Gizmos 3D
+
+pub const GIZMO_MODE_TRANSLATE: u32 = 0;
+pub const GIZMO_MODE_ROTATE: u32    = 1;
+pub const GIZMO_MODE_SCALE: u32     = 2;
+
+pub const AXIS_NONE: u32 = 0;
+pub const AXIS_X: u32    = 1;
+pub const AXIS_Y: u32    = 2;
+pub const AXIS_Z: u32    = 3;
+pub const PLANE_XZ: u32  = 4;
+pub const PLANE_XY: u32  = 5;
+
+@repr_c
+pub struct GizmoConfig {
+    pub mode: u32,
+    pub active_axis: u32,
+    pub snap_enabled: bool,
+    pub snap_translate: float,
+    pub snap_rotate_deg: float,
+    pub snap_scale: float,
+}
+
+@sealed_sig
+pub fn gizmo_init_default() -> GizmoConfig {
+    return GizmoConfig {
+        mode: GIZMO_MODE_TRANSLATE,
+        active_axis: AXIS_NONE,
+        snap_enabled: true,
+        snap_translate: 0.25,
+        snap_rotate_deg: 15.0,
+        snap_scale: 0.1,
+    };
+}
+
+@sealed_sig
+pub fn snap_scalar(value: float, step: float) -> float {
+    if step <= 0.0001 { return value; }
+    return math::floor((value / step) + 0.5) * step;
+}
+
+@sealed_sig
+pub fn gizmo_snap_vec3(v: vec3::Vec3, step: float) -> vec3::Vec3 {
+    return vec3::Vec3 {
+        x: snap_scalar(v.x, step),
+        y: snap_scalar(v.y, step),
+        z: snap_scalar(v.z, step),
+    };
+}
+
+// Calcula a nova posicao 3D de um objeto arrastado pelo rato sobre um plano ou eixo
+@sealed_sig
+pub fn gizmo_compute_drag_position(
+    cfg: GizmoConfig,
+    ray: raycast::Ray3D,
+    current_obj_pos: vec3::Vec3
+) -> vec3::Vec3 {
+    let mut plane_norm = vec3::vec3_up();
+    if cfg.active_axis == AXIS_Y || cfg.active_axis == PLANE_XY {
+        plane_norm = vec3::Vec3 { x: 0.0, y: 0.0, z: 1.0 };
+    }
+
+    let hit = raycast::ray_intersect_plane(ray, current_obj_pos, plane_norm);
+    if !hit.hit {
+        return current_obj_pos;
+    }
+
+    let mut next_pos = current_obj_pos;
+    if cfg.active_axis == AXIS_X {
+        next_pos.x = hit.point.x;
+    } else if cfg.active_axis == AXIS_Y {
+        next_pos.y = hit.point.y;
+    } else if cfg.active_axis == AXIS_Z {
+        next_pos.z = hit.point.z;
+    } else if cfg.active_axis == PLANE_XY {
+        next_pos.x = hit.point.x;
+        next_pos.y = hit.point.y;
+    } else {
+        // Padrao PLANE_XZ (arrasto sobre o terreno/piso)
+        next_pos.x = hit.point.x;
+        next_pos.z = hit.point.z;
+    }
+
+    if cfg.snap_enabled {
+        return gizmo_snap_vec3(next_pos, cfg.snap_translate);
+    }
+    return next_pos;
+}

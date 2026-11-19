@@ -1,4 +1,4 @@
-# RustTS (`.rts`) — Matriz de Regras, Especificação Arquitetural e Guia Mestre
+# RustTS (`.rts`) — Matriz de Regras, Especificação Arquitetural e Guia Mestre (`v2.2.0-rts`)
 
 ## 1. Visão Geral e Filosofia Central
 
@@ -263,4 +263,4 @@ Para garantir que a RustTS nunca se degrade em uma linguagem inchada como C++ ao
 * **Etapa 2 (Análise Semântica e `cap` Checker):** Implementar a tabela de símbolos, verificador de tipos, verificador de escopo de Arenas e validador estático de capacidades com saída `--json-diagnostics`.
 * **Etapa 3 (Transpilador Bootstrap):** Implementar os geradores de código (`codegen`) emitindo **Rust nativo** e **C99** limpos, permitindo compilar binários reais desde a primeira semana usando `rustc` ou `clang` como backend.
 * **Etapa 4 (Pontes para Motores de Jogos):** Implementar os emissores especializados `--target unreal` (gerador `.h`/`.cpp` UHT) e `--target unity` (C ABI + C# wrapper).
-* **Etapa 5 (Runtime Sandbox e GPU):** Integrar `wasmtime` para o modo `--target wasm-sandbox` e emissão de shaders SPIR-V/WGSL a partir de `@gpu_kernel`.
+* **Etapa 5 (Runtime Sandbox, Shaders Gráficos e Engine Vulkan 2D/3D):** Integrar WASI (`--target wasm`), compilação de `@gpu_kernel`, `@vertex_shader` e `@fragment_shader` para SPIR-V 1.5 / WGSL (`PushConstant Mat4`, `Sampler2D`), e runtime gráfico Vulkan 2D/3D (`Renderer3D`, `SpriteBatch2D`, `@repr_c`, `@sealed_sig`).

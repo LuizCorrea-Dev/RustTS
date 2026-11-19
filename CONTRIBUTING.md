@@ -2,7 +2,7 @@
   <img src="./rustts_language_logo.png" alt="RustTS Logo" width="220">
 </p>
 
-# Guia de Contribuição — RustTS (`rtsc v2.0.0-rts`)
+# Guia de Contribuição — RustTS (`rtsc v2.2.0-rts`)
 
 Obrigado pelo interesse em contribuir com o **RustTS (`rtsc`)**! Este repositório reúne o compilador de sistemas determinístico em Rust e seus backends para **C99 SIMD/SoA**, **MLIR SSA**, **LLVM IR Direto**, **GPU Compute (SPIR-V 1.5 / WGSL)**, **Sandbox WASI (Fuel Metering)**, **Unreal Engine 5**, **Unity** e **TypeScript SDK**.
 
@@ -100,11 +100,12 @@ Execute os comandos abaixo após sua edição final e garanta 100% de aprovaçã
    cargo run -- build examples/telemetry_server.rts --emit-ts-sdk > /dev/null
    ```
    *(No Windows PowerShell, use `| Out-Null` em vez de `> /dev/null`.)*
-4. **Validação C99 / AVX2 (obrigatória ao alterar `codegen_native.rs` ou `examples/*.c`):**
+4. **Execução completa do compilador e validação dos demos (`cargo test` — 73/73 PASS):**
    ```bash
-   clang -std=c11 -O3 -mavx2 -mfma -Wall -Wextra -Werror examples/thermal_control_benchmark.c -o thermal_check
-   clang -std=c11 -O3 -mavx2 -mfma -Wall -Wextra -Werror examples/engine_physics_benchmark.c -o physics_check
-   clang -std=c11 -O3 -mavx2 -mfma -Wall -Wextra -Werror examples/ballistics_10k_benchmark.c -o ballistics_check
+   cargo test
+   RTSC_HEADLESS=1 cargo run -- run src/main.rts
+   RTSC_HEADLESS=1 cargo run -- run examples/demo_2d.rts
+   RTSC_HEADLESS=1 cargo run -- run examples/demo_3d.rts
    ```
 5. **Inclua testes de regressão em `src/lib.rs`** cobrindo novos diagnósticos `RTS-EXXXX` ou novas construções de lowering.
 

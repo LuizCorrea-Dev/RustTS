@@ -1,0 +1,108 @@
+module engine.core.jobs;
+import core.mem;
+
+pub const MAX_JOB_SLOTS: usize      = 1024;
+pub const JOB_STATUS_IDLE: u32      = 0;
+pub const JOB_STATUS_QUEUED: u32    = 1;
+pub const JOB_STATUS_RUNNING: u32   = 2;
+pub const JOB_STATUS_COMPLETED: u32 = 3;
+
+@repr_c
+pub struct JobDescriptor {
+    pub task_type_id: u32,
+    pub batch_start_index: u32,
+    pub batch_end_index: u32,
+    pub status: u32,
+    pub shared_data_ptr: u64,
+    pub output_buffer_ptr: u64,
+}
+
+@repr_c
+pub struct JobSystemState {
+    pub worker_thread_count: u32,
+    pub head_write_idx: u32,
+    pub tail_read_idx: u32,
+    pub active_jobs_count: u32,
+    pub is_running: bool,
+}
+
+@sealed_sig
+pub extern "C" fn rtsc_threads_init_pool(requested_threads: u32) -> u32;
+
+@sealed_sig
+pub extern "C" fn rtsc_threads_wake_all(queue_ptr: u64, job_count: u32);
+
+@sealed_sig
+pub extern "C" fn rtsc_threads_Wait_idle();
+
+@sealed_sig
+pub fn jobs_init(requested_workers: u32) -> JobSystemState {
+    let actual_workers = rtsc_threads_init_pool(requested_workers);
+    return JobSystemState {
+        worker_thread_count: if actual_workers > 0 { actual_workers } else { 1 },
+        head_write_idx: 0,
+        tail_read_idx: 0,
+        active_jobs_count: 0,
+        is_running: true,
+    };
+}
+
+@sealed_sig
+pub fn jobs_dispatch_parallel_for(
+    state: inout JobSystemState,
+    queue: cap MutSlice<JobDescriptor>,
+    task_type_id: u32,
+    total_items: u32,
+    min_batch_size: u32,
+    shared_data_ptr: u64,
+    output_buffer_ptr: u64
+) -> u32 {
+    if total_items == 0 { return 0; }
+
+    state.head_write_idx = 0;
+    state.tail_read_idx = 0;
+    state.active_jobs_count = 0;
+
+    let workers = state.worker_thread_count;
+    let mut batch_size = total_items / workers;
+    if batch_size < min_batch_size {
+        batch_size = min_batch_size;
+    }
+
+    let mut dispatched_batches: u32 = 0;
+    let mut current_start: u32 = 0;
+
+    while current_start < total_items && (dispatched_batches as usize) < MAX_JOB_SLOTS {
+        let mut current_end = current_start + batch_size;
+        if current_end > total_items {
+            current_end = total_items;
+        }
+
+        let slot = dispatched_batches as usize;
+        queue[slot] = JobDescriptor {
+            task_type_id: task_type_id,
+            batch_start_index: current_start,
+            batch_end_index: current_end,
+            status: JOB_STATUS_QUEUED,
+            shared_data_ptr: shared_data_ptr,
+            output_buffer_ptr: output_buffer_ptr,
+        };
+
+        state.head_write_idx += 1;
+        state.active_jobs_count += 1;
+        dispatched_batches += 1;
+        current_start = current_end;
+    }
+
+    rtsc_threads_wake_all(mem::slice_ptr(queue), dispatched_batches);
+    return dispatched_batches;
+}
+
+@sealed_sig
+pub fn jobs_wait_all(state: inout JobSystemState) {
+    if state.active_jobs_count > 0 {
+        rtsc_threads_Wait_idle();
+        state.active_jobs_count = 0;
+        state.tail_read_idx = state.head_write_idx;
+    }
+}

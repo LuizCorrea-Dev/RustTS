@@ -1,0 +1,61 @@
+module engine.math.vec2;
+import core.math;
+// Biblioteca Matemática 3D Modular
+@repr_c
+pub struct Vec2 {
+    pub x: float,
+    pub y: float,
+}
+
+@sealed_sig
+pub fn vec2_new(x: float, y: float) -> Vec2 {
+    return Vec2 { x: x, y: y };
+}
+
+@sealed_sig
+pub fn vec2_add(a: Vec2, b: Vec2) -> Vec2 {
+    return Vec2 { x: a.x + b.x, y: a.y + b.y };
+}
+
+@sealed_sig
+pub fn vec2_sub(a: Vec2, b: Vec2) -> Vec2 {
+    return Vec2 { x: a.x - b.x, y: a.y - b.y };
+}
+
+@sealed_sig
+pub fn vec2_scale(v: Vec2, s: float) -> Vec2 {
+    return Vec2 { x: v.x * s, y: v.y * s };
+}
+
+@sealed_sig
+pub fn vec2_dot(a: Vec2, b: Vec2) -> float {
+    return (a.x * b.x) + (a.y * b.y);
+}
+
+@sealed_sig
+pub fn vec2_length_sq(v: Vec2) -> float {
+    return (v.x * v.x) + (v.y * v.y);
+}
+
+@sealed_sig
+pub fn vec2_length(v: Vec2) -> float {
+    return math::sqrt(vec2_length_sq(v));
+}
+
+@sealed_sig
+pub fn vec2_normalize(v: Vec2) -> Vec2 {
+    let len_sq = vec2_length_sq(v);
+    if len_sq <= 0.0000001 {
+        return Vec2 { x: 0.0, y: 0.0 };
+    }
+    let inv_len = 1.0 / math::sqrt(len_sq);
+    return Vec2 { x: v.x * inv_len, y: v.y * inv_len };
+}
+
+@sealed_sig
+pub fn vec2_lerp(a: Vec2, b: Vec2, t: float) -> Vec2 {
+    return Vec2 {
+        x: a.x + (b.x - a.x) * t,
+        y: a.y + (b.y - a.y) * t,
+    };
+}

@@ -1,0 +1,41 @@
+module engine.math.vec4;
+import engine.math.vec3;
+
+// Alinhado a 16 bytes para Constant Buffers (DX12) e Uniform Buffers (Vulkan std140)
+@repr_c
+pub struct Vec4 {
+    pub x: float,
+    pub y: float,
+    pub z: float,
+    pub w: float,
+}
+
+@sealed_sig
+pub fn vec4_new(x: float, y: float, z: float, w: float) -> Vec4 {
+    return Vec4 { x: x, y: y, z: z, w: w };
+}
+
+@sealed_sig
+pub fn vec4_from_vec3(v: vec3::Vec3, w: float) -> Vec4 {
+    return Vec4 { x: v.x, y: v.y, z: v.z, w: w };
+}
+
+@sealed_sig
+pub fn vec4_to_vec3(v: Vec4) -> vec3::Vec3 {
+    return vec3::Vec3 { x: v.x, y: v.y, z: v.z };
+}
+
+@sealed_sig
+pub fn vec4_add(a: Vec4, b: Vec4) -> Vec4 {
+    return Vec4 { x: a.x + b.x, y: a.y + b.y, z: a.z + b.z, w: a.w + b.w };
+}
+
+@sealed_sig
+pub fn vec4_scale(v: Vec4, s: float) -> Vec4 {
+    return Vec4 { x: v.x * s, y: v.y * s, z: v.z * s, w: v.w * s };
+}
+
+@sealed_sig
+pub fn vec4_dot(a: Vec4, b: Vec4) -> float {
+    return (a.x * b.x) + (a.y * b.y) + (a.z * b.z) + (a.w * b.w);
+}

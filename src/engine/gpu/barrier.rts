@@ -1,0 +1,64 @@
+module engine.gpu.barrier;
+
+// Estados explicitos obrigatorios para evitar crash nos drivers da AMD Radeon
+pub const STATE_UNDEFINED: u32         = 0;
+pub const STATE_VERTEX_BUFFER: u32     = 1;
+pub const STATE_INDEX_BUFFER: u32      = 2;
+pub const STATE_CONSTANT_BUFFER: u32   = 3;
+pub const STATE_RENDER_TARGET: u32     = 4;
+pub const STATE_DEPTH_WRITE: u32       = 5;
+pub const STATE_SHADER_RESOURCE: u32   = 6;
+pub const STATE_COPY_DEST: u32         = 7;
+pub const STATE_PRESENT: u32           = 8;
+
+@repr_c
+pub struct GpuTextureBarrier {
+    pub texture_handle: u64,
+    pub state_before: u32,
+    pub state_after: u32,
+    pub mip_level: u32,
+    pub array_layer: u32,
+}
+
+@repr_c
+pub struct GpuBufferBarrier {
+    pub buffer_handle: u64,
+    pub state_before: u32,
+    pub state_after: u32,
+    pub offset: u64,
+    pub size: u64,
+}
+
+@sealed_sig
+pub fn barrier_texture_criar(
+    tex: u64,
+    before: u32,
+    after: u32,
+    mip: u32,
+    layer: u32
+) -> GpuTextureBarrier {
+    return GpuTextureBarrier {
+        texture_handle: tex,
+        state_before: before,
+        state_after: after,
+        mip_level: mip,
+        array_layer: layer,
+    };
+}
+
+@sealed_sig
+pub fn barrier_buffer_criar(
+    buf: u64,
+    before: u32,
+    after: u32,
+    offset: u64,
+    size: u64
+) -> GpuBufferBarrier {
+    return GpuBufferBarrier {
+        buffer_handle: buf,
+        state_before: before,
+        state_after: after,
+        offset: offset,
+        size: size,
+    };
+}

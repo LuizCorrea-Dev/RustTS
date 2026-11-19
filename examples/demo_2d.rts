@@ -1,0 +1,157 @@
+module examples.demo_2d;
+
+import core.mem;
+import core.math;
+import engine.platform.window;
+import engine.gpu.rhi;
+import engine.gpu.vram_arena;
+import engine.camera;
+import engine.math.vec3;
+import engine.ui.imgui_rts;
+import engine.anim.sprite_anim;
+import engine.renderer_2d;
+
+fn make_2d_camera(aspect: float) -> camera::Camera3D {
+    let mut cam = camera::camera_init_orbit(aspect, 0.0, -89.0, 89.0, 45.0, 10.0);
+    cam.mode = camera::MODE_ORTHO_2D;
+    cam.proj_type = camera::PROJ_ORTHOGRAPHIC;
+    cam.ortho_half_height = 10.0;
+    cam.z_near = 0.1;
+    cam.z_far = 100.0;
+    cam.target = vec3::Vec3 { x: 0.0, y: 0.0, z: 0.0 };
+    return cam;
+}
+
+@sealed_sig
+pub fn main(arena: cap StaticArena) -> int {
+    let win_w: u32 = 1280;
+    let win_h: u32 = 720;
+    let win_hnd = window::rtsc_window_create(win_w, win_h);
+    let mut dev = rhi::rhi_device_init(
+        rhi::BACKEND_VULKAN,
+        win_hnd,
+        win_w,
+        win_h,
+        64 * 1024 * 1024,
+        true
+    );
+    if !dev.is_valid {
+        return 1;
+    }
+
+    // 1. Procedural 64x64 RGBA checkerboard texture for 2D sprites
+    let tex_w: u32 = 64;
+    let tex_h: u32 = 64;
+    let pixels: cap MutSlice<u32> = arena.alloc_slice(4096);
+    let mut py: u32 = 0;
+    while py < tex_h {
+        let mut px: u32 = 0;
+        while px < tex_w {
+            let tile = ((px / 8) + (py / 8)) % 2;
+            let col: u32 = if tile == 0 { 0xFFFFFFFF } else { 0xFFCCEEFF };
+            pixels[py * tex_w + px] = col;
+            px = px + 1;
+        }
+        py = py + 1;
+    }
+    let sprite_tex = rhi::rhi_texture_create_rgba(dev, tex_w, tex_h, mem::slice_ptr(pixels));
+
+    // 2. Camera 2D + SpriteBatch2D + SpriteAnimator
+    let mut cam = make_2d_camera(1280.0 / 720.0);
+    let max_quads: u32 = 256;
+    let mut batch = renderer_2d::sprite2d_init(max_quads);
+    let verts: cap MutSlice<imgui_rts::UiVertex> = arena.alloc_slice(1024);
+    let inds: cap MutSlice<u32> = arena.alloc_slice(1536);
+    let cam_buf: cap MutSlice<camera::CameraUniform> = arena.alloc_slice(1);
+
+    let mut anim = sprite_anim::sprite_anim_init(0, true);
+    let clip = sprite_anim::SpriteClipDesc {
+        clip_id: 0,
+        texture_layer: 0,
+        start_col: 0,
+        start_row: 0,
+        frame_count: 4,
+        directions_count: 1,
+        atlas_cols: 2,
+        atlas_rows: 2,
+        fps: 6.0,
+    };
+
+    let mut player_x: float = 0.0;
+    let mut player_y: float = -3.0;
+    let mut player_vy: float = 0.0;
+    let mut time_acc: float = 0.0;
+    let dt: float = 0.016;
+
+    let mut mx: float = 0.0;
+    let mut my: float = 0.0;
+    let mut mbtns: u32 = 0;
+    let mut keys: u32 = 0;
+
+    while window::rtsc_window_poll(win_hnd, inout mx, inout my, inout mbtns, inout keys) {
+        let packed = window::rtsc_window_get_size_packed(win_hnd);
+        let cur_w = (packed >> 32) as float;
+        let cur_h = (packed & 0xFFFFFFFF) as float;
+        if cur_w > 1.0 && cur_h > 1.0 {
+            cam.aspect = cur_w / cur_h;
+        }
+
+        // Player 2D movement
+        if (keys & window::KEY_A_BIT) != 0 { player_x = player_x - 6.0 * dt; }
+        if (keys & window::KEY_D_BIT) != 0 { player_x = player_x + 6.0 * dt; }
+        if (keys & window::KEY_W_BIT) != 0 && player_y <= -2.99 {
+            player_vy = 10.0;
+        }
+        player_vy = player_vy - 24.0 * dt;
+        player_y = player_y + player_vy * dt;
+        if player_y < -3.0 {
+            player_y = -3.0;
+            player_vy = 0.0;
+        }
+
+        // Smooth 2D camera follow
+        cam.target.x = cam.target.x + (player_x - cam.target.x) * 0.1;
+        time_acc = time_acc + dt;
+
+        // Evaluate sprite animation
+        let uv_player = sprite_anim::sprite_anim_evaluate(inout anim, clip, dt);
+
+        // Begin RHI frame
+        let mut cmd = rhi::rhi_begin_frame(inout dev);
+        let cam_uni = camera::camera_build_uniform(inout cam, cur_w, cur_h, true);
+        cam_buf[0] = cam_uni;
+        let cam_ubo = vram_arena::vram_arena_alloc_aligned(inout dev.arena, 256, vram_arena::GPU_CBUFFER_ALIGNMENT);
+        vram_arena::vram_arena_write_raw(dev.arena, cam_ubo, mem::slice_ptr(cam_buf), 256);
+
+        // Draw 2D scene
+        renderer_2d::sprite2d_begin(inout batch, sprite_tex);
+
+        // Ground & platforms
+        renderer_2d::sprite2d_draw_rect(inout batch, verts, inds, -40.0, -5.0, 80.0, 2.0, 0xFF3A5A40);
+        renderer_2d::sprite2d_draw_rect(inout batch, verts, inds, -6.0, -0.5, 4.0, 0.7, 0xFF6B705C);
+        renderer_2d::sprite2d_draw_rect(inout batch, verts, inds, 3.0, 1.5, 4.5, 0.7, 0xFF6B705C);
+
+        // Rotating 2D collectibles
+        let mut i: u32 = 0;
+        while i < 5 {
+            let cx = -8.0 + (i as float) * 4.0;
+            let cy = 2.5 + math::sin(time_acc * 3.0 + (i as float)) * 0.4;
+            renderer_2d::sprite2d_draw(
+                inout batch, verts, inds,
+                cx, cy, 0.9, 0.9,
+                time_acc * 2.0 + (i as float),
+                renderer_2d::sprite2d_uv_full(),
+                0xFF00D4FF
+            );
+            i = i + 1;
+        }
+
+        // Animated 2D player sprite
+        renderer_2d::sprite2d_draw(inout batch, verts, inds, player_x - 0.75, player_y, 1.5, 2.0, 0.0, uv_player, 0xFF55AAFF);
+
+        renderer_2d::sprite2d_flush(inout batch, inout dev, cmd, verts, inds, cam_ubo);
+        let _ok = rhi::rhi_end_frame_and_present(dev, inout cmd);
+    }
+
+    return 0;
+}

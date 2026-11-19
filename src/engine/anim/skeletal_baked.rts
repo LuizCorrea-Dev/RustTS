@@ -1,0 +1,156 @@
+module engine.anim.skeletal_baked;
+import core.math;
+import engine.math.vec3;
+import engine.math.quat;
+import engine.math.mat4;
+
+//Animação 3D por Paleta de Ossos / VAT em O(1))
+
+pub const MAX_BONES_PER_SKELETON: usize = 64;
+
+// Pose compacta de uma articulacao (32 bytes alinhados)
+@repr_c
+pub struct JointPose {
+    pub rotation: quat::Quat, // 16 bytes
+    pub translation: vec3::Vec3, // 12 bytes
+    pub uniform_scale: float, // 4 bytes
+}
+
+// Descritor de um clipe 3D pre-processado no arquivo .pak
+@repr_c
+pub struct BakedAnimClip3D {
+    pub clip_id: u32,
+    pub bone_count: u32,
+    pub keyframe_count: u32,
+    pub sample_rate_fps: float,
+    pub duration_sec: float,
+    pub is_looping: bool,
+    pub pose_table_offset: u32, // Indice base no buffer global de JointPose
+}
+
+// Estado de interpolacao enviado para a GPU ou avaliado em lote pelos Workers
+@repr_c
+pub struct SkeletalAnimState {
+    pub clip_id: u32,
+    pub current_time_sec: float,
+    pub playback_speed: float,
+    pub frame_a: u32,
+    pub frame_b: u32,
+    pub lerp_t: float,
+    pub playing: bool,
+}
+
+@sealed_sig
+pub fn skeletal_state_init(clip_id: u32, speed: float) -> SkeletalAnimState {
+    return SkeletalAnimState {
+        clip_id: clip_id,
+        current_time_sec: 0.0,
+        playback_speed: speed,
+        frame_a: 0,
+        frame_b: 0,
+        lerp_t: 0.0,
+        playing: true,
+    };
+}
+
+// Calcula em O(1) os dois quadros adjacentes e a fracao de interpolacao [0.0, 1.0]
+@sealed_sig
+pub fn skeletal_step_time(
+    state: inout SkeletalAnimState,
+    clip: BakedAnimClip3D,
+    dt: float
+) {
+    if !state.playing || clip.keyframe_count <= 1 || clip.duration_sec <= 0.0001 {
+        state.frame_a = 0;
+        state.frame_b = 0;
+        state.lerp_t = 0.0;
+        return;
+    }
+
+    state.current_time_sec += dt * state.playback_speed;
+
+    if clip.is_looping {
+        while state.current_time_sec >= clip.duration_sec {
+            state.current_time_sec -= clip.duration_sec;
+        }
+        while state.current_time_sec < 0.0 {
+            state.current_time_sec += clip.duration_sec;
+        }
+    } else {
+        state.current_time_sec = math::clamp(state.current_time_sec, 0.0, clip.duration_sec);
+    }
+
+    let exact_frame = state.current_time_sec * clip.sample_rate_fps;
+    let base_frame_f = math::floor(exact_frame);
+    let frac = exact_frame - base_frame_f;
+
+    let max_idx = clip.keyframe_count - 1;
+    let mut fa = base_frame_f as u32;
+    if fa > max_idx { fa = max_idx; }
+
+    let fb = if clip.is_looping {
+        (fa + 1) % clip.keyframe_count
+    } else {
+        if fa + 1 <= max_idx { fa + 1 } else { max_idx }
+    };
+
+    state.frame_a = fa;
+    state.frame_b = fb;
+    state.lerp_t = math::clamp(frac, 0.0, 1.0);
+}
+
+// Interpolacao rapida de Quaternions pelo caminho mais curto (NLERP O(1) amigavel a SIMD)
+@sealed_sig
+pub fn quat_nlerp_shortest(a: quat::Quat, b: quat::Quat, t: float) -> quat::Quat {
+    let dot = (a.x * b.x) + (a.y * b.y) + (a.z * b.z) + (a.w * b.w);
+    let sign = if dot < 0.0 { -1.0 } else { 1.0 };
+    let inv_t = 1.0 - t;
+
+    let rx = (a.x * inv_t) + ((b.x * sign) * t);
+    let ry = (a.y * inv_t) + ((b.y * sign) * t);
+    let rz = (a.z * inv_t) + ((b.z * sign) * t);
+    let rw = (a.w * inv_t) + ((b.w * sign) * t);
+
+    return quat::quat_normalize(quat::Quat { x: rx, y: ry, z: rz, w: rw });
+}
+
+// Gera a paleta final de matrizes 4x4 pronta para o Constant/Storage Buffer da GPU
+@sealed_sig
+pub fn skeletal_build_matrix_palette(
+    state: SkeletalAnimState,
+    clip: BakedAnimClip3D,
+    baked_poses: cap ReadSlice<JointPose>,
+    out_palette: cap MutSlice<mat4::Mat4>
+) {
+    let bones = clip.bone_count as usize;
+    let base_a = (clip.pose_table_offset + (state.frame_a * clip.bone_count)) as usize;
+    let base_b = (clip.pose_table_offset + (state.frame_b * clip.bone_count)) as usize;
+    let t = state.lerp_t;
+    let inv_t = 1.0 - t;
+
+    let mut i: usize = 0;
+    while i < bones && i < MAX_BONES_PER_SKELETON {
+        let pa = baked_poses[base_a + i];
+        let pb = baked_poses[base_b + i];
+
+        let rot = quat_nlerp_shortest(pa.rotation, pb.rotation, t);
+        let pos = vec3::Vec3 {
+            x: (pa.translation.x * inv_t) + (pb.translation.x * t),
+            y: (pa.translation.y * inv_t) + (pb.translation.y * t),
+            z: (pa.translation.z * inv_t) + (pb.translation.z * t),
+        };
+        let sc = (pa.uniform_scale * inv_t) + (pb.uniform_scale * t);
+
+        let mut m = mat4::mat4_from_quat(rot);
+        // Aplica escala uniforme nas 3 colunas base e translacao na 4a coluna
+        m.m[0] *= sc; m.m[1] *= sc; m.m[2] *= sc;
+        m.m[4] *= sc; m.m[5] *= sc; m.m[6] *= sc;
+        m.m[8] *= sc; m.m[9] *= sc; m.m[10] *= sc;
+        m.m[12] = pos.x;
+        m.m[13] = pos.y;
+        m.m[14] = pos.z;
+
+        out_palette[i] = m;
+        i += 1;
+    }
+}

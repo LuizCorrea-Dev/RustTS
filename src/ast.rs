@@ -49,6 +49,10 @@ pub enum Attribute {
     UProperty { flags: Vec<String> },
     /// `@gpu_kernel`: Unificação CPU-GPU (SPIR-V / DXIL / WGSL)
     GpuKernel,
+    /// `@vertex_shader`: Shader de vértice compilado para SPIR-V / WGSL
+    VertexShader,
+    /// `@fragment_shader`: Shader de fragmento/pixel compilado para SPIR-V / WGSL
+    FragmentShader,
     /// `@shader_shared`: Struct com alinhamento determinístico CPU/GPU
     ShaderShared,
     /// `@repr_c`: Struct com layout binário ABI C estrito (sem ponteiros/caps)

@@ -12,11 +12,24 @@ pub struct ParseError {
 pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
+    disallow_struct_lit: bool,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, pos: 0 }
+        Self {
+            tokens,
+            pos: 0,
+            disallow_struct_lit: false,
+        }
+    }
+
+    fn parse_expr_no_struct(&mut self) -> Result<Expr, ParseError> {
+        let prev = self.disallow_struct_lit;
+        self.disallow_struct_lit = true;
+        let res = self.parse_expr();
+        self.disallow_struct_lit = prev;
+        res
     }
 
     pub fn parse_module(&mut self) -> Result<Module, ParseError> {
@@ -25,9 +38,9 @@ impl Parser {
 
         if self.check(&TokenKind::KwModule) {
             self.advance();
-            path.push(self.expect_ident()?);
+            path.push(self.expect_path_segment()?);
             while self.match_token(&TokenKind::Dot) {
-                path.push(self.expect_ident()?);
+                path.push(self.expect_path_segment()?);
             }
             self.expect(&TokenKind::Semicolon)?;
         } else {
@@ -36,9 +49,9 @@ impl Parser {
 
         let mut imports = Vec::new();
         while self.match_token(&TokenKind::KwImport) {
-            let mut imp_path = vec![self.expect_ident()?];
+            let mut imp_path = vec![self.expect_path_segment()?];
             while self.match_token(&TokenKind::Dot) {
-                imp_path.push(self.expect_ident()?);
+                imp_path.push(self.expect_path_segment()?);
             }
             self.expect(&TokenKind::Semicolon)?;
             imports.push(imp_path);
@@ -66,9 +79,13 @@ impl Parser {
     fn parse_item(&mut self) -> Result<Item, ParseError> {
         let attributes = self.parse_attributes()?;
 
-        if self.check(&TokenKind::KwStruct) {
+        if self.check(&TokenKind::KwStruct)
+            || (self.check(&TokenKind::KwPub) && self.peek_next_is(&TokenKind::KwStruct))
+        {
             Ok(Item::Struct(self.parse_struct(attributes)?))
-        } else if self.check(&TokenKind::KwEnum) {
+        } else if self.check(&TokenKind::KwEnum)
+            || (self.check(&TokenKind::KwPub) && self.peek_next_is(&TokenKind::KwEnum))
+        {
             Ok(Item::Enum(self.parse_enum()?))
         } else if self.check(&TokenKind::KwConst)
             || (self.check(&TokenKind::KwPub) && self.peek_next_is(&TokenKind::KwConst))
@@ -195,6 +212,14 @@ impl Parser {
                     self.advance();
                     attrs.push(Attribute::GpuKernel);
                 }
+                Some(TokenKind::AttrVertexShader) => {
+                    self.advance();
+                    attrs.push(Attribute::VertexShader);
+                }
+                Some(TokenKind::AttrFragmentShader) => {
+                    self.advance();
+                    attrs.push(Attribute::FragmentShader);
+                }
                 Some(TokenKind::AttrShaderShared) => {
                     self.advance();
                     attrs.push(Attribute::ShaderShared);
@@ -296,13 +321,20 @@ impl Parser {
     }
 
     fn parse_struct(&mut self, attributes: Vec<Attribute>) -> Result<StructDecl, ParseError> {
-        let start = self.expect(&TokenKind::KwStruct)?.span;
+        let pub_span = if self.check(&TokenKind::KwPub) {
+            Some(self.advance().unwrap().span)
+        } else {
+            None
+        };
+        let struct_span = self.expect(&TokenKind::KwStruct)?.span;
+        let start = pub_span.unwrap_or(struct_span);
         let name = self.expect_ident()?;
         self.expect(&TokenKind::LBrace)?;
         let mut fields = Vec::new();
         while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
             let field_attrs = self.parse_attributes()?;
             let f_start = self.current_span();
+            let _ = self.match_token(&TokenKind::KwPub);
             let field_name = self.expect_ident()?;
             self.expect(&TokenKind::Colon)?;
             let ty = self.parse_type_expr()?;
@@ -325,7 +357,13 @@ impl Parser {
     }
 
     fn parse_enum(&mut self) -> Result<EnumDecl, ParseError> {
-        let start = self.expect(&TokenKind::KwEnum)?.span;
+        let pub_span = if self.check(&TokenKind::KwPub) {
+            Some(self.advance().unwrap().span)
+        } else {
+            None
+        };
+        let enum_span = self.expect(&TokenKind::KwEnum)?.span;
+        let start = pub_span.unwrap_or(enum_span);
         let name = self.expect_ident()?;
         self.expect(&TokenKind::LBrace)?;
         let mut variants = Vec::new();
@@ -526,12 +564,40 @@ impl Parser {
             TokenKind::TyStr64 => Ok(TypeExpr::Primitive(PrimitiveType::Str64)),
             TokenKind::TyStr128 => Ok(TypeExpr::Primitive(PrimitiveType::Str128)),
             TokenKind::TyStr256 => Ok(TypeExpr::Primitive(PrimitiveType::Str256)),
-            TokenKind::TyVec2 => Ok(TypeExpr::Math(MathType::Vec2)),
-            TokenKind::TyVec3 => Ok(TypeExpr::Math(MathType::Vec3)),
-            TokenKind::TyVec4 => Ok(TypeExpr::Math(MathType::Vec4)),
-            TokenKind::TyQuat => Ok(TypeExpr::Math(MathType::Quat)),
-            TokenKind::TyMat3 => Ok(TypeExpr::Math(MathType::Mat3)),
-            TokenKind::TyMat4 => Ok(TypeExpr::Math(MathType::Mat4)),
+            TokenKind::TyVec2
+            | TokenKind::TyVec3
+            | TokenKind::TyVec4
+            | TokenKind::TyQuat
+            | TokenKind::TyMat3
+            | TokenKind::TyMat4 => {
+                if self.match_token(&TokenKind::ColonColon) {
+                    let ty_name = self.expect_ident()?;
+                    let mut generics = Vec::new();
+                    if self.match_token(&TokenKind::LAngle) {
+                        while !self.check(&TokenKind::RAngle)
+                            && !self.check(&TokenKind::Shr)
+                            && !self.is_at_end()
+                        {
+                            generics.push(self.parse_type_expr()?);
+                            let _ = self.match_token(&TokenKind::Comma);
+                        }
+                        self.expect_closing_rangle()?;
+                    }
+                    Ok(TypeExpr::Named {
+                        name: ty_name,
+                        generics,
+                    })
+                } else {
+                    Ok(match &tok.kind {
+                        TokenKind::TyVec2 => TypeExpr::Math(MathType::Vec2),
+                        TokenKind::TyVec3 => TypeExpr::Math(MathType::Vec3),
+                        TokenKind::TyVec4 => TypeExpr::Math(MathType::Vec4),
+                        TokenKind::TyQuat => TypeExpr::Math(MathType::Quat),
+                        TokenKind::TyMat3 => TypeExpr::Math(MathType::Mat3),
+                        _ => TypeExpr::Math(MathType::Mat4),
+                    })
+                }
+            }
             TokenKind::TyOption => {
                 self.expect(&TokenKind::LAngle)?;
                 let inner = self.parse_type_expr()?;
@@ -553,7 +619,10 @@ impl Parser {
                 Ok(TypeExpr::Handle(Box::new(inner)))
             }
             TokenKind::Ident(name) => {
-                let name_cloned = name.clone();
+                let mut name_cloned = name.clone();
+                if self.match_token(&TokenKind::ColonColon) {
+                    name_cloned = self.expect_ident()?;
+                }
                 let mut generics = Vec::new();
                 if self.match_token(&TokenKind::LAngle) {
                     while !self.check(&TokenKind::RAngle)
@@ -624,7 +693,7 @@ impl Parser {
         }
 
         if self.match_token(&TokenKind::KwIf) {
-            let condition = self.parse_expr()?;
+            let condition = self.parse_expr_no_struct()?;
             let then_branch = self.parse_block()?;
             let else_branch = if self.match_token(&TokenKind::KwElse) {
                 if self.check(&TokenKind::KwIf) {
@@ -645,7 +714,7 @@ impl Parser {
         }
 
         if self.match_token(&TokenKind::KwMatch) {
-            let scrutinee = self.parse_expr()?;
+            let scrutinee = self.parse_expr_no_struct()?;
             self.expect(&TokenKind::LBrace)?;
             let mut arms = Vec::new();
             while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
@@ -676,9 +745,9 @@ impl Parser {
         if self.match_token(&TokenKind::KwFor) {
             let iterator = self.expect_ident()?;
             self.expect(&TokenKind::KwIn)?;
-            let range_start = self.parse_expr()?;
+            let range_start = self.parse_expr_no_struct()?;
             self.expect(&TokenKind::DotDot)?;
-            let range_end = self.parse_expr()?;
+            let range_end = self.parse_expr_no_struct()?;
             let body = self.parse_block()?;
             let end = self.previous_span();
             return Ok(Stmt::ForRange {
@@ -691,7 +760,7 @@ impl Parser {
         }
 
         if self.match_token(&TokenKind::KwWhile) {
-            let condition = self.parse_expr()?;
+            let condition = self.parse_expr_no_struct()?;
             let body = self.parse_block()?;
             let end = self.previous_span();
             return Ok(Stmt::While {
@@ -1087,7 +1156,7 @@ impl Parser {
 
         // Expressão condicional inline determinística: `if cond { a } else { b }`
         if self.match_token(&TokenKind::KwIf) {
-            let cond = self.parse_expr()?;
+            let cond = self.parse_expr_no_struct()?;
             self.expect(&TokenKind::LBrace)?;
             let then_branch = self.parse_expr()?;
             self.expect(&TokenKind::RBrace)?;
@@ -1122,13 +1191,46 @@ impl Parser {
         }
 
         if self.match_token(&TokenKind::LBracket) {
+            let prev_dis = self.disallow_struct_lit;
+            self.disallow_struct_lit = false;
             let mut elements = Vec::new();
-            while !self.check(&TokenKind::RBracket) && !self.is_at_end() {
-                elements.push(self.parse_expr()?);
-                if !self.match_token(&TokenKind::Comma) {
-                    break;
+            if !self.check(&TokenKind::RBracket) && !self.is_at_end() {
+                let first = self.parse_expr()?;
+                if self.match_token(&TokenKind::Semicolon) {
+                    let count = match self.peek_kind() {
+                        Some(TokenKind::IntLit(n)) | Some(TokenKind::HexLit(n)) => {
+                            let v = (*n).max(0) as usize;
+                            self.advance();
+                            v
+                        }
+                        _ => {
+                            self.disallow_struct_lit = prev_dis;
+                            return Err(ParseError {
+                                message: format!(
+                                    "Expected array repeat length integer, found '{}'",
+                                    self.peek_lexeme()
+                                ),
+                                span: self.current_span(),
+                            });
+                        }
+                    };
+                    self.disallow_struct_lit = prev_dis;
+                    self.expect(&TokenKind::RBracket)?;
+                    let end = self.previous_span();
+                    return Ok(Expr::ArrayLit {
+                        elements: vec![first; count],
+                        span: start.merge(end),
+                    });
+                }
+                elements.push(first);
+                while self.match_token(&TokenKind::Comma) {
+                    if self.check(&TokenKind::RBracket) {
+                        break;
+                    }
+                    elements.push(self.parse_expr()?);
                 }
             }
+            self.disallow_struct_lit = prev_dis;
             self.expect(&TokenKind::RBracket)?;
             let end = self.previous_span();
             return Ok(Expr::ArrayLit {
@@ -1137,7 +1239,10 @@ impl Parser {
             });
         }
         if self.match_token(&TokenKind::LParen) {
+            let prev_dis = self.disallow_struct_lit;
+            self.disallow_struct_lit = false;
             let inner = self.parse_expr()?;
+            self.disallow_struct_lit = prev_dis;
             self.expect(&TokenKind::RParen)?;
             return Ok(inner);
         }
@@ -1170,17 +1275,57 @@ impl Parser {
                 payload: None,
                 span: tok.span,
             }),
-            TokenKind::TyVec2 | TokenKind::TyVec3 | TokenKind::TyVec4 | TokenKind::TyQuat => {
-                let func = tok.lexeme.clone();
-                self.expect(&TokenKind::LParen)?;
-                let args = self.parse_arg_list()?;
-                let end = self.expect(&TokenKind::RParen)?.span;
-                Ok(Expr::StaticCall {
-                    namespace: "self".to_string(),
-                    func,
-                    args,
-                    span: tok.span.merge(end),
-                })
+            TokenKind::TyVec2
+            | TokenKind::TyVec3
+            | TokenKind::TyVec4
+            | TokenKind::TyQuat => {
+                let ns = tok.lexeme.clone();
+                if self.match_token(&TokenKind::ColonColon) {
+                    let member = self.expect_ident()?;
+                    if self.match_token(&TokenKind::LParen) {
+                        let args = self.parse_arg_list()?;
+                        let end = self.expect(&TokenKind::RParen)?.span;
+                        Ok(Expr::StaticCall {
+                            namespace: ns,
+                            func: member,
+                            args,
+                            span: tok.span.merge(end),
+                        })
+                    } else if !self.disallow_struct_lit && self.check(&TokenKind::LBrace) {
+                        self.advance();
+                        let mut fields = Vec::new();
+                        while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
+                            let f_name = self.expect_ident()?;
+                            self.expect(&TokenKind::Colon)?;
+                            let f_expr = self.parse_expr()?;
+                            fields.push((f_name, f_expr));
+                            let _ = self.match_token(&TokenKind::Comma);
+                        }
+                        let end = self.expect(&TokenKind::RBrace)?.span;
+                        Ok(Expr::StructInit {
+                            struct_name: member,
+                            fields,
+                            span: tok.span.merge(end),
+                        })
+                    } else {
+                        Ok(Expr::EnumConstructor {
+                            enum_name: Some(ns),
+                            variant: member,
+                            payload: None,
+                            span: tok.span.merge(self.previous_span()),
+                        })
+                    }
+                } else {
+                    self.expect(&TokenKind::LParen)?;
+                    let args = self.parse_arg_list()?;
+                    let end = self.expect(&TokenKind::RParen)?.span;
+                    Ok(Expr::StaticCall {
+                        namespace: "self".to_string(),
+                        func: ns,
+                        args,
+                        span: tok.span.merge(end),
+                    })
+                }
             }
             TokenKind::TyHandle => {
                 self.expect(&TokenKind::ColonColon)?;
@@ -1213,6 +1358,44 @@ impl Parser {
                     span: tok.span.merge(end),
                 })
             }
+            TokenKind::TyMat3 | TokenKind::TyMat4 => {
+                let ns = tok.lexeme.clone();
+                self.expect(&TokenKind::ColonColon)?;
+                let member = self.expect_ident()?;
+                if self.match_token(&TokenKind::LParen) {
+                    let args = self.parse_arg_list()?;
+                    let end = self.expect(&TokenKind::RParen)?.span;
+                    Ok(Expr::StaticCall {
+                        namespace: ns,
+                        func: member,
+                        args,
+                        span: tok.span.merge(end),
+                    })
+                } else if !self.disallow_struct_lit && self.check(&TokenKind::LBrace) {
+                    self.advance();
+                    let mut fields = Vec::new();
+                    while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
+                        let f_name = self.expect_ident()?;
+                        self.expect(&TokenKind::Colon)?;
+                        let f_expr = self.parse_expr()?;
+                        fields.push((f_name, f_expr));
+                        let _ = self.match_token(&TokenKind::Comma);
+                    }
+                    let end = self.expect(&TokenKind::RBrace)?.span;
+                    Ok(Expr::StructInit {
+                        struct_name: member,
+                        fields,
+                        span: tok.span.merge(end),
+                    })
+                } else {
+                    Ok(Expr::EnumConstructor {
+                        enum_name: Some(ns),
+                        variant: member,
+                        payload: None,
+                        span: tok.span.merge(self.previous_span()),
+                    })
+                }
+            }
             TokenKind::Ident(ident_str) => {
                 let name = ident_str.clone();
                 // Chamada ou Enum `Namespace::member`
@@ -1221,12 +1404,26 @@ impl Parser {
                     if self.match_token(&TokenKind::LParen) {
                         let args = self.parse_arg_list()?;
                         let end = self.expect(&TokenKind::RParen)?.span;
-                        // Se `name` começa com maiúscula e tem 1 argumento e parece Enum (ex: `HardwareFault::I2CTimeout(0x48)`),
-                        // distinguimos chamadas de sistema (`NetworkSocket::send`, `FileSystem::write`) de Enums.
                         Ok(Expr::StaticCall {
                             namespace: name,
                             func: member,
                             args,
+                            span: tok.span.merge(end),
+                        })
+                    } else if !self.disallow_struct_lit && self.check(&TokenKind::LBrace) {
+                        self.advance();
+                        let mut fields = Vec::new();
+                        while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
+                            let f_name = self.expect_ident()?;
+                            self.expect(&TokenKind::Colon)?;
+                            let f_expr = self.parse_expr()?;
+                            fields.push((f_name, f_expr));
+                            let _ = self.match_token(&TokenKind::Comma);
+                        }
+                        let end = self.expect(&TokenKind::RBrace)?.span;
+                        Ok(Expr::StructInit {
+                            struct_name: member,
+                            fields,
                             span: tok.span.merge(end),
                         })
                     } else {
@@ -1237,7 +1434,8 @@ impl Parser {
                             span: tok.span.merge(self.previous_span()),
                         })
                     }
-                } else if self.check(&TokenKind::LBrace)
+                } else if !self.disallow_struct_lit
+                    && self.check(&TokenKind::LBrace)
                     && name
                         .chars()
                         .next()
@@ -1365,6 +1563,36 @@ impl Parser {
             Some(TokenKind::Ident(s)) => {
                 let res = s.clone();
                 self.advance();
+                Ok(res)
+            }
+            _ => Err(ParseError {
+                message: format!("Expected identifier, found '{}'", self.peek_lexeme()),
+                span: self.current_span(),
+            }),
+        }
+    }
+
+    fn expect_path_segment(&mut self) -> Result<String, ParseError> {
+        match self.peek_kind() {
+            Some(TokenKind::Ident(s)) => {
+                let res = s.clone();
+                self.advance();
+                Ok(res)
+            }
+            Some(
+                TokenKind::TyVec2
+                | TokenKind::TyVec3
+                | TokenKind::TyVec4
+                | TokenKind::TyQuat
+                | TokenKind::TyMat3
+                | TokenKind::TyMat4
+                | TokenKind::TyStr64
+                | TokenKind::TyStr128
+                | TokenKind::TyStr256
+                | TokenKind::TyBool
+                | TokenKind::TyStr,
+            ) => {
+                let res = self.advance().unwrap().lexeme.clone();
                 Ok(res)
             }
             _ => Err(ParseError {

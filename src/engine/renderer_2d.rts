@@ -1,0 +1,167 @@
+module engine.renderer_2d;
+
+import core.mem;
+import core.math;
+import engine.gpu.rhi;
+import engine.gpu.vram_arena;
+import engine.ui.imgui_rts;
+import engine.anim.sprite_anim;
+
+pub struct SpriteBatch2D {
+    pub vert_count: u32,
+    pub ind_count: u32,
+    pub max_verts: u32,
+    pub max_inds: u32,
+    pub cur_tex_h: u64,
+    pub draw_calls: u32,
+}
+
+pub fn sprite2d_init(max_quads: u32) -> SpriteBatch2D {
+    return SpriteBatch2D {
+        vert_count: 0,
+        ind_count: 0,
+        max_verts: max_quads * 4,
+        max_inds: max_quads * 6,
+        cur_tex_h: 0,
+        draw_calls: 0,
+    };
+}
+
+pub fn sprite2d_uv_full() -> sprite_anim::SpriteUvFrame {
+    return sprite_anim::SpriteUvFrame {
+        u_min: 0.0,
+        v_min: 0.0,
+        u_max: 1.0,
+        v_max: 1.0,
+        texture_layer: 0,
+        finished_once: false,
+    };
+}
+
+pub fn sprite2d_begin(batch: inout SpriteBatch2D, tex_h: u64) {
+    batch.vert_count = 0;
+    batch.ind_count = 0;
+    batch.cur_tex_h = tex_h;
+    batch.draw_calls = 0;
+}
+
+pub fn sprite2d_draw(
+    batch: inout SpriteBatch2D,
+    verts: cap MutSlice<imgui_rts::UiVertex>,
+    inds: cap MutSlice<u32>,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    rot_rad: float,
+    uv: sprite_anim::SpriteUvFrame,
+    color_rgba: u32
+) {
+    if batch.vert_count + 4 > batch.max_verts || batch.ind_count + 6 > batch.max_inds {
+        return;
+    }
+
+    let base_v = batch.vert_count;
+    let base_i = batch.ind_count;
+
+    let hw = w * 0.5;
+    let hh = h * 0.5;
+    let cx = x + hw;
+    let cy = y + hh;
+
+    let c = math::cos(rot_rad);
+    let s = math::sin(rot_rad);
+
+    // Local corners: (-hw, -hh), (+hw, -hh), (+hw, +hh), (-hw, +hh)
+    let x0 = cx + (-hw * c - (-hh) * s);
+    let y0 = cy + (-hw * s + (-hh) * c);
+
+    let x1 = cx + (hw * c - (-hh) * s);
+    let y1 = cy + (hw * s + (-hh) * c);
+
+    let x2 = cx + (hw * c - hh * s);
+    let y2 = cy + (hw * s + hh * c);
+
+    let x3 = cx + (-hw * c - hh * s);
+    let y3 = cy + (-hw * s + hh * c);
+
+    verts[base_v + 0] = imgui_rts::UiVertex { ndc_x: x0, ndc_y: y0, u: uv.u_min, v: uv.v_min, color_rgba: color_rgba };
+    verts[base_v + 1] = imgui_rts::UiVertex { ndc_x: x1, ndc_y: y1, u: uv.u_max, v: uv.v_min, color_rgba: color_rgba };
+    verts[base_v + 2] = imgui_rts::UiVertex { ndc_x: x2, ndc_y: y2, u: uv.u_max, v: uv.v_max, color_rgba: color_rgba };
+    verts[base_v + 3] = imgui_rts::UiVertex { ndc_x: x3, ndc_y: y3, u: uv.u_min, v: uv.v_max, color_rgba: color_rgba };
+
+    inds[base_i + 0] = base_v + 0;
+    inds[base_i + 1] = base_v + 1;
+    inds[base_i + 2] = base_v + 2;
+    inds[base_i + 3] = base_v + 0;
+    inds[base_i + 4] = base_v + 2;
+    inds[base_i + 5] = base_v + 3;
+
+    batch.vert_count = batch.vert_count + 4;
+    batch.ind_count = batch.ind_count + 6;
+}
+
+pub fn sprite2d_draw_rect(
+    batch: inout SpriteBatch2D,
+    verts: cap MutSlice<imgui_rts::UiVertex>,
+    inds: cap MutSlice<u32>,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    color_rgba: u32
+) {
+    let full = sprite2d_uv_full();
+    sprite2d_draw(inout batch, verts, inds, x, y, w, h, 0.0, full, color_rgba);
+}
+
+pub fn sprite2d_flush(
+    batch: inout SpriteBatch2D,
+    dev: inout rhi::RhiDevice,
+    cmd: rhi::RhiCommandList,
+    verts: cap MutSlice<imgui_rts::UiVertex>,
+    inds: cap MutSlice<u32>,
+    cam_ubo: vram_arena::VramAllocation
+) {
+    if batch.ind_count == 0 {
+        return;
+    }
+
+    let v_bytes = (batch.vert_count as u64) * 20;
+    let i_bytes = (batch.ind_count as u64) * 4;
+
+    let vbo = vram_arena::vram_arena_alloc_aligned(inout dev.arena, v_bytes, vram_arena::GPU_VERTEX_ALIGNMENT);
+    let ibo = vram_arena::vram_arena_alloc_aligned(inout dev.arena, i_bytes, vram_arena::GPU_VERTEX_ALIGNMENT);
+
+    vram_arena::vram_arena_write_raw(dev.arena, vbo, mem::slice_ptr(verts), v_bytes);
+    vram_arena::vram_arena_write_raw(dev.arena, ibo, mem::slice_ptr(inds), i_bytes);
+
+    rhi::rhi_cmd_bind_pipeline(cmd, rhi::PIPELINE_SPRITE_2D);
+    if batch.cur_tex_h != 0 {
+        rhi::rhi_cmd_bind_texture(cmd, batch.cur_tex_h);
+    }
+    rhi::rhi_cmd_bind_mesh_and_uniforms(cmd, vbo, ibo, cam_ubo);
+    rhi::rhi_cmd_draw_indexed(cmd, batch.ind_count, 0, 0);
+
+    batch.draw_calls = batch.draw_calls + 1;
+    batch.vert_count = 0;
+    batch.ind_count = 0;
+}
+
+pub fn sprite2d_set_texture(
+    batch: inout SpriteBatch2D,
+    dev: inout rhi::RhiDevice,
+    cmd: rhi::RhiCommandList,
+    verts: cap MutSlice<imgui_rts::UiVertex>,
+    inds: cap MutSlice<u32>,
+    cam_ubo: vram_arena::VramAllocation,
+    tex_h: u64
+) {
+    if tex_h == batch.cur_tex_h {
+        return;
+    }
+    if batch.ind_count > 0 {
+        sprite2d_flush(inout batch, inout dev, cmd, verts, inds, cam_ubo);
+    }
+    batch.cur_tex_h = tex_h;
+}

@@ -83,8 +83,159 @@ fn resolve_import_path(entry_dir: &Path, current_file: &Path, imp_path: &[String
         candidates.push(entry_parent.join(&rel_nested));
         candidates.push(entry_parent.join("src").join(&rel_nested));
     }
+    let mut anc = current_dir;
+    for _ in 0..4 {
+        if let Some(parent) = anc.parent() {
+            candidates.push(parent.join(&rel_nested));
+            candidates.push(parent.join("src").join(&rel_nested));
+            anc = parent;
+        } else {
+            break;
+        }
+    }
 
     candidates.into_iter().find(|p| p.is_file())
+}
+
+fn rewrite_item_const_idents(
+    item: &mut Item,
+    renames: &std::collections::HashMap<String, String>,
+) {
+    match item {
+        Item::Const(c) => {
+            if let Some(new_name) = renames.get(&c.name) {
+                c.name = new_name.clone();
+            }
+            rewrite_expr_const_idents(&mut c.value, renames);
+        }
+        Item::Function(f) => {
+            for s in &mut f.body {
+                rewrite_stmt_const_idents(s, renames);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn rewrite_stmt_const_idents(
+    stmt: &mut ast::Stmt,
+    renames: &std::collections::HashMap<String, String>,
+) {
+    match stmt {
+        ast::Stmt::Let { value, .. } | ast::Stmt::ExprStmt { expr: value, .. } => {
+            rewrite_expr_const_idents(value, renames);
+        }
+        ast::Stmt::Assign { target, value, .. } => {
+            rewrite_expr_const_idents(target, renames);
+            rewrite_expr_const_idents(value, renames);
+        }
+        ast::Stmt::If {
+            condition,
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            rewrite_expr_const_idents(condition, renames);
+            for s in then_branch {
+                rewrite_stmt_const_idents(s, renames);
+            }
+            if let Some(eb) = else_branch {
+                for s in eb {
+                    rewrite_stmt_const_idents(s, renames);
+                }
+            }
+        }
+        ast::Stmt::While { condition, body, .. } => {
+            rewrite_expr_const_idents(condition, renames);
+            for s in body {
+                rewrite_stmt_const_idents(s, renames);
+            }
+        }
+        ast::Stmt::ForRange { start, end, body, .. } => {
+            rewrite_expr_const_idents(start, renames);
+            rewrite_expr_const_idents(end, renames);
+            for s in body {
+                rewrite_stmt_const_idents(s, renames);
+            }
+        }
+        ast::Stmt::Match { expr, arms, .. } => {
+            rewrite_expr_const_idents(expr, renames);
+            for arm in arms {
+                for s in &mut arm.body {
+                    rewrite_stmt_const_idents(s, renames);
+                }
+            }
+        }
+        ast::Stmt::Return { value: Some(v), .. } => {
+            rewrite_expr_const_idents(v, renames);
+        }
+        _ => {}
+    }
+}
+
+fn rewrite_expr_const_idents(
+    expr: &mut ast::Expr,
+    renames: &std::collections::HashMap<String, String>,
+) {
+    match expr {
+        ast::Expr::Ident(name, _) => {
+            if let Some(new_name) = renames.get(name) {
+                *name = new_name.clone();
+            }
+        }
+        ast::Expr::Unary { expr: inner, .. }
+        | ast::Expr::Cast { expr: inner, .. }
+        | ast::Expr::TryOp { expr: inner, .. }
+        | ast::Expr::ErrorMapClosure { body: inner, .. } => {
+            rewrite_expr_const_idents(inner, renames);
+        }
+        ast::Expr::Binary { left, right, .. } => {
+            rewrite_expr_const_idents(left, renames);
+            rewrite_expr_const_idents(right, renames);
+        }
+        ast::Expr::FieldAccess { receiver, .. } => {
+            rewrite_expr_const_idents(receiver, renames);
+        }
+        ast::Expr::Index { receiver, index, .. } => {
+            rewrite_expr_const_idents(receiver, renames);
+            rewrite_expr_const_idents(index, renames);
+        }
+        ast::Expr::MethodCall { receiver, args, .. } => {
+            rewrite_expr_const_idents(receiver, renames);
+            for a in args {
+                rewrite_expr_const_idents(a, renames);
+            }
+        }
+        ast::Expr::StaticCall { args, .. } => {
+            for a in args {
+                rewrite_expr_const_idents(a, renames);
+            }
+        }
+        ast::Expr::StructInit { fields, .. } => {
+            for (_, v) in fields {
+                rewrite_expr_const_idents(v, renames);
+            }
+        }
+        ast::Expr::EnumConstructor { payload: Some(p), .. } => {
+            rewrite_expr_const_idents(p, renames);
+        }
+        ast::Expr::ArrayLit { elements, .. } => {
+            for el in elements {
+                rewrite_expr_const_idents(el, renames);
+            }
+        }
+        ast::Expr::IfExpr {
+            cond,
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            rewrite_expr_const_idents(cond, renames);
+            rewrite_expr_const_idents(then_branch, renames);
+            rewrite_expr_const_idents(else_branch, renames);
+        }
+        _ => {}
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -171,7 +322,44 @@ fn load_module_recursive(
     visiting.remove(&canon);
     visited.insert(canon);
 
-    merged_items.extend(module.items.clone());
+    let mod_short = module
+        .path
+        .last()
+        .cloned()
+        .unwrap_or_else(|| "root".to_string());
+    let mut local_const_renames: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+
+    for item in &module.items {
+        if let Item::Const(c) = item {
+            let already_exists = merged_items.iter().any(|existing| {
+                matches!(existing, Item::Const(ec) if ec.name == c.name)
+            });
+            if already_exists {
+                let mangled = format!("{}__{}", mod_short, c.name);
+                local_const_renames.insert(c.name.clone(), mangled);
+            }
+        }
+    }
+
+    for mut item in module.items.clone() {
+        if !local_const_renames.is_empty() {
+            rewrite_item_const_idents(&mut item, &local_const_renames);
+        }
+        if let Item::Const(c) = &item {
+            let qualified_alias = format!("{}__{}", mod_short, c.name);
+            let alias_exists = merged_items.iter().any(|existing| {
+                matches!(existing, Item::Const(ec) if ec.name == qualified_alias)
+            });
+            if !alias_exists && c.name != qualified_alias {
+                let mut aliased = c.clone();
+                aliased.name = qualified_alias;
+                merged_items.push(Item::Const(aliased));
+            }
+        }
+        merged_items.push(item);
+    }
+
     if is_entry {
         *entry_module_out = Some(module);
     }
@@ -1431,6 +1619,91 @@ pub fn simulate_particles(
     }
 
     #[test]
+    fn test_v210_graphics_vertex_and_fragment_shader_spirv_and_wgsl() {
+        let src = r#"
+module gpu.graphics;
+
+struct Vec2 { x: float, y: float }
+struct Vec4 { x: float, y: float, z: float, w: float }
+
+@vertex_shader
+pub fn vs_main(pos: Vec2) -> Vec4 {
+    return Vec4 { x: pos.x, y: pos.y, z: 0.0, w: 1.0 };
+}
+
+@fragment_shader
+pub fn fs_main(uv: Vec2) -> Vec4 {
+    return Vec4 { x: uv.x, y: uv.y, z: 0.5, w: 1.0 };
+}
+"#;
+        let (module_opt, report) = compile_and_check(src, "test_v210_graphics.rts");
+        assert_eq!(report.status, "ok", "{}", report.to_human_terminal());
+        let module = module_opt.unwrap();
+
+        let wgsl = codegen_gpu::GpuCodegen::emit_wgsl(&module);
+        assert!(wgsl.contains("@vertex"));
+        assert!(wgsl.contains("fn vs_main("));
+        assert!(wgsl.contains("@fragment"));
+        assert!(wgsl.contains("fn fs_main("));
+
+        let vs_spv = codegen_gpu::GpuCodegen::emit_spirv_vertex(&module);
+        assert!(vs_spv.len() >= 20 && vs_spv.len() % 4 == 0);
+        assert_eq!(
+            u32::from_le_bytes([vs_spv[0], vs_spv[1], vs_spv[2], vs_spv[3]]),
+            0x0723_0203
+        );
+
+        // Regressao Bug 2: parametro `pos: Vec4` (TypeExpr::Named("Vec4")) em @vertex_shader
+        // deve emitir OpTypePointer Input %vec4, nunca escalar float.
+        let src_vec4 = r#"
+module gpu.graphics_vec4;
+struct Vec4 { x: float, y: float, z: float, w: float }
+@vertex_shader
+pub fn vs_main(pos: Vec4) -> Vec4 {
+    return Vec4 { x: pos.x, y: pos.y, z: pos.z, w: pos.w };
+}
+"#;
+        let (m4_opt, rep4) = compile_and_check(src_vec4, "test_v210_vec4.rts");
+        assert_eq!(rep4.status, "ok", "{}", rep4.to_human_terminal());
+        let vs4_spv = codegen_gpu::GpuCodegen::emit_spirv_vertex(&m4_opt.unwrap());
+        let words: Vec<u32> = vs4_spv
+            .chunks_exact(4)
+            .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect();
+        // Verifica que existe OpTypeVector %float 4 (opcode 23, word_count 4) e OpTypePointer Input %v4 (opcode 32, storage 1)
+        let mut i = 5usize;
+        let mut ty_v4_id = 0u32;
+        let mut ptr_in_v4_id = 0u32;
+        let mut var_in_uses_v4 = false;
+        while i < words.len() {
+            let wc = (words[i] >> 16) as usize;
+            let op = (words[i] & 0xFFFF) as u16;
+            if wc == 0 || i + wc > words.len() {
+                break;
+            }
+            if op == 23 && wc == 4 && words[i + 3] == 4 {
+                ty_v4_id = words[i + 1];
+            } else if op == 32 && wc == 4 && words[i + 2] == 1 && words[i + 3] == ty_v4_id {
+                ptr_in_v4_id = words[i + 1];
+            } else if op == 59 && wc == 4 && words[i + 3] == 1 && words[i + 1] == ptr_in_v4_id {
+                var_in_uses_v4 = true;
+            }
+            i += wc;
+        }
+        assert!(
+            var_in_uses_v4,
+            "Input variable for Named Vec4 must use OpTypePointer Input vec4"
+        );
+
+        let fs_spv = codegen_gpu::GpuCodegen::emit_spirv_fragment(&module);
+        assert!(fs_spv.len() >= 20 && fs_spv.len() % 4 == 0);
+        assert_eq!(
+            u32::from_le_bytes([fs_spv[0], fs_spv[1], fs_spv[2], fs_spv[3]]),
+            0x0723_0203
+        );
+    }
+
+    #[test]
     fn test_v190_wasi_sema_rts_e0701_blocks_open_sig_and_hardware_caps_in_sandbox() {
         let src = r#"
 module sandbox.plugin;
@@ -1606,9 +1879,9 @@ pub fn tentar_mutar_let_imutavel(dose_inicial: f32) -> f32 {
 
     #[test]
     fn test_v200_compiler_version_and_full_diagnostic_taxonomy_homologation() {
-        assert_eq!(diagnostics::COMPILER_VERSION, "2.1.0-rts");
+        assert_eq!(diagnostics::COMPILER_VERSION, "2.2.0-rts");
         let ok_report = diagnostics::CompilerDiagnosticsReport::ok();
-        assert_eq!(ok_report.compiler_version, "2.1.0-rts");
+        assert_eq!(ok_report.compiler_version, "2.2.0-rts");
         assert_eq!(ok_report.status, "ok");
     }
 
@@ -2679,5 +2952,368 @@ pub fn main() -> int {
         let llvm = codegen_llvm::LlvmIrCodegen::emit_llvm_ir(&checked);
         assert!(llvm.contains("@__rts_window_is_smoke_test"));
         assert!(llvm.contains("--smoke-test"));
+    }
+
+    #[test]
+    fn test_62_v300_pub_struct_array_repeat_const_header_and_extern_inout() {
+        let source = r#"
+module engine.v300_lang_features;
+import core.math;
+
+pub const BUCKET_CAP: usize = 16;
+
+@repr_c
+pub struct ArenaBox {
+    pub data: [float; 16],
+    pub count: usize,
+}
+
+@sealed_sig
+pub extern "C" fn bridge_fill_out(seed: u64, out_val: inout u64) -> u64;
+
+@sealed_sig
+pub fn step_box(box_ref: inout ArenaBox, angle: float) -> float {
+    let mut i: usize = 0;
+    while i < BUCKET_CAP {
+        box_ref.data[i] = math::tan(angle);
+        i += 1;
+    }
+    let mut out_h: u64 = 0;
+    let res = bridge_fill_out(42, inout out_h);
+    let _zero = ArenaBox { data: [0.0; 16], count: 0 };
+    return box_ref.data[0] + ((res + out_h) as float);
+}
+"#;
+
+        let (ast_opt, report) = compile_and_check(source, "test_62_v300.rts");
+        assert_eq!(
+            report.status, "ok",
+            "Novos recursos v3.0.0-PRO deveriam compilar sem erro: {:?}",
+            report.diagnostics
+        );
+        let checked = ast_opt.unwrap();
+        let c99 = codegen_native::NativeCodegen::emit_c99(&checked);
+        assert!(c99.contains("math_tan"));
+        assert!(c99.contains("uint64_t* RTS_RESTRICT out_val"));
+        assert!(c99.contains("bridge_fill_out(") && c99.contains("&(out_h))"));
+
+        let llvm = codegen_llvm::LlvmIrCodegen::emit_llvm_ir(&checked);
+        assert!(llvm.contains("declare i64 @bridge_fill_out(i64, ptr)"));
+        assert!(llvm.contains("@tanf"));
+    }
+
+    #[test]
+    fn test_63_v300_engine_main_project_compiles_dual_backend() {
+        let entry = Path::new("src/main.rts");
+        assert!(entry.exists(), "src/main.rts deveria existir");
+        let (ast_opt, report) = compile_and_check_project(&entry);
+        assert_eq!(
+            report.status, "ok",
+            "Projeto src/main.rts deveria validar sem erros: {:?}",
+            report.diagnostics
+        );
+        let checked = ast_opt.unwrap();
+        let c99 = codegen_native::NativeCodegen::emit_c99(&checked);
+        assert!(c99.contains("rhi_device_init"));
+        assert!(c99.contains("camera_build_uniform"));
+        let llvm = codegen_llvm::LlvmIrCodegen::emit_llvm_ir(&checked);
+        assert!(llvm.contains("define dso_local i32 @main("));
+        assert!(llvm.contains("rtsc_vk_alloc_vram_arena"));
+        assert!(llvm.contains("llvm.memcpy.p0.p0.i64"));
+    }
+
+    #[test]
+    fn test_64_core_mem_intrinsics_and_zero_c_rhi_dual_codegen() {
+        let source = r#"
+module test.core_mem_rhi;
+import core.mem;
+
+@repr_c
+pub struct Packet {
+    pub id: u64,
+    pub val: float,
+}
+
+@sealed_sig
+pub fn transfer_packet(buf: cap MutSlice<Packet>, src: Packet) -> u64 {
+    let raw = mem::alloc_aligned(64, 256);
+    mem::zero(raw, 64);
+    mem::copy(raw, mem::addr_of(src), 16);
+    let base = mem::slice_ptr(buf);
+    mem::copy(base, raw, 16);
+    mem::free_aligned(raw);
+    return base;
+}
+"#;
+        let (ast_opt, report) = compile_and_check(source, "test_64_core_mem.rts");
+        assert_eq!(
+            report.status, "ok",
+            "core.mem deveria compilar sem erros: {:?}",
+            report.diagnostics
+        );
+        let checked = ast_opt.unwrap();
+        let c99 = codegen_native::NativeCodegen::emit_c99(&checked);
+        assert!(c99.contains("rtsc_mem_alloc_aligned"));
+        assert!(c99.contains("rtsc_mem_copy"));
+        assert!(c99.contains("rtsc_mem_zero"));
+        assert!(c99.contains("rtsc_mem_free_aligned"));
+        assert!(c99.contains(".data))"));
+
+        let llvm = codegen_llvm::LlvmIrCodegen::emit_llvm_ir(&checked);
+        assert!(llvm.contains("call void @llvm.memcpy.p0.p0.i64"));
+        assert!(llvm.contains("call void @llvm.memset.p0.i64"));
+        assert!(llvm.contains("call void @_aligned_free(ptr"));
+        assert!(llvm.contains("ptrtoint ptr"));
+    }
+
+    #[test]
+    fn test_65_v300_map_pak_persistence_roundtrip_dual_codegen() {
+        let entry = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/village_editor.rts");
+        let (ast_opt, report) = compile_and_check_project(&entry);
+        assert_eq!(
+            report.status, "ok",
+            "Projeto examples/village_editor.rts com pak_map deveria validar sem erros: {:?}",
+            report.diagnostics
+        );
+        let checked = ast_opt.unwrap();
+        let c99 = codegen_native::NativeCodegen::emit_c99(&checked);
+        assert!(c99.contains("pak_save_scene_file"));
+        assert!(c99.contains("pak_load_scene_file"));
+        assert!(c99.contains("rts_fs_write_bytes"));
+        assert!(c99.contains("rts_fs_read_raw"));
+
+        let llvm = codegen_llvm::LlvmIrCodegen::emit_llvm_ir(&checked);
+        assert!(llvm.contains("pak_save_scene_file"));
+        assert!(llvm.contains("pak_load_scene_file"));
+        assert!(llvm.contains("@__rts_fs_write_bytes"));
+        assert!(llvm.contains("@__rts_fs_read_raw"));
+    }
+
+    #[test]
+    fn test_66_v310_engine_2d_3d_and_shader_examples_dual_codegen() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+
+        // 1. Engine 2D (SpriteBatch2D + Texturas Reais + MODE_ORTHO_2D)
+        let demo_2d = root.join("examples/demo_2d.rts");
+        let (ast_2d, rep_2d) = compile_and_check_project(&demo_2d);
+        assert_eq!(rep_2d.status, "ok", "demo_2d.rts failed: {:?}", rep_2d.diagnostics);
+        let checked_2d = ast_2d.unwrap();
+        let c99_2d = codegen_native::NativeCodegen::emit_c99(&checked_2d);
+        assert!(c99_2d.contains("sprite2d_draw"));
+        assert!(c99_2d.contains("sprite2d_flush"));
+        assert!(c99_2d.contains("rtsc_vk_create_texture_rgba_ptr"));
+        assert!(c99_2d.contains("rtsc_vk_cmd_bind_texture"));
+        assert!(c99_2d.contains("pass.ubo_off != UINT64_MAX"));
+        assert!(!c99_2d.contains("pass.ubo_off != 0ull"));
+        let llvm_2d = codegen_llvm::LlvmIrCodegen::emit_llvm_ir(&checked_2d);
+        assert!(llvm_2d.contains("sprite2d_draw"));
+        assert!(llvm_2d.contains("@rtsc_vk_cmd_bind_texture"));
+
+        // 2. Engine 3D desacoplada
+        let demo_3d = root.join("examples/demo_3d.rts");
+        let (ast_3d, rep_3d) = compile_and_check_project(&demo_3d);
+        assert_eq!(rep_3d.status, "ok", "demo_3d.rts failed: {:?}", rep_3d.diagnostics);
+        let checked_3d = ast_3d.unwrap();
+        let c99_3d = codegen_native::NativeCodegen::emit_c99(&checked_3d);
+        assert!(c99_3d.contains("mesh_write_box_rotated"));
+        let llvm_3d = codegen_llvm::LlvmIrCodegen::emit_llvm_ir(&checked_3d);
+        assert!(llvm_3d.contains("mesh_write_box_rotated"));
+
+        // 3. Pipeline dinamico SPIR-V + regressao de runtime C99 (sem VKAPI_PTR/rtsc_vk_load_dev)
+        let demo_shader = root.join("examples/demo_shader.rts");
+        let (ast_sh, rep_sh) = compile_and_check_project(&demo_shader);
+        assert_eq!(rep_sh.status, "ok", "demo_shader.rts failed: {:?}", rep_sh.diagnostics);
+        let checked_sh = ast_sh.unwrap();
+        let c99_sh = codegen_native::NativeCodegen::emit_c99(&checked_sh);
+        assert!(c99_sh.contains("rtsc_vk_create_pipeline_from_spirv"));
+        assert!(c99_sh.contains("LoadLibraryA(\"vulkan-1.dll\")"));
+        assert!(c99_sh.contains("custom_pipes"));
+        assert!(!c99_sh.contains("VKAPI_PTR"));
+        assert!(!c99_sh.contains("rtsc_vk_load_dev"));
+        let llvm_sh = codegen_llvm::LlvmIrCodegen::emit_llvm_ir(&checked_sh);
+        assert!(llvm_sh.contains("@rtsc_vk_create_pipeline_from_spirv"));
+    }
+
+    #[test]
+    fn test_67_v310_engine_mesh_load_obj_and_gbnf_shader_attrs() {
+        let gbnf = gbnf_exporter::export_rustts_gbnf();
+        assert!(gbnf.contains("@vertex_shader"));
+        assert!(gbnf.contains("@fragment_shader"));
+
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let tmp_dir = root.join("build");
+        let _ = std::fs::create_dir_all(&tmp_dir);
+        let probe = tmp_dir.join("_test_mesh_obj_probe.rts");
+        let src = r#"
+module test.mesh_obj_probe;
+import core.mem;
+import engine.mesh;
+
+pub fn main(arena: cap StaticArena) -> int {
+    let verts: cap MutSlice<mesh::Vertex3D> = arena.alloc_slice(64);
+    let inds: cap MutSlice<u32> = arena.alloc_slice(64);
+    let _packed = mesh::mesh_load_obj("nonexistent.obj", mem::slice_ptr(verts), 0, 64, mem::slice_ptr(inds), 0, 64);
+    return 0;
+}
+"#;
+        std::fs::write(&probe, src).unwrap();
+        let (ast_opt, report) = compile_and_check_project(&probe);
+        let _ = std::fs::remove_file(&probe);
+        assert_eq!(report.status, "ok", "mesh_load_obj probe failed: {:?}", report.diagnostics);
+        let checked = ast_opt.unwrap();
+        let c99 = codegen_native::NativeCodegen::emit_c99(&checked);
+        assert!(c99.contains("rtsc_mesh_load_obj"));
+        let llvm = codegen_llvm::LlvmIrCodegen::emit_llvm_ir(&checked);
+        assert!(llvm.contains("mesh_load_obj"));
+    }
+
+    #[test]
+    fn test_68_v310_graphics_shader_push_constant_mvp_and_sampler2d_spirv() {
+        let src = r#"
+module gpu.pbr_custom;
+
+struct Mat4 { m: [float; 16] }
+struct Vec2 { x: float, y: float }
+struct Vec4 { x: float, y: float, z: float, w: float }
+struct Sampler2D { handle: u64 }
+
+fn mul(m: Mat4, v: Vec4) -> Vec4 {
+    return v;
+}
+
+fn sample(tex: Sampler2D, uv: Vec2) -> Vec4 {
+    return Vec4 { x: uv.x, y: uv.y, z: 0.0, w: 1.0 };
+}
+
+@vertex_shader
+pub fn vs_main(pos: Vec4, mvp: Mat4) -> Vec4 {
+    return mul(mvp, pos);
+}
+
+@fragment_shader
+pub fn fs_main(uv: Vec2, tex: Sampler2D) -> Vec4 {
+    return sample(tex, uv);
+}
+"#;
+        let (ast_opt, rep) = compile_and_check(src, "test_68_shader.rts");
+        assert_eq!(rep.status, "ok", "{}", rep.to_human_terminal());
+        let module = ast_opt.unwrap();
+
+        let vs_spv = codegen_gpu::GpuCodegen::emit_spirv_vertex(&module);
+        let vs_words: Vec<u32> = vs_spv
+            .chunks_exact(4)
+            .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect();
+        let has_mat4 = vs_words.windows(4).any(|w| (w[0] & 0xFFFF) == 24 && w[3] == 4); // OpTypeMatrix 4
+        let has_mat_mul = vs_words.windows(5).any(|w| (w[0] & 0xFFFF) == 145); // OpMatrixTimesVector
+        assert!(has_mat4, "Vertex shader should emit OpTypeMatrix for Mat4 push constant");
+        assert!(has_mat_mul, "Vertex shader should emit OpMatrixTimesVector for mul(mvp, pos)");
+
+        let fs_spv = codegen_gpu::GpuCodegen::emit_spirv_fragment(&module);
+        let fs_words: Vec<u32> = fs_spv
+            .chunks_exact(4)
+            .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect();
+        let has_sampled_img = fs_words.windows(3).any(|w| (w[0] & 0xFFFF) == 26); // OpTypeSampledImage
+        let has_img_sample = fs_words.windows(5).any(|w| (w[0] & 0xFFFF) == 87); // OpImageSampleImplicitLod
+        assert!(has_sampled_img, "Fragment shader should emit OpTypeSampledImage for Sampler2D");
+        assert!(has_img_sample, "Fragment shader should emit OpImageSampleImplicitLod for sample()");
+    }
+
+    #[test]
+    fn test_69_v310_engine_r3d_audio_input_png_and_multitex_dual_codegen() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let tmp_dir = root.join("build");
+        let _ = std::fs::create_dir_all(&tmp_dir);
+        let probe = tmp_dir.join("_test_engine_v31_probe.rts");
+        let src = r#"
+module test.engine_v31_probe;
+import core.mem;
+import engine.platform.window;
+import engine.audio;
+import engine.gpu.rhi;
+import engine.gpu.vram_arena;
+import engine.renderer_2d;
+import engine.renderer_3d;
+import engine.ui.imgui_rts;
+import engine.math.vec3;
+import engine.math.vec4;
+
+pub fn main(arena: cap StaticArena) -> int {
+    let t0 = window::rtsc_time_now_sec();
+    let _k = window::KEY_SPACE_BIT | window::KEY_ESC_BIT | window::KEY_ENTER_BIT;
+    let _aud = audio::audio_play_wav("sfx.wav", false);
+    audio::audio_stop_all();
+    let mut dev = rhi::rhi_device_init(rhi::BACKEND_VULKAN, 0, 1280, 720, 1024 * 1024, true);
+    let mut cmd = rhi::rhi_begin_frame(inout dev);
+    let mut b2d = renderer_2d::sprite2d_init(16);
+    let v2: cap MutSlice<imgui_rts::UiVertex> = arena.alloc_slice(64);
+    let i2: cap MutSlice<u32> = arena.alloc_slice(96);
+    let ubo = vram_arena::vram_arena_alloc_aligned(inout dev.arena, 256, vram_arena::GPU_CBUFFER_ALIGNMENT);
+    renderer_2d::sprite2d_begin(inout b2d, 1);
+    renderer_2d::sprite2d_draw_rect(inout b2d, v2, i2, 0.0, 0.0, 1.0, 1.0, 0xFFFFFFFF);
+    renderer_2d::sprite2d_set_texture(inout b2d, inout dev, cmd, v2, i2, ubo, 2);
+    renderer_2d::sprite2d_flush(inout b2d, inout dev, cmd, v2, i2, ubo);
+    let mut r3d = renderer_3d::r3d_init(64, 96);
+    renderer_3d::r3d_begin(inout r3d);
+    let _ok = rhi::rhi_end_frame_and_present(dev, inout cmd);
+    return if t0 >= 0.0 { 0 } else { 1 };
+}
+"#;
+        std::fs::write(&probe, src).unwrap();
+        let (ast_opt, rep) = compile_and_check_project(&probe);
+        let _ = std::fs::remove_file(&probe);
+        assert_eq!(rep.status, "ok", "v31 probe failed: {:?}", rep.diagnostics);
+        let checked = ast_opt.unwrap();
+        let c99 = codegen_native::NativeCodegen::emit_c99(&checked);
+        assert!(c99.contains("rtsc_time_now_sec"));
+        assert!(c99.contains("rtsc_audio_play_wav"));
+        assert!(c99.contains("rtsc_decode_png_rgba"));
+        assert!(c99.contains("sprite2d_set_texture"));
+        assert!(c99.contains("r3d_begin"));
+        let llvm = codegen_llvm::LlvmIrCodegen::emit_llvm_ir(&checked);
+        assert!(llvm.contains("@rtsc_time_now_sec"));
+        assert!(llvm.contains("@rtsc_audio_play_wav"));
+        assert!(!llvm.contains("declare float @rtsc_time_now_sec"));
+        assert!(!llvm.contains("declare i1 @rtsc_audio_play_wav"));
+        assert!(!llvm.contains("ret float 0.016"));
+        assert!(llvm.contains("sprite2d_set_texture"));
+    }
+
+    #[test]
+    fn test_70_v300_version_and_docs_consistency() {
+        assert_eq!(diagnostics::COMPILER_VERSION, "2.2.0-rts");
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let doc_files = [
+            "README.md",
+            "INSTALACAO_E_USO.md",
+            "MANUAL_TIPOS_RUSTTS.md",
+            "manual_e_matriz_de_regras_da_linguagem_rustts.md",
+            "CONTRIBUTING.md",
+            "devlog.md",
+            "roadmap_mestre_e_arquitetura_rustts_v3_0_0_pro.md",
+            "Guia_Interativo_e_Documentacao_RustTS.html",
+        ];
+        for rel in doc_files {
+            let text = std::fs::read_to_string(root.join(rel))
+                .unwrap_or_else(|e| panic!("Falha ao ler {}: {}", rel, e));
+            assert!(
+                text.contains("2.2.0-rts"),
+                "Documento '{}' deveria referenciar a versao unificada 2.2.0-rts",
+                rel
+            );
+        }
+        for rel in [
+            "README.md",
+            "INSTALACAO_E_USO.md",
+            "Guia_Interativo_e_Documentacao_RustTS.html",
+        ] {
+            let text = std::fs::read_to_string(root.join(rel)).unwrap();
+            assert!(
+                text.contains("demo_2d.rts") && text.contains("spirv-vert"),
+                "Guia '{}' deveria documentar demo_2d.rts e --target spirv-vert",
+                rel
+            );
+        }
     }
 }

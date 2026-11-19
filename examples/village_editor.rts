@@ -1,0 +1,2018 @@
+module main;
+import core.io;
+import core.math;
+import core.mem;
+import engine.math.vec3;
+import engine.math.vec4;
+import engine.gpu.vram_arena;
+import engine.gpu.barrier;
+import engine.gpu.rhi;
+import engine.camera;
+import engine.mesh;
+import engine.vfs.pak_format;
+import engine.vfs.pak_map;
+import engine.core.jobs;
+import engine.core.logger;
+import engine.physics.aabb;
+import engine.physics.raycast;
+import engine.physics.spatial_hash;
+import engine.editor.gizmo;
+import engine.editor.world_editor;
+import engine.ui.imgui_rts;
+import engine.platform.window;
+
+pub const VRAM_POOL_SIZE_BYTES: u64  = 67108864; // 64 MB
+pub const MAX_STATIC_VERTICES: usize = 65536;
+pub const MAX_STATIC_INDICES: usize  = 98304;
+pub const MAX_SCENE_OBJECTS: usize   = 2048;
+pub const MAX_UI_VERTICES: usize     = 4096;
+pub const MAX_UI_INDICES: usize      = 6144;
+
+pub const KEY_TAB_BIT: u32   = 32768;
+pub const KEY_SPACE_BIT: u32 = 65536;
+pub const KEY_SHIFT_BIT: u32 = 131072;
+
+@repr_c
+pub struct EngineInputSnapshot {
+    pub mouse_x: float,
+    pub mouse_y: float,
+    pub mouse_left_down: bool,
+    pub mouse_right_down: bool,
+    pub move_right: float,
+    pub move_up: float,
+    pub move_forward: float,
+    pub look_delta_yaw: float,
+    pub look_delta_pitch: float,
+    pub zoom_delta: float,
+    pub toggle_editor_mode: bool,
+    pub ask_delete: bool,
+    pub jump_pressed: bool,
+    pub sprint_down: bool,
+}
+
+@repr_c
+pub struct GpuInstanceData {
+    pub m0: vec4::Vec4,
+    pub m1: vec4::Vec4,
+    pub m2: vec4::Vec4,
+    pub m3: vec4::Vec4,
+    pub color: vec4::Vec4,
+}
+
+pub const GPU_INSTANCE_STRIDE_BYTES: u64 = 80;
+pub const GROUND_INDEX_COUNT: u32        = 36;
+pub const CATALOG_MESH_COUNT: u32        = 8;
+pub const PREFAB_BOX: u64                = 0;
+pub const PREFAB_GABLE_ROOF: u64         = 1;
+pub const PREFAB_WATCHTOWER: u64         = 2;
+pub const PREFAB_PINE_TREE: u64          = 3;
+pub const PREFAB_JERSEY_BARRIER: u64     = 4;
+pub const PREFAB_HOUSE_SHELL: u64        = 5;
+pub const PREFAB_STREETLIGHT: u64        = 6;
+pub const PREFAB_ROAD_SEGMENT: u64       = 7;
+
+@sealed_sig
+pub extern "C" fn rtsc_mesh_load_obj(
+    path: str,
+    dst_verts_ptr: u64,
+    v_base: u32,
+    max_verts: u32,
+    dst_inds_ptr: u64,
+    i_base: u32,
+    max_inds: u32
+) -> u64;
+
+@sealed_sig
+pub extern "C" fn rtsc_vk_cmd_bind_instance_buffer(cmd: u64, inst_vbo_off: u64);
+
+@sealed_sig
+pub extern "C" fn rtsc_vk_cmd_draw_indexed_instanced(
+    cmd: u64,
+    index_count: u32,
+    instance_count: u32,
+    first_index: u32,
+    vertex_offset: i32,
+    first_instance: u32
+);
+
+@repr_c
+pub struct EngineRuntimeState {
+    pub rhi_dev: rhi::RhiDevice,
+    pub job_sys: jobs::JobSystemState,
+    pub cam: camera::Camera3D,
+    pub spatial_cfg: spatial_hash::SpatialGridConfig,
+    pub editor: world_editor::EditorSceneState,
+    pub ui_ctx: imgui_rts::UiContext,
+    pub logger: logger::LoggerState,
+    pub static_world_vbo: vram_arena::VramAllocation,
+    pub static_world_ibo: vram_arena::VramAllocation,
+    pub world_index_count: u32,
+    pub ground_index_count: u32,
+    pub cat_first_index: [u32; 8],
+    pub cat_index_count: [u32; 8],
+    pub snap_step: float,
+    pub next_group_id: u32,
+    pub isolate_single_part: bool,
+    pub main_pipeline_h: u64,
+    pub inst_pipeline_h: u64,
+    pub ui_pipeline_h: u64,
+    pub backbuffer_tex_h: u64,
+    pub editor_active: bool,
+    pub confirm_delete_open: bool,
+    pub last_click_obj: i32,
+    pub double_click_timer: float,
+    pub viewport_drag_ready: bool,
+    pub drag_moved_px: float,
+    pub player_pos: vec3::Vec3,
+    pub player_vel_y: float,
+    pub player_yaw: float,
+    pub player_pitch: float,
+    pub player_grounded: bool,
+    pub player_third_person: bool,
+}
+
+@sealed_sig
+pub fn catalog_mesh_id_from_hash(prefab_hash: u64) -> usize {
+    if prefab_hash <= 7 {
+        return prefab_hash as usize;
+    }
+    return 0;
+}
+
+@sealed_sig
+pub fn mesh_set_vertex(
+    verts: cap MutSlice<mesh::Vertex3D>,
+    idx: usize,
+    px: float,
+    py: float,
+    pz: float,
+    nx: float,
+    ny: float,
+    nz: float,
+    u: float,
+    v: float,
+    col: vec4::Vec4
+) {
+    verts[idx] = mesh::Vertex3D {
+        pos_u: vec4::vec4_new(px, py, pz, u),
+        norm_v: vec4::vec4_new(nx, ny, nz, v),
+        color: col,
+    };
+}
+
+@sealed_sig
+pub fn mesh_push_quad(
+    verts: cap MutSlice<mesh::Vertex3D>,
+    inds: cap MutSlice<u32>,
+    v_base: usize,
+    i_base: usize,
+    p0: vec3::Vec3,
+    p1: vec3::Vec3,
+    p2: vec3::Vec3,
+    p3: vec3::Vec3,
+    n: vec3::Vec3,
+    col: vec4::Vec4
+) {
+    mesh_set_vertex(verts, v_base + 0, p0.x, p0.y, p0.z, n.x, n.y, n.z, 0.0, 0.0, col);
+    mesh_set_vertex(verts, v_base + 1, p1.x, p1.y, p1.z, n.x, n.y, n.z, 1.0, 0.0, col);
+    mesh_set_vertex(verts, v_base + 2, p2.x, p2.y, p2.z, n.x, n.y, n.z, 1.0, 1.0, col);
+    mesh_set_vertex(verts, v_base + 3, p3.x, p3.y, p3.z, n.x, n.y, n.z, 0.0, 1.0, col);
+
+    let vb = v_base as u32;
+    inds[i_base + 0] = vb + 0;
+    inds[i_base + 1] = vb + 1;
+    inds[i_base + 2] = vb + 2;
+    inds[i_base + 3] = vb + 0;
+    inds[i_base + 4] = vb + 2;
+    inds[i_base + 5] = vb + 3;
+}
+
+@sealed_sig
+pub fn mesh_push_tri(
+    verts: cap MutSlice<mesh::Vertex3D>,
+    inds: cap MutSlice<u32>,
+    v_base: usize,
+    i_base: usize,
+    p0: vec3::Vec3,
+    p1: vec3::Vec3,
+    p2: vec3::Vec3,
+    n: vec3::Vec3,
+    col: vec4::Vec4
+) {
+    mesh_set_vertex(verts, v_base + 0, p0.x, p0.y, p0.z, n.x, n.y, n.z, 0.0, 0.0, col);
+    mesh_set_vertex(verts, v_base + 1, p1.x, p1.y, p1.z, n.x, n.y, n.z, 1.0, 0.0, col);
+    mesh_set_vertex(verts, v_base + 2, p2.x, p2.y, p2.z, n.x, n.y, n.z, 0.5, 1.0, col);
+
+    let vb = v_base as u32;
+    inds[i_base + 0] = vb + 0;
+    inds[i_base + 1] = vb + 1;
+    inds[i_base + 2] = vb + 2;
+}
+
+// Malha 1: Telhado Duas Aguas (18 vertices, 24 indices)
+@sealed_sig
+pub fn mesh_write_gable_roof(
+    verts: cap MutSlice<mesh::Vertex3D>,
+    inds: cap MutSlice<u32>,
+    v_off: usize,
+    i_off: usize,
+    col: vec4::Vec4
+) {
+    // Base inferior
+    mesh_push_quad(
+        verts, inds, v_off + 0, i_off + 0,
+        vec3::vec3_new(-1.0, -1.0, -1.0), vec3::vec3_new(1.0, -1.0, -1.0),
+        vec3::vec3_new(1.0, -1.0, 1.0), vec3::vec3_new(-1.0, -1.0, 1.0),
+        vec3::vec3_new(0.0, -1.0, 0.0), col
+    );
+    // Agua esquerda
+    mesh_push_quad(
+        verts, inds, v_off + 4, i_off + 6,
+        vec3::vec3_new(-1.0, -1.0, 1.0), vec3::vec3_new(0.0, 1.0, 1.0),
+        vec3::vec3_new(0.0, 1.0, -1.0), vec3::vec3_new(-1.0, -1.0, -1.0),
+        vec3::vec3_new(-0.894427, 0.447214, 0.0), col
+    );
+    // Agua direita
+    mesh_push_quad(
+        verts, inds, v_off + 8, i_off + 12,
+        vec3::vec3_new(0.0, 1.0, 1.0), vec3::vec3_new(1.0, -1.0, 1.0),
+        vec3::vec3_new(1.0, -1.0, -1.0), vec3::vec3_new(0.0, 1.0, -1.0),
+        vec3::vec3_new(0.894427, 0.447214, 0.0), col
+    );
+    // Empena frontal (Z+)
+    mesh_push_tri(
+        verts, inds, v_off + 12, i_off + 18,
+        vec3::vec3_new(-1.0, -1.0, 1.0), vec3::vec3_new(1.0, -1.0, 1.0), vec3::vec3_new(0.0, 1.0, 1.0),
+        vec3::vec3_new(0.0, 0.0, 1.0), col
+    );
+    // Empena traseira (Z-)
+    mesh_push_tri(
+        verts, inds, v_off + 15, i_off + 21,
+        vec3::vec3_new(1.0, -1.0, -1.0), vec3::vec3_new(-1.0, -1.0, -1.0), vec3::vec3_new(0.0, 1.0, -1.0),
+        vec3::vec3_new(0.0, 0.0, -1.0), col
+    );
+}
+
+// Malha 2: Torre de Vigia (6 caixas = 144 vertices, 216 indices)
+@sealed_sig
+pub fn mesh_write_watchtower(
+    verts: cap MutSlice<mesh::Vertex3D>,
+    inds: cap MutSlice<u32>,
+    v_off: usize,
+    i_off: usize,
+    col: vec4::Vec4
+) {
+    let leg_half = vec3::vec3_new(0.12, 0.65, 0.12);
+    mesh::mesh_write_box(verts, inds, v_off + 0,   i_off + 0,   vec3::vec3_new(-0.75, -0.35, -0.75), leg_half, col);
+    mesh::mesh_write_box(verts, inds, v_off + 24,  i_off + 36,  vec3::vec3_new(0.75, -0.35, -0.75),  leg_half, col);
+    mesh::mesh_write_box(verts, inds, v_off + 48,  i_off + 72,  vec3::vec3_new(-0.75, -0.35, 0.75),  leg_half, col);
+    mesh::mesh_write_box(verts, inds, v_off + 72,  i_off + 108, vec3::vec3_new(0.75, -0.35, 0.75),   leg_half, col);
+    mesh::mesh_write_box(verts, inds, v_off + 96,  i_off + 144, vec3::vec3_new(0.0, 0.35, 0.0), vec3::vec3_new(0.95, 0.10, 0.95), col);
+    mesh::mesh_write_box(verts, inds, v_off + 120, i_off + 180, vec3::vec3_new(0.0, 0.88, 0.0), vec3::vec3_new(0.95, 0.12, 0.95), col);
+}
+
+@sealed_sig
+pub fn mesh_write_pyramid_tier(
+    verts: cap MutSlice<mesh::Vertex3D>,
+    inds: cap MutSlice<u32>,
+    v_off: usize,
+    i_off: usize,
+    y_bot: float,
+    y_top: float,
+    half_w: float,
+    col: vec4::Vec4
+) {
+    let apex = vec3::vec3_new(0.0, y_top, 0.0);
+    let c0 = vec3::vec3_new(-half_w, y_bot, half_w);
+    let c1 = vec3::vec3_new(half_w, y_bot, half_w);
+    let c2 = vec3::vec3_new(half_w, y_bot, -half_w);
+    let c3 = vec3::vec3_new(-half_w, y_bot, -half_w);
+
+    mesh_push_quad(verts, inds, v_off + 0, i_off + 0, c3, c2, c1, c0, vec3::vec3_new(0.0, -1.0, 0.0), col);
+    mesh_push_tri(verts, inds, v_off + 4,  i_off + 6,  c0, c1, apex, vec3::vec3_new(0.0, 0.5, 0.866), col);
+    mesh_push_tri(verts, inds, v_off + 7,  i_off + 9,  c1, c2, apex, vec3::vec3_new(0.866, 0.5, 0.0), col);
+    mesh_push_tri(verts, inds, v_off + 10, i_off + 12, c2, c3, apex, vec3::vec3_new(0.0, 0.5, -0.866), col);
+    mesh_push_tri(verts, inds, v_off + 13, i_off + 15, c3, c0, apex, vec3::vec3_new(-0.866, 0.5, 0.0), col);
+}
+
+// Malha 3: Pinheiro (Tronco + 2 copas piramidais = 56 vertices, 72 indices)
+@sealed_sig
+pub fn mesh_write_pine_tree(
+    verts: cap MutSlice<mesh::Vertex3D>,
+    inds: cap MutSlice<u32>,
+    v_off: usize,
+    i_off: usize
+) {
+    let trunk_col = vec4::vec4_new(0.55, 0.38, 0.24, 1.0);
+    let leaf_bot  = vec4::vec4_new(0.45, 0.78, 0.42, 1.0);
+    let leaf_top  = vec4::vec4_new(0.52, 0.86, 0.48, 1.0);
+    mesh::mesh_write_box(verts, inds, v_off + 0, i_off + 0, vec3::vec3_new(0.0, -0.60, 0.0), vec3::vec3_new(0.16, 0.40, 0.16), trunk_col);
+    mesh_write_pyramid_tier(verts, inds, v_off + 24, i_off + 36, -0.25, 0.55, 0.95, leaf_bot);
+    mesh_write_pyramid_tier(verts, inds, v_off + 40, i_off + 54, 0.25, 1.0, 0.65, leaf_top);
+}
+
+// Malha 4: Barreira Jersey de Concreto (2 caixas = 48 vertices, 72 indices)
+@sealed_sig
+pub fn mesh_write_jersey_barrier(
+    verts: cap MutSlice<mesh::Vertex3D>,
+    inds: cap MutSlice<u32>,
+    v_off: usize,
+    i_off: usize,
+    col: vec4::Vec4
+) {
+    mesh::mesh_write_box(verts, inds, v_off + 0,  i_off + 0,  vec3::vec3_new(0.0, -0.65, 0.0), vec3::vec3_new(1.0, 0.35, 0.45), col);
+    mesh::mesh_write_box(verts, inds, v_off + 24, i_off + 36, vec3::vec3_new(0.0, 0.25, 0.0),  vec3::vec3_new(1.0, 0.65, 0.20), col);
+}
+
+// Malha 5: Casa / Galpao com Vao de Porta (Apenas Paredes e Piso = 144 vertices, 216 indices)
+@sealed_sig
+pub fn mesh_write_house_shell(
+    verts: cap MutSlice<mesh::Vertex3D>,
+    inds: cap MutSlice<u32>,
+    v_off: usize,
+    i_off: usize,
+    col: vec4::Vec4
+) {
+    // Parede Traseira (-Z), Parede Esquerda (-X), Parede Direita (+X)
+    mesh::mesh_write_box(verts, inds, v_off + 0,   i_off + 0,   vec3::vec3_new( 0.0,  0.0, -0.90), vec3::vec3_new(1.00, 0.70, 0.10), col);
+    mesh::mesh_write_box(verts, inds, v_off + 24,  i_off + 36,  vec3::vec3_new(-0.90, 0.0,  0.0),  vec3::vec3_new(0.10, 0.70, 0.80), col);
+    mesh::mesh_write_box(verts, inds, v_off + 48,  i_off + 72,  vec3::vec3_new( 0.90, 0.0,  0.0),  vec3::vec3_new(0.10, 0.70, 0.80), col);
+    // Frente com abertura de porta central (Ombreira Esq + Ombreira Dir)
+    mesh::mesh_write_box(verts, inds, v_off + 72,  i_off + 108, vec3::vec3_new(-0.62, 0.0,  0.90), vec3::vec3_new(0.38, 0.70, 0.10), col);
+    mesh::mesh_write_box(verts, inds, v_off + 96,  i_off + 144, vec3::vec3_new( 0.62, 0.0,  0.90), vec3::vec3_new(0.38, 0.70, 0.10), col);
+    // Laje de piso interno
+    mesh::mesh_write_box(verts, inds, v_off + 120, i_off + 180, vec3::vec3_new( 0.0, -0.65, 0.0), vec3::vec3_new(0.92, 0.08, 0.82), vec4::vec4_new(0.35, 0.35, 0.38, 1.0));
+}
+
+// Malha 6: Poste de Iluminacao Urbana (72 vertices, 108 indices)
+@sealed_sig
+pub fn mesh_write_streetlight(
+    verts: cap MutSlice<mesh::Vertex3D>,
+    inds: cap MutSlice<u32>,
+    v_off: usize,
+    i_off: usize,
+    col: vec4::Vec4
+) {
+    mesh::mesh_write_box(verts, inds, v_off + 0,  i_off + 0,  vec3::vec3_new(0.0, -0.80, 0.0), vec3::vec3_new(0.22, 0.20, 0.22), col);
+    mesh::mesh_write_box(verts, inds, v_off + 24, i_off + 36, vec3::vec3_new(0.0,  0.15, 0.0), vec3::vec3_new(0.08, 0.95, 0.08), col);
+    mesh::mesh_write_box(verts, inds, v_off + 48, i_off + 72, vec3::vec3_new(0.35, 1.05, 0.0), vec3::vec3_new(0.42, 0.07, 0.12), vec4::vec4_new(1.0, 0.95, 0.70, 1.0));
+}
+
+// Malha 7: Segmento de Estrada com Meio-Fio Lateral (72 vertices, 108 indices)
+@sealed_sig
+pub fn mesh_write_road_segment(
+    verts: cap MutSlice<mesh::Vertex3D>,
+    inds: cap MutSlice<u32>,
+    v_off: usize,
+    i_off: usize,
+    col: vec4::Vec4
+) {
+    mesh::mesh_write_box(verts, inds, v_off + 0,  i_off + 0,  vec3::vec3_new( 0.0,  -0.90, 0.0), vec3::vec3_new(0.92, 0.08, 1.00), col);
+    mesh::mesh_write_box(verts, inds, v_off + 24, i_off + 36, vec3::vec3_new(-0.94, -0.82, 0.0), vec3::vec3_new(0.08, 0.14, 1.00), vec4::vec4_new(0.75, 0.75, 0.78, 1.0));
+    mesh::mesh_write_box(verts, inds, v_off + 48, i_off + 72, vec3::vec3_new( 0.94, -0.82, 0.0), vec3::vec3_new(0.08, 0.14, 1.00), vec4::vec4_new(0.75, 0.75, 0.78, 1.0));
+}
+
+@sealed_sig
+pub fn scene_update_bound_at(
+    scene_records: cap ReadSlice<pak_format::WorldObjectRecord>,
+    scene_bounds: cap MutSlice<aabb::AABB3D>,
+    idx: usize
+) {
+    let r = scene_records[idx];
+    let hx = 1.5 * r.scale_x;
+    let hy = 1.0 * r.scale_y;
+    let hz = 1.5 * r.scale_z;
+
+    let deg2rad: float = 0.017453292;
+    let rx = r.rot_x * deg2rad;
+    let ry = r.rot_y * deg2rad;
+    let rz = r.rot_z * deg2rad;
+    let cx = math::cos(rx); let sx = math::sin(rx);
+    let cy = math::cos(ry); let sy = math::sin(ry);
+    let cz = math::cos(rz); let sz = math::sin(rz);
+
+    let r00 = math::abs(cy * cz);
+    let r01 = math::abs((sx * sy * cz) - (cx * sz));
+    let r02 = math::abs((cx * sy * cz) + (sx * sz));
+
+    let r10 = math::abs(cy * sz);
+    let r11 = math::abs((sx * sy * sz) + (cx * cz));
+    let r12 = math::abs((cx * sy * sz) - (sx * cz));
+
+    let r20 = math::abs(0.0 - sy);
+    let r21 = math::abs(sx * cy);
+    let r22 = math::abs(cx * cy);
+
+    let ex = (r00 * hx) + (r01 * hy) + (r02 * hz);
+    let ey = (r10 * hx) + (r11 * hy) + (r12 * hz);
+    let ez = (r20 * hx) + (r21 * hy) + (r22 * hz);
+
+    scene_bounds[idx] = aabb::AABB3D {
+        min: vec3::vec3_new(r.pos_x - ex, r.pos_y - ey, r.pos_z - ez),
+        max: vec3::vec3_new(r.pos_x + ex, r.pos_y + ey, r.pos_z + ez),
+        layer_mask: r.collision_flags,
+        entity_id: idx as u32,
+    };
+}
+
+@sealed_sig
+pub fn player_hits_wall_xz(
+    px: float,
+    py: float,
+    pz: float,
+    radius: float,
+    height: float,
+    step_h: float,
+    b: aabb::AABB3D
+) -> bool {
+    if b.layer_mask == 0 { return false; }
+    if b.max.y <= (py + step_h) { return false; }
+    if b.min.y >= (py + height) { return false; }
+    let hit_x = (px + radius > b.min.x) && (px - radius < b.max.x);
+    let hit_z = (pz + radius > b.min.z) && (pz - radius < b.max.z);
+    return hit_x && hit_z;
+}
+
+@sealed_sig
+pub fn engine_update_play_mode(
+    eng: inout EngineRuntimeState,
+    input: EngineInputSnapshot,
+    scene_bounds: cap ReadSlice<aabb::AABB3D>,
+    dt: float
+) {
+    let deg2rad: float = 0.017453292;
+    let inside_play_hud = imgui_rts::ui_point_in_rect(input.mouse_x, input.mouse_y, 16.0, 16.0, 310.0, 120.0);
+    let can_look = input.mouse_right_down || ((!inside_play_hud) && (!input.mouse_left_down));
+    if can_look && (input.look_delta_yaw != 0.0 || input.look_delta_pitch != 0.0) {
+        camera::camera_rotate(inout eng.cam, input.look_delta_yaw * 1.15, input.look_delta_pitch * 1.05);
+    }
+    eng.player_yaw   = eng.cam.yaw_deg;
+    eng.player_pitch = eng.cam.pitch_deg;
+
+    let yaw_rad   = eng.player_yaw * deg2rad;
+    let pitch_rad = eng.player_pitch * deg2rad;
+    let fwd_x = 0.0 - math::sin(yaw_rad);
+    let fwd_z = 0.0 - math::cos(yaw_rad);
+    let rgt_x = math::cos(yaw_rad);
+    let rgt_z = 0.0 - math::sin(yaw_rad);
+
+    let move_speed: float = if input.sprint_down { 10.5 } else { 5.8 };
+    let vx = ((fwd_x * input.move_forward) + (rgt_x * input.move_right)) * move_speed;
+    let vz = ((fwd_z * input.move_forward) + (rgt_z * input.move_right)) * move_speed;
+
+    let p_rad: float  = 0.42;
+    let p_h: float    = 1.75;
+    let step_h: float = 0.55;
+    let obj_cnt = eng.editor.object_count as usize;
+
+    let try_x = math::clamp(eng.player_pos.x + (vx * dt), -29.0, 29.0);
+    let mut blocked_x: bool = false;
+    let mut i: usize = 0;
+    while i < obj_cnt {
+        if player_hits_wall_xz(try_x, eng.player_pos.y, eng.player_pos.z, p_rad, p_h, step_h, scene_bounds[i]) {
+            blocked_x = true;
+        }
+        i += 1;
+    }
+    if !blocked_x {
+        eng.player_pos.x = try_x;
+    }
+
+    let try_z = math::clamp(eng.player_pos.z + (vz * dt), -29.0, 29.0);
+    let mut blocked_z: bool = false;
+    i = 0;
+    while i < obj_cnt {
+        if player_hits_wall_xz(eng.player_pos.x, eng.player_pos.y, try_z, p_rad, p_h, step_h, scene_bounds[i]) {
+            blocked_z = true;
+        }
+        i += 1;
+    }
+    if !blocked_z {
+        eng.player_pos.z = try_z;
+    }
+
+    if input.jump_pressed && eng.player_grounded {
+        eng.player_vel_y = 8.6;
+        eng.player_grounded = false;
+    }
+    eng.player_vel_y -= 22.0 * dt;
+    let next_y = eng.player_pos.y + (eng.player_vel_y * dt);
+
+    let mut support_y: float = -0.20;
+    i = 0;
+    while i < obj_cnt {
+        let b = scene_bounds[i];
+        if b.layer_mask != 0 {
+            let over_x = (eng.player_pos.x + p_rad > b.min.x) && (eng.player_pos.x - p_rad < b.max.x);
+            let over_z = (eng.player_pos.z + p_rad > b.min.z) && (eng.player_pos.z - p_rad < b.max.z);
+            if over_x && over_z {
+                if (b.max.y <= (eng.player_pos.y + step_h)) && (b.max.y > support_y) {
+                    support_y = b.max.y;
+                }
+            }
+        }
+        i += 1;
+    }
+
+    if next_y <= support_y {
+        eng.player_pos.y = support_y;
+        eng.player_vel_y = 0.0;
+        eng.player_grounded = true;
+    } else {
+        eng.player_pos.y = next_y;
+        eng.player_grounded = false;
+    }
+
+    let look_x = math::cos(pitch_rad) * fwd_x;
+    let look_y = math::sin(pitch_rad);
+    let look_z = math::cos(pitch_rad) * fwd_z;
+    let head_pos = vec3::vec3_new(eng.player_pos.x, eng.player_pos.y + 1.62, eng.player_pos.z);
+
+    eng.cam.proj_type = camera::PROJ_PERSPECTIVE;
+    if eng.player_third_person {
+        eng.cam.mode     = camera::MODE_ORBIT;
+        eng.cam.target   = head_pos;
+        eng.cam.position = vec3::vec3_new(
+            head_pos.x - (look_x * 4.5),
+            math::max(head_pos.y - (look_y * 4.5) + 0.65, support_y + 0.5),
+            head_pos.z - (look_z * 4.5)
+        );
+    } else {
+        eng.cam.mode     = camera::MODE_FREELOOK;
+        eng.cam.position = head_pos;
+        eng.cam.target   = vec3::vec3_new(
+            head_pos.x + (look_x * 10.0),
+            head_pos.y + (look_y * 10.0),
+            head_pos.z + (look_z * 10.0)
+        );
+    }
+}
+
+@sealed_sig
+pub fn editor_spawn_scaled_object(
+    eng: inout EngineRuntimeState,
+    scene_records: cap MutSlice<pak_format::WorldObjectRecord>,
+    scene_bounds: cap MutSlice<aabb::AABB3D>,
+    prefab_hash: u64,
+    pos: vec3::Vec3,
+    rot: vec3::Vec3,
+    scale: vec3::Vec3,
+    mat_id: u32,
+    group_id: u32
+) -> i32 {
+    let cur_cnt = eng.editor.object_count as usize;
+    if cur_cnt >= MAX_SCENE_OBJECTS {
+        return -1;
+    }
+    let gid = if group_id == 0 { 1 } else { group_id };
+    scene_records[cur_cnt] = pak_format::WorldObjectRecord {
+        prefab_hash: prefab_hash,
+        pos_x: pos.x,
+        pos_y: pos.y,
+        pos_z: pos.z,
+        rot_x: rot.x,
+        rot_y: rot.y,
+        rot_z: rot.z,
+        scale_x: scale.x,
+        scale_y: scale.y,
+        scale_z: scale.z,
+        material_override_id: mat_id,
+        collision_flags: gid,
+        reserved_pad: 0,
+    };
+    scene_update_bound_at(scene_records, scene_bounds, cur_cnt);
+    eng.editor.object_count = (cur_cnt + 1) as u32;
+    return cur_cnt as i32;
+}
+
+@sealed_sig
+pub fn scene_is_object_in_selection(
+    eng: EngineRuntimeState,
+    scene_records: cap ReadSlice<pak_format::WorldObjectRecord>,
+    k: usize
+) -> bool {
+    if eng.editor.selected_index < 0 { return false; }
+    let sel = eng.editor.selected_index as usize;
+    if sel >= (eng.editor.object_count as usize) { return false; }
+    if k == sel { return true; }
+    if eng.isolate_single_part { return false; }
+    let sel_gid = scene_records[sel].collision_flags;
+    if sel_gid >= 100 {
+        return scene_records[k].collision_flags == sel_gid;
+    }
+    return false;
+}
+
+@sealed_sig
+pub fn scene_translate_selection(
+    eng: inout EngineRuntimeState,
+    scene_records: cap MutSlice<pak_format::WorldObjectRecord>,
+    scene_bounds: cap MutSlice<aabb::AABB3D>,
+    dx: float,
+    dy: float,
+    dz: float
+) {
+    let cnt = eng.editor.object_count as usize;
+    let mut k: usize = 0;
+    while k < cnt {
+        if scene_is_object_in_selection(eng, scene_records, k) {
+            let mut r = scene_records[k];
+            r.pos_x += dx;
+            r.pos_y += dy;
+            r.pos_z += dz;
+            scene_records[k] = r;
+            scene_update_bound_at(scene_records, scene_bounds, k);
+        }
+        k += 1;
+    }
+}
+
+@sealed_sig
+pub fn scene_rotate_y_selection(
+    eng: inout EngineRuntimeState,
+    scene_records: cap MutSlice<pak_format::WorldObjectRecord>,
+    scene_bounds: cap MutSlice<aabb::AABB3D>,
+    delta_deg_y: float
+) {
+    if eng.editor.selected_index < 0 { return; }
+    let sel = eng.editor.selected_index as usize;
+    let pivot_x = scene_records[sel].pos_x;
+    let pivot_z = scene_records[sel].pos_z;
+    let rad = delta_deg_y * 0.017453292;
+    let c = math::cos(rad);
+    let s = math::sin(rad);
+
+    let cnt = eng.editor.object_count as usize;
+    let mut k: usize = 0;
+    while k < cnt {
+        if scene_is_object_in_selection(eng, scene_records, k) {
+            let mut r = scene_records[k];
+            let rel_x = r.pos_x - pivot_x;
+            let rel_z = r.pos_z - pivot_z;
+            r.pos_x = pivot_x + ((rel_x * c) - (rel_z * s));
+            r.pos_z = pivot_z + ((rel_x * s) + (rel_z * c));
+            r.rot_y += delta_deg_y;
+            if r.rot_y >= 360.0 { r.rot_y -= 360.0; }
+            if r.rot_y < 0.0    { r.rot_y += 360.0; }
+            if (!eng.isolate_single_part) && math::abs(delta_deg_y - 90.0) < 1.0 && math::abs(r.scale_x - r.scale_z) > 0.05 {
+                let tmp_s = r.scale_x;
+                r.scale_x = r.scale_z;
+                r.scale_z = tmp_s;
+                r.rot_y -= delta_deg_y;
+                if r.rot_y < 0.0 { r.rot_y += 360.0; }
+            }
+            scene_records[k] = r;
+            scene_update_bound_at(scene_records, scene_bounds, k);
+        }
+        k += 1;
+    }
+}
+
+@sealed_sig
+pub fn scene_delete_selection_direct(
+    eng: inout EngineRuntimeState,
+    scene_records: cap MutSlice<pak_format::WorldObjectRecord>,
+    scene_bounds: cap MutSlice<aabb::AABB3D>
+) -> u32 {
+    if eng.editor.selected_index < 0 { return 0; }
+    let sel = eng.editor.selected_index as usize;
+    let cnt = eng.editor.object_count as usize;
+    if sel >= cnt { return 0; }
+
+    let sel_gid = scene_records[sel].collision_flags;
+    let delete_group = (!eng.isolate_single_part) && (sel_gid >= 100);
+
+    let mut write_idx: usize = 0;
+    let mut removed: u32 = 0;
+    let mut read_idx: usize = 0;
+    while read_idx < cnt {
+        let r = scene_records[read_idx];
+        let should_del = if delete_group {
+            r.collision_flags == sel_gid
+        } else {
+            read_idx == sel
+        };
+        if should_del {
+            removed += 1;
+        } else {
+            scene_records[write_idx] = r;
+            scene_update_bound_at(scene_records, scene_bounds, write_idx);
+            write_idx += 1;
+        }
+        read_idx += 1;
+    }
+    eng.editor.object_count = write_idx as u32;
+    eng.editor.selected_index = -1;
+    eng.isolate_single_part = false;
+    return removed;
+}
+
+@sealed_sig
+pub fn scene_duplicate_selection_direct(
+    eng: inout EngineRuntimeState,
+    scene_records: cap MutSlice<pak_format::WorldObjectRecord>,
+    scene_bounds: cap MutSlice<aabb::AABB3D>
+) -> i32 {
+    if eng.editor.selected_index < 0 { return -1; }
+    let sel = eng.editor.selected_index as usize;
+    let cnt = eng.editor.object_count as usize;
+    if sel >= cnt { return -1; }
+
+    let sel_rec = scene_records[sel];
+    let sel_gid = sel_rec.collision_flags;
+    let dup_group = (!eng.isolate_single_part) && (sel_gid >= 100);
+
+    if dup_group {
+        let new_gid = eng.next_group_id;
+        eng.next_group_id += 1;
+        let mut first_new: i32 = -1;
+        let mut k: usize = 0;
+        while k < cnt {
+            let rk = scene_records[k];
+            if rk.collision_flags == sel_gid {
+                let sp_idx = editor_spawn_scaled_object(
+                    inout eng, scene_records, scene_bounds, rk.prefab_hash,
+                    vec3::vec3_new(rk.pos_x + 7.0, rk.pos_y, rk.pos_z),
+                    vec3::vec3_new(rk.rot_x, rk.rot_y, rk.rot_z),
+                    vec3::vec3_new(rk.scale_x, rk.scale_y, rk.scale_z),
+                    rk.material_override_id,
+                    new_gid
+                );
+                if first_new < 0 { first_new = sp_idx; }
+            }
+            k += 1;
+        }
+        if first_new >= 0 {
+            eng.editor.selected_index = first_new;
+            eng.isolate_single_part = false;
+        }
+        return first_new;
+    } else {
+        let new_idx = editor_spawn_scaled_object(
+            inout eng, scene_records, scene_bounds, sel_rec.prefab_hash,
+            vec3::vec3_new(sel_rec.pos_x + 2.5, sel_rec.pos_y, sel_rec.pos_z),
+            vec3::vec3_new(sel_rec.rot_x, sel_rec.rot_y, sel_rec.rot_z),
+            vec3::vec3_new(sel_rec.scale_x, sel_rec.scale_y, sel_rec.scale_z),
+            sel_rec.material_override_id,
+            1
+        );
+        if new_idx >= 0 {
+            eng.editor.selected_index = new_idx;
+        }
+        return new_idx;
+    }
+}
+
+@sealed_sig
+pub fn editor_spawn_building_prefab(
+    eng: inout EngineRuntimeState,
+    scene_records: cap MutSlice<pak_format::WorldObjectRecord>,
+    scene_bounds: cap MutSlice<aabb::AABB3D>,
+    base_x: float,
+    base_z: float
+) -> u32 {
+    let zero_rot = vec3::vec3_new(0.0, 0.0, 0.0);
+    let gid = eng.next_group_id;
+    eng.next_group_id += 1;
+    let mut spawned: u32 = 0;
+
+    // 1. Fundacao de Concreto (6.6m x 0.4m x 6.6m)
+    let first_idx = editor_spawn_scaled_object(
+        inout eng, scene_records, scene_bounds, PREFAB_BOX,
+        vec3::vec3_new(base_x, 0.20, base_z), zero_rot,
+        vec3::vec3_new(2.20, 0.20, 2.20), 5, gid
+    );
+    if first_idx >= 0 {
+        spawned += 1;
+        eng.editor.selected_index = first_idx;
+        eng.isolate_single_part = false;
+    }
+
+    // 2. Quatro Pilares de Canto em Aco
+    let _p0 = editor_spawn_scaled_object(
+        inout eng, scene_records, scene_bounds, PREFAB_BOX,
+        vec3::vec3_new(base_x - 2.8, 1.80, base_z - 2.8), zero_rot,
+        vec3::vec3_new(0.20, 1.40, 0.20), 1, gid
+    );
+    let _p1 = editor_spawn_scaled_object(
+        inout eng, scene_records, scene_bounds, PREFAB_BOX,
+        vec3::vec3_new(base_x + 2.8, 1.80, base_z - 2.8), zero_rot,
+        vec3::vec3_new(0.20, 1.40, 0.20), 1, gid
+    );
+    let _p2 = editor_spawn_scaled_object(
+        inout eng, scene_records, scene_bounds, PREFAB_BOX,
+        vec3::vec3_new(base_x - 2.8, 1.80, base_z + 2.8), zero_rot,
+        vec3::vec3_new(0.20, 1.40, 0.20), 1, gid
+    );
+    let _p3 = editor_spawn_scaled_object(
+        inout eng, scene_records, scene_bounds, PREFAB_BOX,
+        vec3::vec3_new(base_x + 2.8, 1.80, base_z + 2.8), zero_rot,
+        vec3::vec3_new(0.20, 1.40, 0.20), 1, gid
+    );
+
+    // 3. Paredes Modulares Fina Espessura (Norte, Sul, Oeste, Leste)
+    let _wn = editor_spawn_scaled_object(
+        inout eng, scene_records, scene_bounds, PREFAB_BOX,
+        vec3::vec3_new(base_x, 1.80, base_z - 2.8), zero_rot,
+        vec3::vec3_new(1.70, 1.40, 0.14), 2, gid
+    );
+    let _ws = editor_spawn_scaled_object(
+        inout eng, scene_records, scene_bounds, PREFAB_BOX,
+        vec3::vec3_new(base_x, 1.80, base_z + 2.8), zero_rot,
+        vec3::vec3_new(1.70, 1.40, 0.14), 2, gid
+    );
+    let _ww = editor_spawn_scaled_object(
+        inout eng, scene_records, scene_bounds, PREFAB_BOX,
+        vec3::vec3_new(base_x - 2.8, 1.80, base_z), zero_rot,
+        vec3::vec3_new(0.14, 1.40, 1.70), 4, gid
+    );
+    let _we = editor_spawn_scaled_object(
+        inout eng, scene_records, scene_bounds, PREFAB_BOX,
+        vec3::vec3_new(base_x + 2.8, 1.80, base_z), zero_rot,
+        vec3::vec3_new(0.14, 1.40, 1.70), 4, gid
+    );
+
+    // 4. Telhado Duas Aguas cobrindo todo o edificio
+    if editor_spawn_scaled_object(
+        inout eng, scene_records, scene_bounds, PREFAB_GABLE_ROOF,
+        vec3::vec3_new(base_x, 4.10, base_z), zero_rot,
+        vec3::vec3_new(2.25, 0.90, 2.25), 2, gid
+    ) >= 0 { spawned += 9; }
+
+    return spawned;
+}
+
+@sealed_sig
+pub fn editor_spawn_village_block(
+    eng: inout EngineRuntimeState,
+    scene_records: cap MutSlice<pak_format::WorldObjectRecord>,
+    scene_bounds: cap MutSlice<aabb::AABB3D>
+) -> u32 {
+    let z_rot  = vec3::vec3_new(0.0, 0.0, 0.0);
+    let rot_90 = vec3::vec3_new(0.0, 90.0, 0.0);
+    let mut total: u32 = 0;
+
+    // 1. Avenida Central Asfaltada (4 segmentos ao longo do eixo Z: -18m .. +18m)
+    let mut r_u: u32 = 0;
+    while r_u < 4 {
+        let rz = ((r_u as float) - 1.5) * 9.0;
+        if editor_spawn_scaled_object(
+            inout eng, scene_records, scene_bounds, PREFAB_ROAD_SEGMENT,
+            vec3::vec3_new(0.0, 0.45, rz), z_rot,
+            vec3::vec3_new(2.4, 0.5, 3.0), 5, 1
+        ) >= 0 { total += 1; }
+        r_u += 1;
+    }
+
+    // 2. Postes de Iluminacao Urbana ladeando a Avenida Central
+    let _sl0 = editor_spawn_scaled_object(inout eng, scene_records, scene_bounds, PREFAB_STREETLIGHT, vec3::vec3_new(-4.2, 2.4, -10.0), z_rot, vec3::vec3_new(0.8, 2.4, 0.8), 1, 1);
+    let _sl1 = editor_spawn_scaled_object(inout eng, scene_records, scene_bounds, PREFAB_STREETLIGHT, vec3::vec3_new( 4.2, 2.4, -10.0), vec3::vec3_new(0.0, 180.0, 0.0), vec3::vec3_new(0.8, 2.4, 0.8), 1, 1);
+    let _sl2 = editor_spawn_scaled_object(inout eng, scene_records, scene_bounds, PREFAB_STREETLIGHT, vec3::vec3_new(-4.2, 2.4,   8.0), z_rot, vec3::vec3_new(0.8, 2.4, 0.8), 1, 1);
+    let _sl3 = editor_spawn_scaled_object(inout eng, scene_records, scene_bounds, PREFAB_STREETLIGHT, vec3::vec3_new( 4.2, 2.4,   8.0), vec3::vec3_new(0.0, 180.0, 0.0), vec3::vec3_new(0.8, 2.4, 0.8), 1, 1);
+    total += 4;
+
+    // 3. Dois Edificios Modulares Completos (Oeste e Leste, agrupados por group_id)
+    total += editor_spawn_building_prefab(inout eng, scene_records, scene_bounds, -11.0, -9.0);
+    total += editor_spawn_building_prefab(inout eng, scene_records, scene_bounds,  11.0, -9.0);
+
+    // 4. Duas Casas / Galpoes com Porta voltadas para a rua + Telhado sobreposto em grupo
+    let h_gid0 = eng.next_group_id; eng.next_group_id += 1;
+    let _h0 = editor_spawn_scaled_object(inout eng, scene_records, scene_bounds, PREFAB_HOUSE_SHELL, vec3::vec3_new(-11.0, 0.7, 7.0), rot_90, vec3::vec3_new(2.0, 1.3, 2.0), 4, h_gid0);
+    let _r0 = editor_spawn_scaled_object(inout eng, scene_records, scene_bounds, PREFAB_GABLE_ROOF, vec3::vec3_new(-11.0, 2.15, 7.0), rot_90, vec3::vec3_new(2.1, 0.75, 2.1), 2, h_gid0);
+
+    let h_gid1 = eng.next_group_id; eng.next_group_id += 1;
+    let _h1 = editor_spawn_scaled_object(inout eng, scene_records, scene_bounds, PREFAB_HOUSE_SHELL, vec3::vec3_new( 11.0, 0.7, 7.0), vec3::vec3_new(0.0, 270.0, 0.0), vec3::vec3_new(2.0, 1.3, 2.0), 2, h_gid1);
+    let _r1 = editor_spawn_scaled_object(inout eng, scene_records, scene_bounds, PREFAB_GABLE_ROOF, vec3::vec3_new( 11.0, 2.15, 7.0), vec3::vec3_new(0.0, 270.0, 0.0), vec3::vec3_new(2.1, 0.75, 2.1), 3, h_gid1);
+    total += 4;
+
+    // 5. Duas Torres de Vigia no Perimetro Norte + Checkpoint com Barreiras Jersey
+    let _wt0 = editor_spawn_scaled_object(inout eng, scene_records, scene_bounds, PREFAB_WATCHTOWER, vec3::vec3_new(-9.5, 2.4, -20.0), z_rot, vec3::vec3_new(1.5, 2.4, 1.5), 1, 1);
+    let _wt1 = editor_spawn_scaled_object(inout eng, scene_records, scene_bounds, PREFAB_WATCHTOWER, vec3::vec3_new( 9.5, 2.4, -20.0), z_rot, vec3::vec3_new(1.5, 2.4, 1.5), 1, 1);
+    let _jb0 = editor_spawn_scaled_object(inout eng, scene_records, scene_bounds, PREFAB_JERSEY_BARRIER, vec3::vec3_new(-2.4, 0.7, -20.0), z_rot, vec3::vec3_new(1.3, 0.7, 0.5), 5, 1);
+    let _jb1 = editor_spawn_scaled_object(inout eng, scene_records, scene_bounds, PREFAB_JERSEY_BARRIER, vec3::vec3_new( 2.4, 0.7, -20.0), z_rot, vec3::vec3_new(1.3, 0.7, 0.5), 5, 1);
+    total += 4;
+
+    // 6. Cinturao de Pinheiros 3D ao redor da Vila
+    let _t0 = editor_spawn_scaled_object(inout eng, scene_records, scene_bounds, PREFAB_PINE_TREE, vec3::vec3_new(-18.0, 2.0, -16.0), z_rot, vec3::vec3_new(1.3, 2.0, 1.3), 3, 1);
+    let _t1 = editor_spawn_scaled_object(inout eng, scene_records, scene_bounds, PREFAB_PINE_TREE, vec3::vec3_new( 18.0, 2.0, -16.0), z_rot, vec3::vec3_new(1.3, 2.0, 1.3), 3, 1);
+    let _t2 = editor_spawn_scaled_object(inout eng, scene_records, scene_bounds, PREFAB_PINE_TREE, vec3::vec3_new(-18.0, 2.2,   0.0), z_rot, vec3::vec3_new(1.4, 2.2, 1.4), 3, 1);
+    let _t3 = editor_spawn_scaled_object(inout eng, scene_records, scene_bounds, PREFAB_PINE_TREE, vec3::vec3_new( 18.0, 2.2,   0.0), z_rot, vec3::vec3_new(1.4, 2.2, 1.4), 3, 1);
+    let _t4 = editor_spawn_scaled_object(inout eng, scene_records, scene_bounds, PREFAB_PINE_TREE, vec3::vec3_new(-16.0, 1.9,  16.0), z_rot, vec3::vec3_new(1.2, 1.9, 1.2), 3, 1);
+    let _t5 = editor_spawn_scaled_object(inout eng, scene_records, scene_bounds, PREFAB_PINE_TREE, vec3::vec3_new( 16.0, 1.9,  16.0), z_rot, vec3::vec3_new(1.2, 1.9, 1.2), 3, 1);
+    total += 6;
+
+    return total;
+}
+
+// Construtor de Matriz Model 4x4 (Translation * RotZ * RotY * RotX * ScaleXYZ)
+@sealed_sig
+pub fn build_instance_transform(rec: pak_format::WorldObjectRecord, is_selected: bool) -> GpuInstanceData {
+    let deg_to_rad: float = 0.017453292;
+    let rx = rec.rot_x * deg_to_rad;
+    let ry = rec.rot_y * deg_to_rad;
+    let rz = rec.rot_z * deg_to_rad;
+
+    let cx = math::cos(rx);
+    let sx = math::sin(rx);
+    let cy = math::cos(ry);
+    let sy = math::sin(ry);
+    let cz = math::cos(rz);
+    let sz = math::sin(rz);
+
+    // Base escalada pelas dimensoes do prefab (half-extents base 1.5, 1.0, 1.5)
+    let sc_x = 1.5 * rec.scale_x;
+    let sc_y = 1.0 * rec.scale_y;
+    let sc_z = 1.5 * rec.scale_z;
+
+    // Rotacao Euler Z * Y * X multiplicada pela escala por coluna
+    let r00 = (cy * cz) * sc_x;
+    let r01 = (cy * sz) * sc_x;
+    let r02 = (0.0 - sy) * sc_x;
+
+    let r10 = ((sx * sy * cz) - (cx * sz)) * sc_y;
+    let r11 = ((sx * sy * sz) + (cx * cz)) * sc_y;
+    let r12 = (sx * cy) * sc_y;
+
+    let r20 = ((cx * sy * cz) + (sx * sz)) * sc_z;
+    let r21 = ((cx * sy * sz) - (sx * cz)) * sc_z;
+    let r22 = (cx * cy) * sc_z;
+
+    let col = mesh::mesh_material_color(rec.material_override_id, is_selected);
+
+    return GpuInstanceData {
+        m0: vec4::vec4_new(r00, r01, r02, 0.0),
+        m1: vec4::vec4_new(r10, r11, r12, 0.0),
+        m2: vec4::vec4_new(r20, r21, r22, 0.0),
+        m3: vec4::vec4_new(rec.pos_x, rec.pos_y, rec.pos_z, 1.0),
+        color: col,
+    };
+}
+
+@sealed_sig
+pub fn mesh_write_editor_ground_grid(
+    world_verts: cap MutSlice<mesh::Vertex3D>,
+    world_inds: cap MutSlice<u32>,
+    out_v_cur: inout usize,
+    out_i_cur: inout usize
+) {
+    // 1. Piso base 60m x 60m
+    mesh::mesh_write_box(
+        world_verts, world_inds, 0, 0,
+        vec3::vec3_new(0.0, -0.60, 0.0),
+        vec3::vec3_new(30.0, 0.40, 30.0),
+        vec4::vec4_new(0.18, 0.21, 0.25, 1.0)
+    );
+    let mut vc: usize = mesh::BOX_VERTEX_COUNT;
+    let mut ic: usize = mesh::BOX_INDEX_COUNT;
+
+    let grid_col   = vec4::vec4_new(0.28, 0.33, 0.39, 1.0);
+    let axis_x_col = vec4::vec4_new(0.78, 0.26, 0.26, 1.0);
+    let axis_z_col = vec4::vec4_new(0.24, 0.48, 0.88, 1.0);
+
+    // 2. Grade metrica 3D a cada 4.0m (-28m .. +28m) com eixos X (vermelho) e Z (azul) destacados
+    let mut step_u: u32 = 0;
+    while step_u <= 14 {
+        let coord = ((step_u as float) - 7.0) * 4.0;
+        let col_x = if step_u == 7 { axis_x_col } else { grid_col };
+        let col_z = if step_u == 7 { axis_z_col } else { grid_col };
+
+        mesh::mesh_write_box(
+            world_verts, world_inds, vc, ic,
+            vec3::vec3_new(0.0, -0.19, coord),
+            vec3::vec3_new(30.0, 0.015, 0.035),
+            col_x
+        );
+        vc += 24; ic += 36;
+
+        mesh::mesh_write_box(
+            world_verts, world_inds, vc, ic,
+            vec3::vec3_new(coord, -0.19, 0.0),
+            vec3::vec3_new(0.035, 0.015, 30.0),
+            col_z
+        );
+        vc += 24; ic += 36;
+
+        step_u += 1;
+    }
+
+    out_v_cur = vc;
+    out_i_cur = ic;
+}
+
+@sealed_sig
+pub fn catalog_try_load_obj_slot(
+    eng: inout EngineRuntimeState,
+    log_entries: cap MutSlice<logger::LogEntry>,
+    slot_idx: usize,
+    obj_path: str,
+    world_verts: cap MutSlice<mesh::Vertex3D>,
+    world_inds: cap MutSlice<u32>,
+    v_cur: inout usize,
+    i_cur: inout usize
+) -> bool {
+    let packed = rtsc_mesh_load_obj(
+        obj_path,
+        mem::slice_ptr(world_verts),
+        v_cur as u32,
+        MAX_STATIC_VERTICES as u32,
+        mem::slice_ptr(world_inds),
+        i_cur as u32,
+        MAX_STATIC_INDICES as u32
+    );
+    if packed != 0 {
+        let add_v = ((packed >> 32) & 4294967295) as usize;
+        let add_i = (packed & 4294967295) as usize;
+        if add_v > 0 && add_i >= 3 {
+            eng.cat_first_index[slot_idx] = i_cur as u32;
+            eng.cat_index_count[slot_idx] = add_i as u32;
+            v_cur += add_v;
+            i_cur += add_i;
+            logger::log_info_u32(inout eng.logger, log_entries, logger::CAT_VFS, "Modelo .OBJ externo carregado no slot #", slot_idx as u32);
+            return true;
+        }
+    }
+    return false;
+}
+
+// Upload unico do catalogo multi-malha no boot (Grade 3D + slots .OBJ ou fallback procedural)
+@sealed_sig
+pub fn engine_upload_static_catalog(
+    eng: inout EngineRuntimeState,
+    fs: cap FileSystem,
+    log_entries: cap MutSlice<logger::LogEntry>,
+    world_verts: cap MutSlice<mesh::Vertex3D>,
+    world_inds: cap MutSlice<u32>
+) {
+    let white = vec4::vec4_new(1.0, 1.0, 1.0, 1.0);
+    let mut v_cur: usize = 0;
+    let mut i_cur: usize = 0;
+
+    // 1. Piso 60m x 60m + Grade Metrica 3D
+    mesh_write_editor_ground_grid(world_verts, world_inds, inout v_cur, inout i_cur);
+    eng.ground_index_count = i_cur as u32;
+
+    // Slot 0: Bloco/Parede Modular (ou assets/meshes/slot_0.obj)
+    if !catalog_try_load_obj_slot(inout eng, log_entries, 0, "assets/meshes/slot_0.obj", world_verts, world_inds, inout v_cur, inout i_cur) {
+        eng.cat_first_index[0] = i_cur as u32;
+        eng.cat_index_count[0] = 36;
+        mesh::mesh_write_box(world_verts, world_inds, v_cur, i_cur, vec3::vec3_new(0.0, 0.0, 0.0), vec3::vec3_new(1.0, 1.0, 1.0), white);
+        v_cur += 24; i_cur += 36;
+    }
+
+    // Slot 1: Telhado Duas Aguas 3D (ou assets/meshes/slot_1.obj)
+    if !catalog_try_load_obj_slot(inout eng, log_entries, 1, "assets/meshes/slot_1.obj", world_verts, world_inds, inout v_cur, inout i_cur) {
+        eng.cat_first_index[1] = i_cur as u32;
+        eng.cat_index_count[1] = 24;
+        mesh_write_gable_roof(world_verts, world_inds, v_cur, i_cur, white);
+        v_cur += 18; i_cur += 24;
+    }
+
+    // Slot 2: Torre de Vigia Militar (ou assets/meshes/slot_2.obj)
+    if !catalog_try_load_obj_slot(inout eng, log_entries, 2, "assets/meshes/slot_2.obj", world_verts, world_inds, inout v_cur, inout i_cur) {
+        eng.cat_first_index[2] = i_cur as u32;
+        eng.cat_index_count[2] = 216;
+        mesh_write_watchtower(world_verts, world_inds, v_cur, i_cur, white);
+        v_cur += 144; i_cur += 216;
+    }
+
+    // Slot 3: Pinheiro / Arvore 3D (ou assets/meshes/slot_3.obj)
+    if !catalog_try_load_obj_slot(inout eng, log_entries, 3, "assets/meshes/slot_3.obj", world_verts, world_inds, inout v_cur, inout i_cur) {
+        eng.cat_first_index[3] = i_cur as u32;
+        eng.cat_index_count[3] = 72;
+        mesh_write_pine_tree(world_verts, world_inds, v_cur, i_cur);
+        v_cur += 56; i_cur += 72;
+    }
+
+    // Slot 4: Barreira Jersey Chanfrada (ou assets/meshes/slot_4.obj)
+    if !catalog_try_load_obj_slot(inout eng, log_entries, 4, "assets/meshes/slot_4.obj", world_verts, world_inds, inout v_cur, inout i_cur) {
+        eng.cat_first_index[4] = i_cur as u32;
+        eng.cat_index_count[4] = 72;
+        mesh_write_jersey_barrier(world_verts, world_inds, v_cur, i_cur, white);
+        v_cur += 48; i_cur += 72;
+    }
+
+    // Slot 5: Casa / Galpao com Porta (ou assets/meshes/slot_5.obj)
+    if !catalog_try_load_obj_slot(inout eng, log_entries, 5, "assets/meshes/slot_5.obj", world_verts, world_inds, inout v_cur, inout i_cur) {
+        eng.cat_first_index[5] = i_cur as u32;
+        eng.cat_index_count[5] = 216;
+        mesh_write_house_shell(world_verts, world_inds, v_cur, i_cur, white);
+        v_cur += 144; i_cur += 216;
+    }
+
+    // Slot 6: Poste de Iluminacao Urbana (ou assets/meshes/slot_6.obj)
+    if !catalog_try_load_obj_slot(inout eng, log_entries, 6, "assets/meshes/slot_6.obj", world_verts, world_inds, inout v_cur, inout i_cur) {
+        eng.cat_first_index[6] = i_cur as u32;
+        eng.cat_index_count[6] = 108;
+        mesh_write_streetlight(world_verts, world_inds, v_cur, i_cur, white);
+        v_cur += 72; i_cur += 108;
+    }
+
+    // Slot 7: Segmento de Estrada / Asfalto (ou assets/meshes/slot_7.obj)
+    if !catalog_try_load_obj_slot(inout eng, log_entries, 7, "assets/meshes/slot_7.obj", world_verts, world_inds, inout v_cur, inout i_cur) {
+        eng.cat_first_index[7] = i_cur as u32;
+        eng.cat_index_count[7] = 108;
+        mesh_write_road_segment(world_verts, world_inds, v_cur, i_cur, white);
+        v_cur += 72; i_cur += 108;
+    }
+
+    let total_vb_bytes: u64 = (v_cur as u64) * mesh::VERTEX3D_STRIDE_BYTES;
+    let total_ib_bytes: u64 = (i_cur as u64) * 4;
+    let _vb_wr = fs.write_raw("assets/meshes/catalog_vbo.rtsmesh", mem::slice_ptr(world_verts), total_vb_bytes);
+    let _ib_wr = fs.write_raw("assets/meshes/catalog_ibo.rtsmesh", mem::slice_ptr(world_inds),  total_ib_bytes);
+
+    eng.world_index_count = i_cur as u32;
+    let _vb_up = vram_arena::vram_arena_write_raw(
+        eng.rhi_dev.arena,
+        eng.static_world_vbo,
+        mem::slice_ptr(world_verts),
+        total_vb_bytes
+    );
+    let _ib_up = vram_arena::vram_arena_write_raw(
+        eng.rhi_dev.arena,
+        eng.static_world_ibo,
+        mem::slice_ptr(world_inds),
+        total_ib_bytes
+    );
+}
+
+@sealed_sig
+pub fn engine_tick_frame(
+    eng: inout EngineRuntimeState,
+    fs: cap FileSystem,
+    input: EngineInputSnapshot,
+    instance_data: cap MutSlice<GpuInstanceData>,
+    job_queue: cap MutSlice<jobs::JobDescriptor>,
+    spatial_buckets: cap MutSlice<spatial_hash::SpatialBucket>,
+    scene_records: cap MutSlice<pak_format::WorldObjectRecord>,
+    scene_bounds: cap MutSlice<aabb::AABB3D>,
+    ui_verts: cap MutSlice<imgui_rts::UiVertex>,
+    ui_inds: cap MutSlice<u32>,
+    log_entries: cap MutSlice<logger::LogEntry>,
+    dt: float
+) -> bool {
+    eng.logger.frame_index += 1;
+    if input.toggle_editor_mode {
+        eng.editor_active = !eng.editor_active;
+        eng.confirm_delete_open = false;
+        if !eng.editor_active {
+            eng.player_pos   = vec3::vec3_new(0.0, 0.5, 10.0);
+            eng.player_vel_y = 0.0;
+            eng.player_yaw   = 0.0;
+            eng.player_pitch = 0.0;
+            eng.cam = camera::camera_init_orbit(eng.cam.aspect, 0.0, -80.0, 80.0, 60.0, 4.5);
+            eng.cam.mode      = camera::MODE_FREELOOK;
+            eng.cam.proj_type = camera::PROJ_PERSPECTIVE;
+            logger::log_info(inout eng.logger, log_entries, logger::CAT_CORE, "PLAY MODE ATIVO: WASD=Andar | SHIFT=Correr | SPACE=Pular | TAB=Voltar ao Editor");
+        } else {
+            eng.cam = camera::camera_init_orbit(eng.cam.aspect, 45.0, 15.0, 85.0, 50.0, 22.0);
+            logger::log_info(inout eng.logger, log_entries, logger::CAT_EDITOR, "EDITOR MODE ATIVO");
+        }
+    }
+    if eng.double_click_timer > 0.0 {
+        eng.double_click_timer -= dt;
+        if eng.double_click_timer < 0.0 { eng.double_click_timer = 0.0; }
+    }
+    if eng.editor_active {
+        if input.mouse_right_down {
+            camera::camera_rotate(inout eng.cam, input.look_delta_yaw, input.look_delta_pitch);
+        }
+        if input.zoom_delta != 0.0 {
+            camera::camera_zoom(inout eng.cam, input.zoom_delta);
+        }
+        camera::camera_move(inout eng.cam, input.move_right, input.move_up, input.move_forward, dt);
+    }
+
+    spatial_hash::spatial_clear_buckets(spatial_buckets);
+    let obj_count = eng.editor.object_count;
+    let mut idx: usize = 0;
+    while idx < (obj_count as usize) {
+        let rec = scene_records[idx];
+        spatial_hash::spatial_insert_point(
+            eng.spatial_cfg,
+            spatial_buckets,
+            vec3::vec3_new(rec.pos_x, rec.pos_y, rec.pos_z),
+            idx as u32
+        );
+        idx += 1;
+    }
+
+    if obj_count > 0 {
+        let _batches = jobs::jobs_dispatch_parallel_for(
+            inout eng.job_sys,
+            job_queue,
+            1,
+            obj_count,
+            1,
+            mem::slice_ptr(scene_records),
+            mem::slice_ptr(scene_bounds)
+        );
+        jobs::jobs_wait_all(inout eng.job_sys);
+    }
+
+    if !eng.editor_active {
+        engine_update_play_mode(inout eng, input, scene_bounds, dt);
+    }
+
+    let mut cmd = rhi::rhi_begin_frame(inout eng.rhi_dev);
+    if !cmd.is_recording {
+        logger::log_error(inout eng.logger, log_entries, logger::CAT_RHI, 1002, "rhi_begin_frame falhou (cmd nao gravando)");
+        let _fl = logger::logger_flush_to_file(fs, "build/engine.log", eng.logger, log_entries);
+        return false;
+    }
+
+    let is_vulkan = eng.rhi_dev.backend_api == rhi::BACKEND_VULKAN;
+    let vp_w = eng.rhi_dev.width as float;
+    let vp_h = eng.rhi_dev.height as float;
+
+    let cam_ubo_data = camera::camera_build_uniform(inout eng.cam, vp_w, vp_h, is_vulkan);
+    let ubo_alloc = vram_arena::vram_arena_alloc_aligned(
+        inout eng.rhi_dev.arena,
+        256,
+        vram_arena::GPU_CBUFFER_ALIGNMENT
+    );
+    let _ubo_ok = vram_arena::vram_arena_write_raw(
+        eng.rhi_dev.arena,
+        ubo_alloc,
+        mem::addr_of(cam_ubo_data),
+        256
+    );
+
+    imgui_rts::ui_begin_frame(
+        inout eng.ui_ctx,
+        input.mouse_x,
+        input.mouse_y,
+        input.mouse_left_down
+    );
+
+    if eng.editor_active {
+        imgui_rts::ui_begin_panel(inout eng.ui_ctx, ui_verts, ui_inds, 16.0, 16.0, 300.0, 640.0);
+        imgui_rts::ui_draw_text(
+            inout eng.ui_ctx,
+            ui_verts,
+            ui_inds,
+            "RUSTTS WORLD EDITOR [1/2/3 CAM]",
+            26.0,
+            23.0,
+            8.5,
+            11.0,
+            imgui_rts::COLOR_TEXT_WHITE
+        );
+
+        let modal_w: float = 320.0;
+        let modal_h: float = 130.0;
+        let modal_x: float = (vp_w - modal_w) * 0.5;
+        let modal_y: float = (vp_h - modal_h) * 0.5;
+        let inside_modal = eng.confirm_delete_open && imgui_rts::ui_point_in_rect(input.mouse_x, input.mouse_y, modal_x, modal_y, modal_w, modal_h);
+        let inside_left  = imgui_rts::ui_point_in_rect(input.mouse_x, input.mouse_y, 16.0, 16.0, 300.0, 640.0);
+        let inside_right = imgui_rts::ui_point_in_rect(input.mouse_x, input.mouse_y, vp_w - 286.0, 16.0, 270.0, 470.0);
+        let inside_ui    = inside_left || inside_right || inside_modal || eng.confirm_delete_open;
+
+        if input.ask_delete && eng.editor.selected_index >= 0 && (eng.editor.selected_index as u32) < eng.editor.object_count {
+            eng.confirm_delete_open = true;
+        }
+        if !inside_ui {
+            if eng.ui_ctx.mouse_clicked {
+                let prev_sel = eng.editor.selected_index;
+                let picked = world_editor::editor_pick_object(
+                    inout eng.editor,
+                    scene_records,
+                    scene_bounds,
+                    eng.cam,
+                    input.mouse_x,
+                    input.mouse_y,
+                    vp_w,
+                    vp_h
+                );
+                if picked >= 0 {
+                    if picked == eng.last_click_obj && eng.double_click_timer > 0.0 {
+                        eng.isolate_single_part = !eng.isolate_single_part;
+                        eng.double_click_timer = 0.0;
+                        if eng.isolate_single_part {
+                            logger::log_info(inout eng.logger, log_entries, logger::CAT_EDITOR, "2 Cliques: Modo PECA INDIVIDUAL ativo");
+                        } else {
+                            logger::log_info(inout eng.logger, log_entries, logger::CAT_EDITOR, "Modo GRUPO INTEIRO ativo");
+                        }
+                    } else {
+                        if prev_sel < 0 || scene_records[picked as usize].collision_flags != scene_records[prev_sel as usize].collision_flags {
+                            eng.isolate_single_part = false;
+                        }
+                        eng.last_click_obj = picked;
+                        eng.double_click_timer = 0.45;
+                    }
+                    eng.viewport_drag_ready = true;
+                    eng.drag_moved_px = 0.0;
+                } else {
+                    eng.isolate_single_part = false;
+                    eng.viewport_drag_ready = false;
+                }
+                eng.editor.is_dirty = true;
+            } else if input.mouse_left_down && eng.viewport_drag_ready && eng.ui_ctx.active_widget_id == 0 && eng.editor.selected_index >= 0 {
+                eng.drag_moved_px += math::abs(input.look_delta_yaw) + math::abs(input.look_delta_pitch);
+                if eng.drag_moved_px > 2.5 {
+                    let sel_drag = eng.editor.selected_index as usize;
+                    let rec_drag = scene_records[sel_drag];
+                    let ray = raycast::ray_from_viewport(eng.cam, input.mouse_x, input.mouse_y, vp_w, vp_h);
+                    if math::abs(ray.dir.y) > 0.001 {
+                        let t_plane = (rec_drag.pos_y - ray.origin.y) / ray.dir.y;
+                        if t_plane > 0.1 && t_plane < 400.0 {
+                            let raw_x = ray.origin.x + (ray.dir.x * t_plane);
+                            let raw_z = ray.origin.z + (ray.dir.z * t_plane);
+                            let s_step = eng.snap_step;
+                            let target_x = if s_step > 0.01 { math::floor((raw_x / s_step) + 0.5) * s_step } else { raw_x };
+                            let target_z = if s_step > 0.01 { math::floor((raw_z / s_step) + 0.5) * s_step } else { raw_z };
+                            let dx = target_x - rec_drag.pos_x;
+                            let dz = target_z - rec_drag.pos_z;
+                            if math::abs(dx) > 0.001 || math::abs(dz) > 0.001 {
+                                scene_translate_selection(inout eng, scene_records, scene_bounds, dx, 0.0, dz);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if !input.mouse_left_down {
+            eng.viewport_drag_ready = false;
+            eng.drag_moved_px = 0.0;
+        }
+
+        // Botao Verde (109): Spawn Novo Objeto 3D na cena com material variado
+        if imgui_rts::ui_button_labeled(inout eng.ui_ctx, ui_verts, ui_inds, 109, 260.0, 26.0, imgui_rts::COLOR_BTN_SUCCESS, "+ SPAWN PREFAB BOX") {
+            let next_id = eng.editor.object_count;
+            let spawn_x = ((next_id % 5) as float) * 3.5 - 7.0;
+            let spawn_z = ((next_id / 5) as float) * 3.5 - 3.5;
+            let mat_id = (next_id % 5) + 1;
+            let mesh_hash = (next_id % CATALOG_MESH_COUNT) as u64;
+            let _sp = editor_spawn_scaled_object(
+                inout eng,
+                scene_records,
+                scene_bounds,
+                mesh_hash,
+                vec3::vec3_new(spawn_x, 1.0, spawn_z),
+                vec3::vec3_new(0.0, 0.0, 0.0),
+                vec3::vec3_new(1.0, 1.0, 1.0),
+                mat_id,
+                1
+            );
+            if _sp >= 0 {
+                eng.editor.selected_index = _sp;
+                eng.isolate_single_part = false;
+                logger::log_info_u32(inout eng.logger, log_entries, logger::CAT_EDITOR, "Spawn objeto #", _sp as u32);
+            } else {
+                logger::log_warn(inout eng.logger, log_entries, logger::CAT_EDITOR, 3001, "Limite de objetos na cena atingido");
+            }
+        }
+
+        // Botao Azul (111): Instancia Edificio Modular Completo (Fundacao + Pilares + Paredes + Telhado)
+        if imgui_rts::ui_button_labeled(inout eng.ui_ctx, ui_verts, ui_inds, 111, 260.0, 26.0, imgui_rts::COLOR_BTN_PRIMARY, "+ SPAWN BUILDING PREFAB") {
+            let b_idx = eng.editor.object_count / 10;
+            let bx = ((b_idx % 4) as float) * 8.0 - 12.0;
+            let bz = ((b_idx / 4) as float) * 8.0 - 8.0;
+            let added = editor_spawn_building_prefab(inout eng, scene_records, scene_bounds, bx, bz);
+            logger::log_info_u32(inout eng.logger, log_entries, logger::CAT_EDITOR, "Edificio modular instanciado, pecas=", added);
+        }
+
+        if eng.editor.selected_index >= 0 && (eng.editor.selected_index as u32) < eng.editor.object_count {
+            let sel = eng.editor.selected_index as usize;
+            let rec = scene_records[sel];
+
+            let mut px = rec.pos_x;
+            let mut py = rec.pos_y;
+            let mut pz = rec.pos_z;
+            let mut rx = rec.rot_x;
+            let mut ry = rec.rot_y;
+            let mut rz = rec.rot_z;
+            let mut sx = rec.scale_x;
+            let mut sy = rec.scale_y;
+            let mut sz = rec.scale_z;
+
+            let c1  = imgui_rts::ui_slider_float_labeled(inout eng.ui_ctx, ui_verts, ui_inds, 101, 260.0, 20.0, imgui_rts::COLOR_AXIS_X,     "POS X",   inout px, -28.0, 28.0);
+            let c2  = imgui_rts::ui_slider_float_labeled(inout eng.ui_ctx, ui_verts, ui_inds, 102, 260.0, 20.0, imgui_rts::COLOR_AXIS_Y,     "POS Y",   inout py, 0.0,   14.0);
+            let c3  = imgui_rts::ui_slider_float_labeled(inout eng.ui_ctx, ui_verts, ui_inds, 103, 260.0, 20.0, imgui_rts::COLOR_AXIS_Z,     "POS Z",   inout pz, -28.0, 28.0);
+            let c4x = imgui_rts::ui_slider_float_labeled(inout eng.ui_ctx, ui_verts, ui_inds, 112, 260.0, 20.0, imgui_rts::COLOR_AXIS_ROT,   "ROT X",   inout rx, 0.0,   360.0);
+            let c4y = imgui_rts::ui_slider_float_labeled(inout eng.ui_ctx, ui_verts, ui_inds, 104, 260.0, 20.0, imgui_rts::COLOR_AXIS_ROT,   "ROT Y",   inout ry, 0.0,   360.0);
+            let c4z = imgui_rts::ui_slider_float_labeled(inout eng.ui_ctx, ui_verts, ui_inds, 113, 260.0, 20.0, imgui_rts::COLOR_AXIS_ROT,   "ROT Z",   inout rz, 0.0,   360.0);
+            let c5x = imgui_rts::ui_slider_float_labeled(inout eng.ui_ctx, ui_verts, ui_inds, 105, 260.0, 20.0, imgui_rts::COLOR_AXIS_SCALE, "SCALE X", inout sx, 0.1,   8.0);
+            let c5y = imgui_rts::ui_slider_float_labeled(inout eng.ui_ctx, ui_verts, ui_inds, 116, 260.0, 20.0, imgui_rts::COLOR_AXIS_SCALE, "SCALE Y", inout sy, 0.1,   8.0);
+            let c5z = imgui_rts::ui_slider_float_labeled(inout eng.ui_ctx, ui_verts, ui_inds, 117, 260.0, 20.0, imgui_rts::COLOR_AXIS_SCALE, "SCALE Z", inout sz, 0.1,   8.0);
+
+            // Botao de Modo de Selecao (1 Clique = Construcao Inteira | 2 Cliques = Peca Individual)
+            let mode_label = if eng.isolate_single_part {
+                "MODE: SINGLE PART [2-CLICK]"
+            } else {
+                "MODE: WHOLE GROUP [1-CLICK]"
+            };
+            let mode_col: u32 = if eng.isolate_single_part { imgui_rts::COLOR_BTN_WARNING } else { imgui_rts::COLOR_BTN_PRIMARY };
+            if imgui_rts::ui_button_labeled(inout eng.ui_ctx, ui_verts, ui_inds, 119, 260.0, 22.0, mode_col, mode_label) {
+                eng.isolate_single_part = !eng.isolate_single_part;
+            }
+
+            if c1 || c2 || c3 {
+                scene_translate_selection(inout eng, scene_records, scene_bounds, px - rec.pos_x, py - rec.pos_y, pz - rec.pos_z);
+            }
+            if c4x || c4y || c4z || c5x || c5y || c5z {
+                let mut ur = scene_records[sel];
+                ur.rot_x = rx;
+                ur.rot_y = ry;
+                ur.rot_z = rz;
+                ur.scale_x = sx;
+                ur.scale_y = sy;
+                ur.scale_z = sz;
+                scene_records[sel] = ur;
+                scene_update_bound_at(scene_records, scene_bounds, sel);
+            }
+
+            // Botao Girar +90 graus em Y (alinhamento rapido de muros, ruas e casas)
+            if imgui_rts::ui_button_labeled(inout eng.ui_ctx, ui_verts, ui_inds, 118, 260.0, 22.0, imgui_rts::COLOR_AXIS_ROT, "ROTATE Y +90 DEG") {
+                scene_rotate_y_selection(inout eng, scene_records, scene_bounds, 90.0);
+            }
+
+            // Botao Cinza (110): Alternar Material (1=Aco, 2=Tijolo, 3=Militar, 4=Madeira, 5=Concreto)
+            if imgui_rts::ui_button_labeled(inout eng.ui_ctx, ui_verts, ui_inds, 110, 260.0, 24.0, imgui_rts::COLOR_WIDGET_IDLE, "CYCLE MATERIAL [1..5]") {
+                let next_mat = (scene_records[sel].material_override_id % 5) + 1;
+                let mut ur = scene_records[sel];
+                ur.material_override_id = next_mat;
+                scene_records[sel] = ur;
+                logger::log_info_u32(inout eng.logger, log_entries, logger::CAT_EDITOR, "Material alterado para ID ", next_mat);
+            }
+
+            // Botao Cinza (114): Alternar Malha 3D do Catalogo (0..7)
+            if imgui_rts::ui_button_labeled(inout eng.ui_ctx, ui_verts, ui_inds, 114, 260.0, 24.0, imgui_rts::COLOR_WIDGET_IDLE, "CYCLE 3D MESH [0..7]") {
+                let cur_m = catalog_mesh_id_from_hash(scene_records[sel].prefab_hash);
+                let next_m = ((cur_m + 1) % (CATALOG_MESH_COUNT as usize)) as u64;
+                let mut ur = scene_records[sel];
+                ur.prefab_hash = next_m;
+                scene_records[sel] = ur;
+                eng.editor.is_dirty = true;
+                logger::log_info_u32(inout eng.logger, log_entries, logger::CAT_EDITOR, "Malha 3D alterada para ID ", next_m as u32);
+            }
+
+            // Botao Verde (115): Duplicar Selecao (Grupo inteiro ou peca)
+            if imgui_rts::ui_button_labeled(inout eng.ui_ctx, ui_verts, ui_inds, 115, 260.0, 24.0, imgui_rts::COLOR_BTN_SUCCESS, "+ DUPLICATE SELECTED") {
+                let dup_idx = scene_duplicate_selection_direct(inout eng, scene_records, scene_bounds);
+                if dup_idx >= 0 {
+                    logger::log_info_u32(inout eng.logger, log_entries, logger::CAT_EDITOR, "Selecao duplicada -> #", dup_idx as u32);
+                }
+            }
+
+            if imgui_rts::ui_button_labeled(inout eng.ui_ctx, ui_verts, ui_inds, 106, 260.0, 24.0, imgui_rts::COLOR_BTN_DANGER, "DELETE SELECTED [DEL]") {
+                eng.confirm_delete_open = true;
+            }
+        }
+
+        if imgui_rts::ui_button_labeled(inout eng.ui_ctx, ui_verts, ui_inds, 107, 260.0, 26.0, imgui_rts::COLOR_BTN_PRIMARY, "SAVE MAP (.PAK)") {
+            if pak_map::pak_save_scene_file(fs, "build/world_map.pak", eng.editor, scene_records) {
+                logger::log_info_u32(inout eng.logger, log_entries, logger::CAT_VFS, "Mapa salvo em build/world_map.pak, objs=", eng.editor.object_count);
+                let _fl = logger::logger_flush_to_file(fs, "build/engine.log", eng.logger, log_entries);
+            } else {
+                logger::log_error(inout eng.logger, log_entries, logger::CAT_VFS, 2001, "Falha ao gravar build/world_map.pak");
+                let _fl = logger::logger_flush_to_file(fs, "build/engine.log", eng.logger, log_entries);
+            }
+        }
+        if imgui_rts::ui_button_labeled(inout eng.ui_ctx, ui_verts, ui_inds, 108, 260.0, 26.0, imgui_rts::COLOR_BTN_WARNING, "LOAD MAP (.PAK)") {
+            if pak_map::pak_load_scene_file(fs, "build/world_map.pak", inout eng.editor, scene_records, scene_bounds) {
+                logger::log_info_u32(inout eng.logger, log_entries, logger::CAT_VFS, "Mapa recarregado de build/world_map.pak, objs=", eng.editor.object_count);
+            } else {
+                logger::log_error(inout eng.logger, log_entries, logger::CAT_VFS, 2002, "Falha ao carregar build/world_map.pak");
+                let _fl = logger::logger_flush_to_file(fs, "build/engine.log", eng.logger, log_entries);
+            }
+        }
+
+        // Painel Direito: Paleta Direta do Catalogo 3D + Controle de Grid Snap
+        imgui_rts::ui_begin_panel(inout eng.ui_ctx, ui_verts, ui_inds, vp_w - 286.0, 16.0, 270.0, 470.0);
+        imgui_rts::ui_draw_text(
+            inout eng.ui_ctx, ui_verts, ui_inds,
+            "3D ASSET CATALOG [0..7]",
+            vp_w - 276.0, 23.0, 8.5, 11.0,
+            imgui_rts::COLOR_TEXT_WHITE
+        );
+
+        let n_id = eng.editor.object_count;
+        let sp_x = ((n_id % 6) as float) * 4.0 - 10.0;
+        let sp_z = ((n_id / 6) as float) * 4.0 - 6.0;
+        let z_rot = vec3::vec3_new(0.0, 0.0, 0.0);
+
+        if imgui_rts::ui_button_labeled(inout eng.ui_ctx, ui_verts, ui_inds, 201, 236.0, 24.0, imgui_rts::COLOR_BTN_PRIMARY, "+ [5] SPAWN HOUSE SHELL") {
+            let idx = editor_spawn_scaled_object(inout eng, scene_records, scene_bounds, PREFAB_HOUSE_SHELL, vec3::vec3_new(sp_x, 1.4, sp_z), z_rot, vec3::vec3_new(1.8, 1.4, 1.8), 4, 1);
+            if idx >= 0 { eng.editor.selected_index = idx; }
+        }
+        if imgui_rts::ui_button_labeled(inout eng.ui_ctx, ui_verts, ui_inds, 202, 236.0, 24.0, imgui_rts::COLOR_BTN_PRIMARY, "+ [2] SPAWN WATCHTOWER") {
+            let idx = editor_spawn_scaled_object(inout eng, scene_records, scene_bounds, PREFAB_WATCHTOWER, vec3::vec3_new(sp_x, 2.2, sp_z), z_rot, vec3::vec3_new(1.4, 2.2, 1.4), 1, 1);
+            if idx >= 0 { eng.editor.selected_index = idx; }
+        }
+        if imgui_rts::ui_button_labeled(inout eng.ui_ctx, ui_verts, ui_inds, 203, 236.0, 24.0, imgui_rts::COLOR_BTN_SUCCESS, "+ [3] SPAWN PINE TREE") {
+            let idx = editor_spawn_scaled_object(inout eng, scene_records, scene_bounds, PREFAB_PINE_TREE, vec3::vec3_new(sp_x, 1.8, sp_z), z_rot, vec3::vec3_new(1.2, 1.8, 1.2), 3, 1);
+            if idx >= 0 { eng.editor.selected_index = idx; }
+        }
+        if imgui_rts::ui_button_labeled(inout eng.ui_ctx, ui_verts, ui_inds, 204, 236.0, 24.0, imgui_rts::COLOR_WIDGET_IDLE, "+ [4] SPAWN JERSEY BARRIER") {
+            let idx = editor_spawn_scaled_object(inout eng, scene_records, scene_bounds, PREFAB_JERSEY_BARRIER, vec3::vec3_new(sp_x, 0.7, sp_z), z_rot, vec3::vec3_new(1.4, 0.7, 0.6), 5, 1);
+            if idx >= 0 { eng.editor.selected_index = idx; }
+        }
+        if imgui_rts::ui_button_labeled(inout eng.ui_ctx, ui_verts, ui_inds, 205, 236.0, 24.0, imgui_rts::COLOR_BTN_WARNING, "+ [6] SPAWN STREETLIGHT") {
+            let idx = editor_spawn_scaled_object(inout eng, scene_records, scene_bounds, PREFAB_STREETLIGHT, vec3::vec3_new(sp_x, 2.4, sp_z), z_rot, vec3::vec3_new(0.8, 2.4, 0.8), 1, 1);
+            if idx >= 0 { eng.editor.selected_index = idx; }
+        }
+        if imgui_rts::ui_button_labeled(inout eng.ui_ctx, ui_verts, ui_inds, 206, 236.0, 24.0, imgui_rts::COLOR_WIDGET_IDLE, "+ [7] SPAWN ROAD SEGMENT") {
+            let idx = editor_spawn_scaled_object(inout eng, scene_records, scene_bounds, PREFAB_ROAD_SEGMENT, vec3::vec3_new(sp_x, 0.6, sp_z), z_rot, vec3::vec3_new(2.2, 0.6, 2.8), 5, 1);
+            if idx >= 0 { eng.editor.selected_index = idx; }
+        }
+        if imgui_rts::ui_button_labeled(inout eng.ui_ctx, ui_verts, ui_inds, 207, 236.0, 24.0, imgui_rts::COLOR_AXIS_SCALE, "CYCLE GRID SNAP [0.5/1.0/OFF]") {
+            if eng.snap_step < 0.2 {
+                eng.snap_step = 0.5;
+                logger::log_info(inout eng.logger, log_entries, logger::CAT_EDITOR, "Grid Snap: 0.5m ativo");
+            } else if eng.snap_step < 0.8 {
+                eng.snap_step = 1.0;
+                logger::log_info(inout eng.logger, log_entries, logger::CAT_EDITOR, "Grid Snap: 1.0m ativo");
+            } else {
+                eng.snap_step = 0.0;
+                logger::log_info(inout eng.logger, log_entries, logger::CAT_EDITOR, "Grid Snap: DESATIVADO (Livre)");
+            }
+        }
+        if imgui_rts::ui_button_labeled(inout eng.ui_ctx, ui_verts, ui_inds, 211, 236.0, 25.0, imgui_rts::COLOR_BTN_SUCCESS, "+ GENERATE VILLAGE BLOCK") {
+            let v_added = editor_spawn_village_block(inout eng, scene_records, scene_bounds);
+            logger::log_info_u32(inout eng.logger, log_entries, logger::CAT_EDITOR, "Quarteirao completo gerado, objetos=", v_added);
+        }
+        if imgui_rts::ui_button_labeled(inout eng.ui_ctx, ui_verts, ui_inds, 208, 236.0, 24.0, imgui_rts::COLOR_BTN_DANGER, "NEW CLEAN MAP (RESET)") {
+            eng.editor.object_count = 0;
+            eng.editor.selected_index = -1;
+            eng.isolate_single_part = false;
+            eng.confirm_delete_open = false;
+            let _saved_clean = pak_map::pak_save_scene_file(fs, "build/world_map.pak", eng.editor, scene_records);
+            logger::log_info(inout eng.logger, log_entries, logger::CAT_EDITOR, "Mapa limpo criado e salvo em build/world_map.pak");
+        }
+        if imgui_rts::ui_button_labeled(inout eng.ui_ctx, ui_verts, ui_inds, 209, 236.0, 24.0, imgui_rts::COLOR_WIDGET_IDLE, "RESET CAMERA VIEW") {
+            let cur_aspect = if vp_h > 1.0 { vp_w / vp_h } else { 1.7777 };
+            eng.cam = camera::camera_init_orbit(cur_aspect, 45.0, 15.0, 85.0, 50.0, 22.0);
+            logger::log_info(inout eng.logger, log_entries, logger::CAT_EDITOR, "Camara recentralizada (Orbit)");
+        }
+        if imgui_rts::ui_button_labeled(inout eng.ui_ctx, ui_verts, ui_inds, 210, 236.0, 26.0, imgui_rts::COLOR_BTN_SUCCESS, ">> PLAY GAME [TAB]") {
+            eng.editor_active = false;
+            eng.confirm_delete_open = false;
+            eng.player_pos   = vec3::vec3_new(0.0, 0.5, 10.0);
+            eng.player_vel_y = 0.0;
+            eng.player_yaw   = 0.0;
+            eng.player_pitch = 0.0;
+            eng.cam = camera::camera_init_orbit(eng.cam.aspect, 0.0, -80.0, 80.0, 60.0, 4.5);
+            eng.cam.mode      = camera::MODE_FREELOOK;
+            eng.cam.proj_type = camera::PROJ_PERSPECTIVE;
+        }
+
+        logger::logger_draw_editor_panel(inout eng.ui_ctx, ui_verts, ui_inds, eng.logger, log_entries, vp_w, vp_h);
+
+        if eng.confirm_delete_open {
+            if eng.editor.selected_index < 0 || (eng.editor.selected_index as u32) >= eng.editor.object_count {
+                eng.confirm_delete_open = false;
+            } else {
+                imgui_rts::ui_begin_panel(inout eng.ui_ctx, ui_verts, ui_inds, modal_x, modal_y, modal_w, modal_h);
+                imgui_rts::ui_draw_text(
+                    inout eng.ui_ctx, ui_verts, ui_inds,
+                    "CONFIRM DELETE SELECTION?",
+                    modal_x + 20.0, modal_y + 14.0, 8.5, 11.0,
+                    imgui_rts::COLOR_TEXT_WHITE
+                );
+                if imgui_rts::ui_button_labeled(inout eng.ui_ctx, ui_verts, ui_inds, 301, 280.0, 28.0, imgui_rts::COLOR_BTN_DANGER, "[YES] CONFIRM DELETE") {
+                    let del_cnt = scene_delete_selection_direct(inout eng, scene_records, scene_bounds);
+                    eng.confirm_delete_open = false;
+                    logger::log_info_u32(inout eng.logger, log_entries, logger::CAT_EDITOR, "Itens removidos: ", del_cnt);
+                }
+                if imgui_rts::ui_button_labeled(inout eng.ui_ctx, ui_verts, ui_inds, 302, 280.0, 28.0, imgui_rts::COLOR_WIDGET_IDLE, "[NO] CANCEL") {
+                    eng.confirm_delete_open = false;
+                    logger::log_info(inout eng.logger, log_entries, logger::CAT_EDITOR, "Exclusao cancelada");
+                }
+            }
+        }
+    } else {
+        imgui_rts::ui_begin_panel(inout eng.ui_ctx, ui_verts, ui_inds, 16.0, 16.0, 310.0, 115.0);
+        imgui_rts::ui_draw_text(
+            inout eng.ui_ctx, ui_verts, ui_inds,
+            "PLAY MODE [WASD/SHIFT/SPACE]",
+            26.0, 23.0, 8.5, 11.0,
+            imgui_rts::COLOR_TEXT_WHITE
+        );
+        let cam_lbl: str = if eng.player_third_person {
+            "CAMERA: 3RD PERSON [CLICK]"
+        } else {
+            "CAMERA: 1ST PERSON [CLICK]"
+        };
+        if imgui_rts::ui_button_labeled(inout eng.ui_ctx, ui_verts, ui_inds, 401, 276.0, 24.0, imgui_rts::COLOR_BTN_PRIMARY, cam_lbl) {
+            eng.player_third_person = !eng.player_third_person;
+        }
+        if imgui_rts::ui_button_labeled(inout eng.ui_ctx, ui_verts, ui_inds, 402, 276.0, 24.0, imgui_rts::COLOR_BTN_WARNING, "<< BACK TO EDITOR [TAB]") {
+            eng.editor_active = true;
+            eng.cam = camera::camera_init_orbit(eng.cam.aspect, 45.0, 15.0, 85.0, 50.0, 22.0);
+        }
+    }
+
+    imgui_rts::ui_end_frame(inout eng.ui_ctx);
+
+    eng.editor.is_dirty = false;
+
+    let bar_to_rt = barrier::barrier_texture_criar(
+        eng.backbuffer_tex_h,
+        barrier::STATE_PRESENT,
+        barrier::STATE_RENDER_TARGET,
+        0,
+        0
+    );
+    rhi::rhi_cmd_texture_barrier(cmd, bar_to_rt);
+
+    // 1. Desenha o piso estatico (+ grade metrica 3D no modo Editor) via Pipeline 1
+    if ubo_alloc.valid {
+        rhi::rhi_cmd_bind_pipeline(cmd, eng.main_pipeline_h);
+        rhi::rhi_cmd_bind_mesh_and_uniforms(cmd, eng.static_world_vbo, eng.static_world_ibo, ubo_alloc);
+        let floor_inds = if eng.editor_active { eng.ground_index_count } else { GROUND_INDEX_COUNT };
+        rhi::rhi_cmd_draw_indexed(cmd, floor_inds, 0, 0);
+    }
+
+    // 2. Agrupa instancias por malha do catalogo (0..7) + avatar do jogador no Play Mode
+    if (eng.editor.object_count > 0 || !eng.editor_active) && ubo_alloc.valid {
+        let inst_cnt = eng.editor.object_count;
+        let mut written: usize = 0;
+        let mut m_id: usize = 0;
+        let mut batch_first: [u32; 8] = [0, 0, 0, 0, 0, 0, 0, 0];
+        let mut batch_count: [u32; 8] = [0, 0, 0, 0, 0, 0, 0, 0];
+
+        while m_id < (CATALOG_MESH_COUNT as usize) {
+            batch_first[m_id] = written as u32;
+            let mut k: usize = 0;
+            while k < (inst_cnt as usize) {
+                if catalog_mesh_id_from_hash(scene_records[k].prefab_hash) == m_id {
+                    let is_sel = eng.editor_active && scene_is_object_in_selection(eng, scene_records, k);
+                    instance_data[written] = build_instance_transform(scene_records[k], is_sel);
+                    written += 1;
+                    batch_count[m_id] += 1;
+                }
+                k += 1;
+            }
+            if (!eng.editor_active) && eng.player_third_person && m_id == 0 && written < MAX_SCENE_OBJECTS {
+                let avatar_rec = pak_format::WorldObjectRecord {
+                    prefab_hash: PREFAB_BOX,
+                    pos_x: eng.player_pos.x,
+                    pos_y: eng.player_pos.y + 0.85,
+                    pos_z: eng.player_pos.z,
+                    rot_x: 0.0,
+                    rot_y: eng.player_yaw,
+                    rot_z: 0.0,
+                    scale_x: 0.28,
+                    scale_y: 0.85,
+                    scale_z: 0.28,
+                    material_override_id: 1,
+                    collision_flags: 1,
+                    reserved_pad: 0,
+                };
+                instance_data[written] = build_instance_transform(avatar_rec, true);
+                written += 1;
+                batch_count[0] += 1;
+            }
+            m_id += 1;
+        }
+
+        if written > 0 {
+            let inst_bytes = (written as u64) * GPU_INSTANCE_STRIDE_BYTES;
+            let inst_alloc = vram_arena::vram_arena_alloc_aligned(
+                inout eng.rhi_dev.arena,
+                inst_bytes,
+                vram_arena::GPU_VERTEX_ALIGNMENT
+            );
+            let _inst_up = vram_arena::vram_arena_write_raw(
+                eng.rhi_dev.arena,
+                inst_alloc,
+                mem::slice_ptr(instance_data),
+                inst_bytes
+            );
+
+            rhi::rhi_cmd_bind_pipeline(cmd, eng.inst_pipeline_h);
+            rhi::rhi_cmd_bind_mesh_and_uniforms(cmd, eng.static_world_vbo, eng.static_world_ibo, ubo_alloc);
+            rtsc_vk_cmd_bind_instance_buffer(cmd.native_cmd_h, inst_alloc.offset);
+
+            let mut d_id: usize = 0;
+            while d_id < (CATALOG_MESH_COUNT as usize) {
+                if batch_count[d_id] > 0 {
+                    rtsc_vk_cmd_draw_indexed_instanced(
+                        cmd.native_cmd_h,
+                        eng.cat_index_count[d_id],
+                        batch_count[d_id],
+                        eng.cat_first_index[d_id],
+                        0,
+                        batch_first[d_id]
+                    );
+                }
+                d_id += 1;
+            }
+        }
+    }
+
+    if eng.ui_ctx.index_count > 0 && eng.ui_ctx.vertex_count > 0 {
+        let ui_vb_bytes = (eng.ui_ctx.vertex_count as u64) * 20;
+        let ui_ib_bytes = (eng.ui_ctx.index_count as u64) * 4;
+
+        let ui_vbo = vram_arena::vram_arena_alloc_aligned(inout eng.rhi_dev.arena, ui_vb_bytes, vram_arena::GPU_VERTEX_ALIGNMENT);
+        let ui_ibo = vram_arena::vram_arena_alloc_aligned(inout eng.rhi_dev.arena, ui_ib_bytes, vram_arena::GPU_VERTEX_ALIGNMENT);
+
+        let _uv_ok = vram_arena::vram_arena_write_raw(eng.rhi_dev.arena, ui_vbo, mem::slice_ptr(ui_verts), ui_vb_bytes);
+        let _ui_ok = vram_arena::vram_arena_write_raw(eng.rhi_dev.arena, ui_ibo, mem::slice_ptr(ui_inds), ui_ib_bytes);
+
+        rhi::rhi_cmd_bind_pipeline(cmd, eng.ui_pipeline_h);
+        rhi::rhi_cmd_bind_mesh_and_uniforms(cmd, ui_vbo, ui_ibo, ubo_alloc);
+        rhi::rhi_cmd_draw_indexed(cmd, eng.ui_ctx.index_count, 0, 0);
+    }
+
+    let bar_to_present = barrier::barrier_texture_criar(
+        eng.backbuffer_tex_h,
+        barrier::STATE_RENDER_TARGET,
+        barrier::STATE_PRESENT,
+        0,
+        0
+    );
+    rhi::rhi_cmd_texture_barrier(cmd, bar_to_present);
+
+    return rhi::rhi_end_frame_and_present(eng.rhi_dev, inout cmd);
+}
+
+@sealed_sig
+pub fn main(arena: cap StaticArena) -> int {
+    io::println("======================================================================");
+    io::println(" RUSTTS ENGINE v3.0-PRO — 100% .RTS PURO (ZERO ARQUIVOS .C EXTERNOS)");
+    io::println("======================================================================");
+
+    let fs = FileSystem::new();
+    let _dir_ok = fs.create_dir("build");
+    let log_entries: cap MutSlice<logger::LogEntry> = arena.alloc_slice(logger::LOG_RING_CAP);
+    let mut init_log = logger::logger_init(logger::LOG_INFO);
+
+    let win_w: u32 = 1280;
+    let win_h: u32 = 720;
+    let win_hnd = window::rtsc_window_create(win_w, win_h);
+
+    let mut rhi_dev = rhi::rhi_device_init(
+        rhi::BACKEND_VULKAN,
+        win_hnd,
+        win_w,
+        win_h,
+        VRAM_POOL_SIZE_BYTES,
+        true
+    );
+
+    if !rhi_dev.is_valid {
+        logger::log_error(inout init_log, log_entries, logger::CAT_RHI, 1001, "Falha ao inicializar RHI / VramArena");
+        let _fl = logger::logger_flush_to_file(fs, "build/engine.log", init_log, log_entries);
+        return 1;
+    }
+    logger::log_info(inout init_log, log_entries, logger::CAT_RHI, "RHI Vulkan + VramArena (64 MB) inicializados");
+
+    let static_vbo = vram_arena::vram_arena_alloc_aligned(
+        inout rhi_dev.arena,
+        (MAX_STATIC_VERTICES as u64) * mesh::VERTEX3D_STRIDE_BYTES,
+        vram_arena::GPU_VERTEX_ALIGNMENT
+    );
+    let static_ibo = vram_arena::vram_arena_alloc_aligned(
+        inout rhi_dev.arena,
+        (MAX_STATIC_INDICES as u64) * 4,
+        vram_arena::GPU_VERTEX_ALIGNMENT
+    );
+    vram_arena::vram_arena_mark_static_end(inout rhi_dev.arena);
+
+    let world_verts: cap MutSlice<mesh::Vertex3D> = arena.alloc_slice(MAX_STATIC_VERTICES);
+    let world_inds: cap MutSlice<u32>             = arena.alloc_slice(MAX_STATIC_INDICES);
+
+    let job_sys = jobs::jobs_init(0);
+    let cam = camera::camera_init_orbit(1.7777, 45.0, 15.0, 85.0, 50.0, 22.0);
+    let spatial_cfg = spatial_hash::spatial_grid_init(4.0);
+    let editor = world_editor::editor_init();
+    let ui_ctx = imgui_rts::ui_init(
+        win_w as float,
+        win_h as float,
+        rhi_dev.backend_api == rhi::BACKEND_VULKAN,
+        MAX_UI_VERTICES as u32,
+        MAX_UI_INDICES as u32
+    );
+
+    let mut engine = EngineRuntimeState {
+        rhi_dev: rhi_dev,
+        job_sys: job_sys,
+        cam: cam,
+        spatial_cfg: spatial_cfg,
+        editor: editor,
+        ui_ctx: ui_ctx,
+        logger: init_log,
+        static_world_vbo: static_vbo,
+        static_world_ibo: static_ibo,
+        world_index_count: 0,
+        ground_index_count: 36,
+        cat_first_index: [0, 0, 0, 0, 0, 0, 0, 0],
+        cat_index_count: [0, 0, 0, 0, 0, 0, 0, 0],
+        snap_step: 0.5,
+        next_group_id: 100,
+        isolate_single_part: false,
+        main_pipeline_h: 1,
+        inst_pipeline_h: 3,
+        ui_pipeline_h: 2,
+        backbuffer_tex_h: 100,
+        editor_active: true,
+        confirm_delete_open: false,
+        last_click_obj: -1,
+        double_click_timer: 0.0,
+        viewport_drag_ready: false,
+        drag_moved_px: 0.0,
+        player_pos: vec3::vec3_new(0.0, 0.5, 10.0),
+        player_vel_y: 0.0,
+        player_yaw: 0.0,
+        player_pitch: -8.0,
+        player_grounded: false,
+        player_third_person: true,
+    };
+
+    let job_queue: cap MutSlice<jobs::JobDescriptor>               = arena.alloc_slice(1024);
+    let spatial_buckets: cap MutSlice<spatial_hash::SpatialBucket> = arena.alloc_slice(4096);
+    let scene_records: cap MutSlice<pak_format::WorldObjectRecord> = arena.alloc_slice(MAX_SCENE_OBJECTS);
+    let scene_bounds: cap MutSlice<aabb::AABB3D>                   = arena.alloc_slice(MAX_SCENE_OBJECTS);
+    let instance_data: cap MutSlice<GpuInstanceData>               = arena.alloc_slice(MAX_SCENE_OBJECTS);
+    let ui_verts: cap MutSlice<imgui_rts::UiVertex>                = arena.alloc_slice(MAX_UI_VERTICES);
+    let ui_inds: cap MutSlice<u32>                                 = arena.alloc_slice(MAX_UI_INDICES);
+
+    let loaded_map = pak_map::pak_load_scene_file(
+        fs,
+        "build/world_map.pak",
+        inout engine.editor,
+        scene_records,
+        scene_bounds
+    );
+    if loaded_map {
+        logger::log_info_u32(inout engine.logger, log_entries, logger::CAT_VFS, "Mapa carregado de build/world_map.pak, objs=", engine.editor.object_count);
+    } else {
+        logger::log_warn(inout engine.logger, log_entries, logger::CAT_VFS, 2000, "build/world_map.pak ausente; criando cena inicial");
+        let _obj0 = world_editor::editor_spawn_object(
+            inout engine.editor,
+            scene_records,
+            scene_bounds,
+            1001,
+            vec3::vec3_new(0.0, 1.0, 0.0),
+            vec3::vec3_new(1.5, 1.0, 1.5),
+            1,
+            1
+        );
+        let _obj1 = world_editor::editor_spawn_object(
+            inout engine.editor,
+            scene_records,
+            scene_bounds,
+            1002,
+            vec3::vec3_new(5.0, 1.0, -3.0),
+            vec3::vec3_new(1.5, 1.0, 1.5),
+            2,
+            1
+        );
+        engine.editor.selected_index = 0;
+        let _saved_init = pak_map::pak_save_scene_file(fs, "build/world_map.pak", engine.editor, scene_records);
+    }
+    engine_upload_static_catalog(inout engine, fs, log_entries, world_verts, world_inds);
+
+    let mut prev_mx: float = 0.0;
+    let mut prev_my: float = 0.0;
+    let mut first_poll: bool = true;
+    let mut prev_l_down: bool = false;
+    let mut prev_1_down: bool = false;
+    let mut prev_2_down: bool = false;
+    let mut prev_3_down: bool = false;
+    let mut prev_del_down: bool = false;
+    let mut prev_tab_down: bool = false;
+    let mut prev_space_down: bool = false;
+
+    let mut mx: float = 0.0;
+    let mut my: float = 0.0;
+    let mut mbtns: u32 = 0;
+    let mut keys: u32 = 0;
+
+    while window::rtsc_window_poll(win_hnd, inout mx, inout my, inout mbtns, inout keys) {
+        let packed_sz = window::rtsc_window_get_size_packed(win_hnd);
+        let cur_w = ((packed_sz >> 32) & 4294967295) as u32;
+        let cur_h = (packed_sz & 4294967295) as u32;
+        if cur_w > 64 && cur_h > 64 {
+            if cur_w != engine.rhi_dev.width || cur_h != engine.rhi_dev.height {
+                engine.rhi_dev.width  = cur_w;
+                engine.rhi_dev.height = cur_h;
+                engine.cam.aspect     = (cur_w as float) / (cur_h as float);
+                engine.ui_ctx = imgui_rts::ui_init(
+                    cur_w as float,
+                    cur_h as float,
+                    engine.rhi_dev.backend_api == rhi::BACKEND_VULKAN,
+                    MAX_UI_VERTICES as u32,
+                    MAX_UI_INDICES as u32
+                );
+            }
+        }
+
+        if first_poll {
+            prev_mx = mx;
+            prev_my = my;
+            first_poll = false;
+        }
+
+        let dyaw   = (0.0 - (mx - prev_mx)) * 0.45;
+        let dpitch = (my - prev_my) * 0.35;
+        prev_mx = mx;
+        prev_my = my;
+
+        let mut mv_fwd: float = 0.0;
+        let mut mv_rgt: float = 0.0;
+        let mut mv_up: float  = 0.0;
+        if (keys & window::KEY_W_BIT) != 0 { mv_fwd += 1.0; }
+        if (keys & window::KEY_S_BIT) != 0 { mv_fwd -= 1.0; }
+        if (keys & window::KEY_D_BIT) != 0 { mv_rgt += 1.0; }
+        if (keys & window::KEY_A_BIT) != 0 { mv_rgt -= 1.0; }
+        if (keys & window::KEY_E_BIT) != 0 { mv_up  += 1.0; }
+        if (keys & window::KEY_Q_BIT) != 0 { mv_up  -= 1.0; }
+
+        let mut z_delta: float = 0.0;
+        if (keys & window::KEY_Z_BIT) != 0          { z_delta += 0.40; }
+        if (keys & window::KEY_X_BIT) != 0          { z_delta -= 0.40; }
+        if (keys & window::KEY_WHEEL_UP_BIT) != 0   { z_delta += 1.80; }
+        if (keys & window::KEY_WHEEL_DOWN_BIT) != 0 { z_delta -= 1.80; }
+
+        let mut focus_pos = vec3::vec3_new(0.0, 1.0, 0.0);
+        if engine.editor.selected_index >= 0 && (engine.editor.selected_index as u32) < engine.editor.object_count {
+            let sel_r = scene_records[engine.editor.selected_index as usize];
+            focus_pos = vec3::vec3_new(sel_r.pos_x, sel_r.pos_y, sel_r.pos_z);
+        }
+
+        let k1_down = (keys & window::KEY_1_BIT) != 0;
+        if k1_down && (!prev_1_down) {
+            camera::camera_set_mode(inout engine.cam, camera::MODE_ORBIT, focus_pos);
+        }
+        prev_1_down = k1_down;
+
+        let k2_down = (keys & window::KEY_2_BIT) != 0;
+        if k2_down && (!prev_2_down) {
+            camera::camera_set_mode(inout engine.cam, camera::MODE_FREELOOK, focus_pos);
+        }
+        prev_2_down = k2_down;
+
+        let k3_down = (keys & window::KEY_3_BIT) != 0;
+        if k3_down && (!prev_3_down) {
+            camera::camera_set_mode(inout engine.cam, camera::MODE_ORTHO_2D, focus_pos);
+        }
+        prev_3_down = k3_down;
+
+        let l_down = (keys & window::KEY_L_BIT) != 0;
+        if l_down && (!prev_l_down) {
+            engine.logger.show_overlay = !engine.logger.show_overlay;
+        }
+        prev_l_down = l_down;
+
+        let del_down = (keys & window::KEY_DEL_BIT) != 0;
+        let ask_del = del_down && (!prev_del_down);
+        prev_del_down = del_down;
+
+        let tab_down = (keys & KEY_TAB_BIT) != 0;
+        let tab_pressed = tab_down && (!prev_tab_down);
+        prev_tab_down = tab_down;
+
+        let space_down = (keys & KEY_SPACE_BIT) != 0;
+        let space_pressed = space_down && (!prev_space_down);
+        prev_space_down = space_down;
+
+        let shift_down = (keys & KEY_SHIFT_BIT) != 0;
+
+        let input = EngineInputSnapshot {
+            mouse_x: mx,
+            mouse_y: my,
+            mouse_left_down: (mbtns & window::MOUSE_LEFT_BIT) != 0,
+            mouse_right_down: (mbtns & window::MOUSE_RIGHT_BIT) != 0,
+            move_right: mv_rgt,
+            move_up: mv_up,
+            move_forward: mv_fwd,
+            look_delta_yaw: dyaw,
+            look_delta_pitch: dpitch,
+            zoom_delta: z_delta,
+            toggle_editor_mode: tab_pressed,
+            ask_delete: ask_del,
+            jump_pressed: space_pressed,
+            sprint_down: shift_down,
+        };
+
+        let frame_ok = engine_tick_frame(
+            inout engine,
+            fs,
+            input,
+            instance_data,
+            job_queue,
+            spatial_buckets,
+            scene_records,
+            scene_bounds,
+            ui_verts,
+            ui_inds,
+            log_entries,
+            0.0166667
+        );
+
+        if !frame_ok {
+            logger::log_error(inout engine.logger, log_entries, logger::CAT_CORE, 1003, "Falha durante execucao do frame RHI");
+            let _fl_err = logger::logger_flush_to_file(fs, "build/engine.log", engine.logger, log_entries);
+            return 1;
+        }
+    }
+
+    logger::log_info(inout engine.logger, log_entries, logger::CAT_CORE, "Encerrando sessao da Engine com sucesso");
+    let _fl_end = logger::logger_flush_to_file(fs, "build/engine.log", engine.logger, log_entries);
+    io::println("[OK] Geometria 3D (24v/face-shaded) + CameraUniform (256B) + UI gravados na VramArena.");
+    io::println("[OK] Frame completo executado em C99/LLVM IR sem depender de rhi_bridge.c.");
+    return 0;
+}

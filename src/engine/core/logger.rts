@@ -1,0 +1,270 @@
+module engine.core.logger;
+
+import core.io;
+import core.mem;
+import engine.ui.imgui_rts;
+
+// Niveis de severidade deterministica
+pub const LOG_TRACE: u32 = 0;
+pub const LOG_INFO: u32  = 1;
+pub const LOG_WARN: u32  = 2;
+pub const LOG_ERROR: u32 = 3;
+pub const LOG_FATAL: u32 = 4;
+
+// Subsistemas da Engine e do Editor
+pub const CAT_CORE: u32    = 0;
+pub const CAT_RHI: u32     = 1;
+pub const CAT_VFS: u32     = 2;
+pub const CAT_EDITOR: u32  = 3;
+pub const CAT_PHYSICS: u32 = 4;
+pub const CAT_CAMERA: u32  = 5;
+pub const CAT_UI: u32      = 6;
+
+pub const LOG_RING_CAP: usize = 64;
+
+// Cores do console na GPU (0xAABBGGRR)
+pub const COLOR_LOG_BG: u32     = 0xDC121216;
+pub const COLOR_LOG_HDR: u32    = 0xFF25252C;
+pub const COLOR_LOG_INFO: u32   = 0xFFD8D8DC;
+pub const COLOR_LOG_WARN: u32   = 0xFF32B8F0; // Ambar/Amarelo
+pub const COLOR_LOG_ERROR: u32  = 0xFF4848FF; // Vermelho vivo
+
+@repr_c
+pub struct LogEntry {
+    pub frame_index: u32,
+    pub level: u32,
+    pub category: u32,
+    pub code: u32,
+    pub text: str128,
+}
+
+@repr_c
+pub struct LoggerState {
+    pub min_level: u32,
+    pub frame_index: u32,
+    pub ring_head: usize,
+    pub ring_count: usize,
+    pub info_count: u32,
+    pub warn_count: u32,
+    pub error_count: u32,
+    pub show_overlay: bool,
+}
+
+@sealed_sig
+pub fn logger_init(min_level: u32) -> LoggerState {
+    return LoggerState {
+        min_level: min_level,
+        frame_index: 0,
+        ring_head: 0,
+        ring_count: 0,
+        info_count: 0,
+        warn_count: 0,
+        error_count: 0,
+        show_overlay: true,
+    };
+}
+
+@sealed_sig
+pub fn logger_level_tag(level: u32) -> str {
+    if level == LOG_TRACE { return "TRC"; }
+    if level == LOG_INFO  { return "INF"; }
+    if level == LOG_WARN  { return "WRN"; }
+    if level == LOG_ERROR { return "ERR"; }
+    return "FTL";
+}
+
+@sealed_sig
+pub fn logger_cat_tag(cat: u32) -> str {
+    if cat == CAT_RHI     { return "RHI"; }
+    if cat == CAT_VFS     { return "VFS"; }
+    if cat == CAT_EDITOR  { return "EDT"; }
+    if cat == CAT_PHYSICS { return "PHY"; }
+    if cat == CAT_CAMERA  { return "CAM"; }
+    if cat == CAT_UI      { return "UI "; }
+    return "COR";
+}
+
+@sealed_sig
+pub fn logger_push(
+    log: inout LoggerState,
+    entries: cap MutSlice<LogEntry>,
+    level: u32,
+    category: u32,
+    code: u32,
+    msg: str
+) {
+    if level < log.min_level {
+        return;
+    }
+
+    if level == LOG_INFO {
+        log.info_count += 1;
+    } else if level == LOG_WARN {
+        log.warn_count += 1;
+    } else if level >= LOG_ERROR {
+        log.error_count += 1;
+    }
+
+    let mut line: str128 = str128::new();
+    line.push_str("[F");
+    line.push_u32(log.frame_index);
+    line.push_str("][");
+    line.push_str(logger_level_tag(level));
+    line.push_str("][");
+    line.push_str(logger_cat_tag(category));
+    if code != 0 {
+        line.push_str(" E");
+        line.push_u32(code);
+    }
+    line.push_str("] ");
+    line.push_str(msg);
+
+    io::println(line.as_str());
+
+    let slot = log.ring_head;
+    entries[slot] = LogEntry {
+        frame_index: log.frame_index,
+        level: level,
+        category: category,
+        code: code,
+        text: line,
+    };
+
+    log.ring_head = (slot + 1) % LOG_RING_CAP;
+    if log.ring_count < LOG_RING_CAP {
+        log.ring_count += 1;
+    }
+}
+
+@sealed_sig
+pub fn log_info(log: inout LoggerState, entries: cap MutSlice<LogEntry>, category: u32, msg: str) {
+    logger_push(inout log, entries, LOG_INFO, category, 0, msg);
+}
+
+@sealed_sig
+pub fn log_warn(log: inout LoggerState, entries: cap MutSlice<LogEntry>, category: u32, code: u32, msg: str) {
+    logger_push(inout log, entries, LOG_WARN, category, code, msg);
+}
+
+@sealed_sig
+pub fn log_error(log: inout LoggerState, entries: cap MutSlice<LogEntry>, category: u32, code: u32, msg: str) {
+    logger_push(inout log, entries, LOG_ERROR, category, code, msg);
+}
+
+@sealed_sig
+pub fn log_info_u32(log: inout LoggerState, entries: cap MutSlice<LogEntry>, category: u32, msg: str, val: u32) {
+    let mut s: str128 = str128::new();
+    s.push_str(msg);
+    s.push_u32(val);
+    logger_push(inout log, entries, LOG_INFO, category, 0, s.as_str());
+}
+
+@sealed_sig
+pub fn log_error_u32(log: inout LoggerState, entries: cap MutSlice<LogEntry>, category: u32, code: u32, msg: str, val: u32) {
+    let mut s: str128 = str128::new();
+    s.push_str(msg);
+    s.push_u32(val);
+    logger_push(inout log, entries, LOG_ERROR, category, code, s.as_str());
+}
+
+// Grava o historico do Ring Buffer em arquivo (ex: build/engine.log) usando cap FileSystem
+@sealed_sig
+pub fn logger_flush_to_file(
+    fs: cap FileSystem,
+    path: str,
+    log: LoggerState,
+    entries: cap ReadSlice<LogEntry>
+) -> bool {
+    if log.ring_count == 0 {
+        return true;
+    }
+
+    let max_bytes: u64 = (LOG_RING_CAP as u64) * 132;
+    let buf = mem::alloc_aligned(max_bytes, 64);
+    if buf == 0 {
+        return false;
+    }
+
+    let mut write_off: u64 = 0;
+    let start_idx = if log.ring_count < LOG_RING_CAP { 0 } else { log.ring_head };
+    let nl: u8 = 10;
+    let mut i: usize = 0;
+
+    while i < log.ring_count {
+        let idx = (start_idx + i) % LOG_RING_CAP;
+        let ent = entries[idx];
+        let slen = mem::str_len(ent.text.as_str()) as u64;
+        if slen > 0 && (write_off + slen + 1) <= max_bytes {
+            // str128 layout: [u32 len (4B)] + [char buf[128]]
+            mem::copy(buf + write_off, mem::addr_of(ent.text) + 4, slen);
+            write_off += slen;
+            mem::copy(buf + write_off, mem::addr_of(nl), 1);
+            write_off += 1;
+        }
+        i += 1;
+    }
+
+    let mut ok = true;
+    if write_off > 0 {
+        ok = fs.write_raw(path, buf, write_off);
+    }
+    mem::free_aligned(buf);
+    return ok;
+}
+
+// Renderiza o Console de Logs no rodape da tela do Editor (ultimas 6 mensagens)
+@sealed_sig
+pub fn logger_draw_editor_panel(
+    ctx: inout imgui_rts::UiContext,
+    verts: cap MutSlice<imgui_rts::UiVertex>,
+    inds: cap MutSlice<u32>,
+    log: LoggerState,
+    entries: cap ReadSlice<LogEntry>,
+    screen_w: float,
+    screen_h: float
+) {
+    if !log.show_overlay {
+        return;
+    }
+
+    let panel_x: float = 332.0;
+    let panel_w: float = screen_w - 348.0;
+    let panel_h: float = 132.0;
+    let panel_y: float = screen_h - panel_h - 14.0;
+
+    if panel_w < 260.0 {
+        return;
+    }
+
+    imgui_rts::ui_push_quad(inout ctx, verts, inds, panel_x, panel_y, panel_w, panel_h, 0.0, 0.0, 0.001, 0.001, COLOR_LOG_BG);
+    imgui_rts::ui_push_quad(inout ctx, verts, inds, panel_x, panel_y, panel_w, 22.0, 0.0, 0.0, 0.001, 0.001, COLOR_LOG_HDR);
+
+    let mut hdr: str128 = str128::new();
+    hdr.push_str("ENGINE LOGS [L] | INF:");
+    hdr.push_u32(log.info_count);
+    hdr.push_str(" WRN:");
+    hdr.push_u32(log.warn_count);
+    hdr.push_str(" ERR:");
+    hdr.push_u32(log.error_count);
+    imgui_rts::ui_draw_text(inout ctx, verts, inds, hdr.as_str(), panel_x + 10.0, panel_y + 6.0, 8.0, 10.0, imgui_rts::COLOR_TEXT_WHITE);
+
+    let max_lines: usize = 6;
+    let visible = if log.ring_count < max_lines { log.ring_count } else { max_lines };
+    let oldest = if log.ring_count < LOG_RING_CAP { 0 } else { log.ring_head };
+    let first_vis = log.ring_count - visible;
+
+    let mut row: usize = 0;
+    while row < visible {
+        let idx = (oldest + first_vis + row) % LOG_RING_CAP;
+        let ent = entries[idx];
+        let mut col = COLOR_LOG_INFO;
+        if ent.level == LOG_WARN {
+            col = COLOR_LOG_WARN;
+        } else if ent.level >= LOG_ERROR {
+            col = COLOR_LOG_ERROR;
+        }
+        let ly = panel_y + 28.0 + ((row as float) * 16.5);
+        imgui_rts::ui_draw_text(inout ctx, verts, inds, ent.text.as_str(), panel_x + 10.0, ly, 7.5, 10.0, col);
+        row += 1;
+    }
+}

@@ -1,0 +1,165 @@
+module engine.physics.raycast;
+import core.math;
+import engine.math.vec3;
+import engine.camera;
+import engine.physics.aabb;
+
+@repr_c
+pub struct Ray3D {
+    pub origin: vec3::Vec3,
+    pub dir: vec3::Vec3,
+    pub inv_dir: vec3::Vec3,
+    pub max_distance: float,
+}
+
+@repr_c
+pub struct RayHit {
+    pub point: vec3::Vec3,
+    pub normal: vec3::Vec3,
+    pub distance: float,
+    pub entity_id: u32,
+    pub hit: bool,
+}
+
+@sealed_sig
+pub fn safe_rcp(val: float) -> float {
+    if math::abs(val) < 0.0000001 {
+        return if val < 0.0 { -10000000.0 } else { 10000000.0 };
+    }
+    return 1.0 / val;
+}
+
+@sealed_sig
+pub fn ray_create(origin: vec3::Vec3, direction: vec3::Vec3, max_dist: float) -> Ray3D {
+    let n_dir = vec3::vec3_normalize(direction);
+    return Ray3D {
+        origin: origin,
+        dir: n_dir,
+        inv_dir: vec3::Vec3 {
+            x: safe_rcp(n_dir.x),
+            y: safe_rcp(n_dir.y),
+            z: safe_rcp(n_dir.z),
+        },
+        max_distance: max_dist,
+    };
+}
+
+// Converte coordenadas de tela (mouse_x, mouse_y) em Ray3D para qualquer tipo de camara (Perspetiva ou Ortografica 2D/3D)
+@sealed_sig
+pub fn ray_from_viewport(
+    cam: camera::Camera3D,
+    mouse_x: float,
+    mouse_y: float,
+    viewport_w: float,
+    viewport_h: float
+) -> Ray3D {
+    // Coordenadas Normalizadas de Dispositivo (NDC) em [-1.0, 1.0]
+    let ndc_x = ((2.0 * mouse_x) / viewport_w) - 1.0;
+    let ndc_y = 1.0 - ((2.0 * mouse_y) / viewport_h);
+
+    let fwd = camera::camera_forward_vector(cam);
+    let rgt = vec3::vec3_normalize(vec3::vec3_cross(fwd, vec3::vec3_up()));
+    let up  = vec3::vec3_cross(rgt, fwd);
+
+    if cam.proj_type == camera::PROJ_ORTHOGRAPHIC {
+        let half_h = cam.ortho_half_height;
+        let half_w = half_h * cam.aspect;
+        let offset_r = vec3::vec3_scale(rgt, ndc_x * half_w);
+        let offset_u = vec3::vec3_scale(up, ndc_y * half_h);
+        let ray_origin = vec3::vec3_add(cam.position, vec3::vec3_add(offset_r, offset_u));
+        return ray_create(ray_origin, fwd, cam.z_far);
+    } else {
+        let tan_half_fov = math::tan((cam.fov_y_deg * camera::DEG_TO_RAD) * 0.5);
+        let px = ndc_x * cam.aspect * tan_half_fov;
+        let py = ndc_y * tan_half_fov;
+
+        let dir_r = vec3::vec3_scale(rgt, px);
+        let dir_u = vec3::vec3_scale(up, py);
+        let world_dir = vec3::vec3_add(fwd, vec3::vec3_add(dir_r, dir_u));
+        return ray_create(cam.position, world_dir, cam.z_far);
+    }
+}
+
+// Algoritmo Slab O(1) livre de divisoes para intersecao Ray vs AABB
+@sealed_sig
+pub fn ray_intersect_aabb(ray: Ray3D, box: aabb::AABB3D) -> RayHit {
+    let tx1 = (box.min.x - ray.origin.x) * ray.inv_dir.x;
+    let tx2 = (box.max.x - ray.origin.x) * ray.inv_dir.x;
+    let mut tmin = math::min(tx1, tx2);
+    let mut tmax = math::max(tx1, tx2);
+    let mut hit_axis: u32 = 0;
+
+    let ty1 = (box.min.y - ray.origin.y) * ray.inv_dir.y;
+    let ty2 = (box.max.y - ray.origin.y) * ray.inv_dir.y;
+    let tymin = math::min(ty1, ty2);
+    let tymax = math::max(ty1, ty2);
+
+    if tymin > tmin {
+        tmin = tymin;
+        hit_axis = 1;
+    }
+    tmax = math::min(tmax, tymax);
+
+    let tz1 = (box.min.z - ray.origin.z) * ray.inv_dir.z;
+    let tz2 = (box.max.z - ray.origin.z) * ray.inv_dir.z;
+    let tzmin = math::min(tz1, tz2);
+    let tzmax = math::max(tz1, tz2);
+
+    if tzmin > tmin {
+        tmin = tzmin;
+        hit_axis = 2;
+    }
+    tmax = math::min(tmax, tzmax);
+
+    if tmax < 0.0 || tmin > tmax || tmin > ray.max_distance {
+        return RayHit { point: vec3::vec3_zero(), normal: vec3::vec3_zero(), distance: 0.0, entity_id: 0, hit: false };
+    }
+
+    let hit_dist = if tmin >= 0.0 { tmin } else { tmax };
+    let hit_pt = vec3::vec3_add(ray.origin, vec3::vec3_scale(ray.dir, hit_dist));
+
+    let mut norm = vec3::vec3_zero();
+    if hit_axis == 0 {
+        norm.x = if ray.dir.x < 0.0 { 1.0 } else { -1.0 };
+    } else if hit_axis == 1 {
+        norm.y = if ray.dir.y < 0.0 { 1.0 } else { -1.0 };
+    } else {
+        norm.z = if ray.dir.z < 0.0 { 1.0 } else { -1.0 };
+    }
+
+    return RayHit {
+        point: hit_pt,
+        normal: norm,
+        distance: hit_dist,
+        entity_id: box.entity_id,
+        hit: true,
+    };
+}
+
+// Intersecao Ray vs Plano arbitrario (usado para arrastar objetos no chao ou nos eixos do Gizmo)
+@sealed_sig
+pub fn ray_intersect_plane(
+    ray: Ray3D,
+    plane_origin: vec3::Vec3,
+    plane_normal: vec3::Vec3
+) -> RayHit {
+    let denom = vec3::vec3_dot(plane_normal, ray.dir);
+    if math::abs(denom) < 0.000001 {
+        return RayHit { point: vec3::vec3_zero(), normal: plane_normal, distance: 0.0, entity_id: 0, hit: false };
+    }
+
+    let diff = vec3::vec3_sub(plane_origin, ray.origin);
+    let t = vec3::vec3_dot(diff, plane_normal) / denom;
+
+    if t < 0.0 || t > ray.max_distance {
+        return RayHit { point: vec3::vec3_zero(), normal: plane_normal, distance: 0.0, entity_id: 0, hit: false };
+    }
+
+    return RayHit {
+        point: vec3::vec3_add(ray.origin, vec3::vec3_scale(ray.dir, t)),
+        normal: plane_normal,
+        distance: t,
+        entity_id: 0,
+        hit: true,
+    };
+}

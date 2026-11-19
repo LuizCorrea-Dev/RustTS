@@ -1,0 +1,46 @@
+module engine.gpu.dx12_defs;
+
+pub const D3D12_COMMAND_LIST_TYPE_DIRECT: u32 = 0;
+pub const D3D12_HEAP_TYPE_DEFAULT: u32 = 1;
+pub const D3D12_HEAP_TYPE_UPLOAD: u32  = 2;
+
+pub const D3D12_RESOURCE_STATE_COMMON: u32                    = 0;
+pub const D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER: u32 = 0x1;
+pub const D3D12_RESOURCE_STATE_INDEX_BUFFER: u32              = 0x2;
+pub const D3D12_RESOURCE_STATE_RENDER_TARGET: u32             = 0x4;
+pub const D3D12_RESOURCE_STATE_DEPTH_WRITE: u32               = 0x10;
+pub const D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE: u32     = 0x80;
+
+@repr_c
+pub struct D3D12ResourceTransitionBarrier {
+    pub resource_ptr: u64,
+    pub subresource: u32,
+    pub state_before: u32,
+    pub state_after: u32,
+    pub flags: u32,
+}
+
+// Símbolos nativos da ponte D3D12 / DXGI C-ABI
+@sealed_sig
+pub extern "C" fn rtsc_dx12_init_device(window_handle: u64, width: u32, height: u32, debug_layer: bool) -> u64;
+
+@sealed_sig
+pub extern "C" fn rtsc_dx12_alloc_vram_arena(device_h: u64, size_bytes: u64, out_buf_h: inout u64, out_cpu_ptr: inout u64) -> u64;
+
+@sealed_sig
+pub extern "C" fn rtsc_dx12_begin_command_list(device_h: u64) -> u64;
+
+@sealed_sig
+pub extern "C" fn rtsc_dx12_cmd_resource_barrier(cmd_h: u64, res_h: u64, state_before: u32, state_after: u32);
+
+@sealed_sig
+pub extern "C" fn rtsc_dx12_cmd_set_pipeline_state(cmd_h: u64, pso_h: u64);
+
+@sealed_sig
+pub extern "C" fn rtsc_dx12_cmd_bind_buffers(cmd_h: u64, vbo_h: u64, vbo_offset: u64, ibo_h: u64, ibo_offset: u64, cbv_h: u64, cbv_offset: u64);
+
+@sealed_sig
+pub extern "C" fn rtsc_dx12_cmd_draw_indexed_instanced(cmd_h: u64, index_count: u32, start_index: u32, base_vertex: i32);
+
+@sealed_sig
+pub extern "C" fn rtsc_dx12_execute_and_present(device_h: u64, cmd_h: u64) -> i32;

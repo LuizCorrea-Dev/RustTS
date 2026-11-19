@@ -2,7 +2,7 @@
   <img src="./rustts_language_logo.png" alt="RustTS Logo" width="220">
 </p>
 
-# Guia Oficial de Instalação e Uso — RustTS (`rtsc v2.0.0-rts`)
+# Guia Oficial de Instalação e Uso — RustTS (`rtsc v2.2.0-rts`)
 
 Bem-vindo ao **RustTS (`.rts`)**, o compilador determinístico de sistemas, motores em tempo real e controle físico de hardware baseado em **Capacidades (`cap`)**, **Arenas Escopadas ($O(1)$)** e geração nativa **SoA/AVX2**.
 
@@ -28,7 +28,7 @@ curl -fsSL https://raw.githubusercontent.com/LuizCorrea-Dev/RustTS/main/scripts/
 export PATH="$HOME/.rtsc/bin:$PATH"
 ```
 
-### B. Compilando a Partir do Código-Fonte (`v2.0.0-rts`)
+### B. Compilando a Partir do Código-Fonte (`v2.2.0-rts`)
 
 Com o toolchain **Rust (`cargo` / `rustc`)** instalado (via [rustup.rs](https://rustup.rs) ou `winget install Rustlang.Rustup` no Windows):
 
@@ -49,7 +49,7 @@ cargo install --path .
 ### Validar a Instalação
 ```bash
 rtsc --version
-# Saída esperada: rtsc 2.0.0-rts
+# Saída esperada: rtsc 2.2.0-rts
 ```
 
 ### Requisito Opcional para Execução Nativa (`rtsc run` e `--bin`)
@@ -61,7 +61,7 @@ rtsc --version
 
 ---
 
-## 2. Manual de Comandos do Compilador (`rtsc 2.0.0-rts`)
+## 2. Manual de Comandos do Compilador (`rtsc 2.2.0-rts`)
 
 ### 2.1. Criar Novo Projeto (`rtsc init`)
 Gera `rts.toml`, `.gitignore`, `src/main.rts` (com `pub fn main() -> i32`) e `build/`:
@@ -77,7 +77,7 @@ rtsc check examples/kanori_zone_sim/src/main.rts --json-diagnostics
 ```
 Saída esperada:
 ```text
-[rtsc 2.0.0-rts] OK: 0 capability violations, 0 transitive leaks, 0 capability forgeries, 0 arena escapes.
+[rtsc 2.2.0-rts] OK: 0 capability violations, 0 transitive leaks, 0 capability forgeries, 0 arena escapes.
 ```
 
 ### 2.3. Compilar e Executar Imediatamente (`rtsc run`)
@@ -117,7 +117,10 @@ rtsc build examples/kanori_gpu_wasi_sim/src/gpu_particles.rts --target wgsl -o b
 
 # Vulkan / DirectX 12 SPIR-V 1.5 Assembly (.spvasm) e Binário (.spv magic 0x07230203)
 rtsc build examples/kanori_gpu_wasi_sim/src/gpu_particles.rts --target spirv -o build/gpu_particles.spvasm
+# Binário Vulkan/DX12 SPIR-V 1.5 (.spv, magic 0x07230203) para Compute e Shaders Gráficos
 rtsc build examples/kanori_gpu_wasi_sim/src/gpu_particles.rts --target spv -o build/gpu_particles.spv
+rtsc build examples/shaders/custom_tri.rts --target spirv-vert --bin -o build/custom_vs.spv
+rtsc build examples/shaders/custom_tri.rts --target spirv-frag --bin -o build/custom_fs.spv
 ```
 
 ### 2.6. Gerar Sandbox WASI Determinística com *Fuel Metering* (`--target=wasi` / `wasm`)
@@ -152,7 +155,11 @@ rtsc --export-gbnf > rustts.gbnf
 
 | Arquivo `.rts` | Domínio / Recurso Demonstrado |
 | :--- | :--- |
-| `examples/kanori_gpu_wasi_sim/src/main.rts` | Showcase Heterogêneo `v2.0.0-rts`: CPU (`--target llvm-ir`) + GPU Compute (`@gpu_kernel` $\rightarrow$ `wgsl`/`spirv`) + Sandbox WASI (`--target wasi --fuel-limit 75000`) |
+| `examples/demo_2d.rts` | Motor 2D Vulkan (`v2.2.0-rts`): câmera ortográfica `MODE_ORTHO_2D`, `SpriteBatch2D`, texturas RGBA e animação (`sprite_anim`) |
+| `examples/demo_3d.rts` | Motor 3D Vulkan (`v2.2.0-rts`): câmera orbital, `Renderer3D` (`r3d_add_box`, `r3d_flush`) e delta-time `rtsc_time_now_sec()` |
+| `examples/demo_shader.rts` | Shaders gráficos em `.rts` (`@vertex_shader`/`@fragment_shader` -> `.spv`) carregados via `rhi_create_graphics_pipeline` |
+| `examples/village_editor.rts` | Editor visual 3D completo com instancing, loader `.OBJ` e persistência binária `.pak` |
+| `examples/kanori_gpu_wasi_sim/src/main.rts` | Showcase Heterogêneo `v2.2.0-rts`: CPU (`--target llvm-ir`) + GPU Compute (`@gpu_kernel` $\rightarrow$ `wgsl`/`spirv`) + Sandbox WASI (`--target wasi --fuel-limit 75000`) |
 | `examples/kanori_zone_sim/src/main.rts` | Showcase multi-arquivo (`import`, `impl Struct`, `core.math`, `Option<f32>`, `extern "C" fn`, `[f32; 4]`, `while` + `continue`/`break`, `#line -g`) |
 | `examples/thermal_control.rts` | Hardware embarcado (`I2CBus`, `PWMPin`, `TryOp ?`, `match` exaustivo, `while`) |
 | `examples/ballistics_10k_benchmark.rts` | Simulação ECS de 10.000 projéteis com `FrameArena`, `ReadFrameArena` e Strip-Mining L1d |

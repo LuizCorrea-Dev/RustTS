@@ -1,0 +1,202 @@
+module engine.editor.world_editor;
+import engine.math.vec3;
+import engine.camera;
+import engine.vfs.pak_format;
+import engine.physics.aabb;
+import engine.physics.raycast;
+import engine.editor.gizmo;
+
+pub const MAX_SCENE_OBJECTS: usize = 8192;
+
+@repr_c
+pub struct EditorSceneState {
+    pub object_count: u32,
+    pub selected_index: i32,
+    pub hovered_index: i32,
+    pub active_brush_prefab_hash: u64,
+    pub active_brush_half_extents: vec3::Vec3,
+    pub gizmo: gizmo::GizmoConfig,
+    pub is_dirty: bool,
+}
+
+@sealed_sig
+pub fn editor_init() -> EditorSceneState {
+    return EditorSceneState {
+        object_count: 0,
+        selected_index: -1,
+        hovered_index: -1,
+        active_brush_prefab_hash: 0,
+        active_brush_half_extents: vec3::Vec3 { x: 1.0, y: 1.0, z: 1.0 },
+        gizmo: gizmo::gizmo_init_default(),
+        is_dirty: false,
+    };
+}
+
+// Reconstroi a AABB de selecao de um registro de objeto do mundo
+@sealed_sig
+pub fn editor_build_object_aabb(
+    rec: pak_format::WorldObjectRecord,
+    base_half_extents: vec3::Vec3,
+    index: u32
+) -> aabb::AABB3D {
+    let center = vec3::Vec3 { x: rec.pos_x, y: rec.pos_y, z: rec.pos_z };
+    let scaled_ext = vec3::Vec3 {
+        x: base_half_extents.x * rec.scale_x,
+        y: base_half_extents.y * rec.scale_y,
+        z: base_half_extents.z * rec.scale_z,
+    };
+    return aabb::aabb_from_center_extents(center, scaled_ext, rec.collision_flags, index);
+}
+
+// Seleciona o objeto mais proximo sob o cursor do rato em qualquer projecao de camara
+@sealed_sig
+pub fn editor_pick_object(
+    state: inout EditorSceneState,
+    records: cap ReadSlice<pak_format::WorldObjectRecord>,
+    bounds: cap ReadSlice<aabb::AABB3D>,
+    cam: camera::Camera3D,
+    mouse_x: float,
+    mouse_y: float,
+    viewport_w: float,
+    viewport_h: float
+) -> i32 {
+    let ray = raycast::ray_from_viewport(cam, mouse_x, mouse_y, viewport_w, viewport_h);
+    let count = state.object_count as usize;
+    let mut best_dist = ray.max_distance;
+    let mut best_idx: i32 = -1;
+
+    let mut i: usize = 0;
+    while i < count {
+        let hit = raycast::ray_intersect_aabb(ray, bounds[i]);
+        if hit.hit && hit.distance < best_dist {
+            best_dist = hit.distance;
+            best_idx = i as i32;
+        }
+        i += 1;
+    }
+
+    state.selected_index = best_idx;
+    return best_idx;
+}
+
+// Instancia um novo objeto/prefab no mundo (Brush Tool ou Drop no Editor)
+@sealed_sig
+pub fn editor_spawn_object(
+    state: inout EditorSceneState,
+    records: cap MutSlice<pak_format::WorldObjectRecord>,
+    bounds: cap MutSlice<aabb::AABB3D>,
+    prefab_hash: u64,
+    position: vec3::Vec3,
+    half_extents: vec3::Vec3,
+    material_id: u32,
+    collision_flags: u32
+) -> i32 {
+    let idx = state.object_count as usize;
+    if idx >= MAX_SCENE_OBJECTS {
+        return -1;
+    }
+
+    let final_pos = if state.gizmo.snap_enabled {
+        gizmo::gizmo_snap_vec3(position, state.gizmo.snap_translate)
+    } else {
+        position
+    };
+
+    let rec = pak_format::WorldObjectRecord {
+        prefab_hash: prefab_hash,
+        pos_x: final_pos.x,
+        pos_y: final_pos.y,
+        pos_z: final_pos.z,
+        rot_x: 0.0,
+        rot_y: 0.0,
+        rot_z: 0.0,
+        scale_x: 1.0,
+        scale_y: 1.0,
+        scale_z: 1.0,
+        material_override_id: material_id,
+        collision_flags: collision_flags,
+        reserved_pad: 0,
+    };
+
+    records[idx] = rec;
+    bounds[idx] = editor_build_object_aabb(rec, half_extents, idx as u32);
+    state.object_count += 1;
+    state.selected_index = idx as i32;
+    state.is_dirty = true;
+    return idx as i32;
+}
+
+// Inspector: Atualiza transformacao, material e flags do objeto selecionado em tempo real
+@sealed_sig
+pub fn editor_inspector_update_selected(
+    state: inout EditorSceneState,
+    records: cap MutSlice<pak_format::WorldObjectRecord>,
+    bounds: cap MutSlice<aabb::AABB3D>,
+    new_pos: vec3::Vec3,
+    new_rot: vec3::Vec3,
+    new_scale: vec3::Vec3,
+    material_override: u32,
+    collision_flags: u32
+) -> bool {
+    if state.selected_index < 0 || (state.selected_index as u32) >= state.object_count {
+        return false;
+    }
+
+    let idx = state.selected_index as usize;
+    let mut rec = records[idx];
+    let cur_scaled_ext = aabb::aabb_half_extents(bounds[idx]);
+
+    // Desfaz a escala anterior para obter o half_extents base sem crescimento exponencial
+    let sx_old = if rec.scale_x > 0.001 { rec.scale_x } else { 1.0 };
+    let sy_old = if rec.scale_y > 0.001 { rec.scale_y } else { 1.0 };
+    let sz_old = if rec.scale_z > 0.001 { rec.scale_z } else { 1.0 };
+    let base_ext = vec3::Vec3 {
+        x: cur_scaled_ext.x / sx_old,
+        y: cur_scaled_ext.y / sy_old,
+        z: cur_scaled_ext.z / sz_old,
+    };
+
+    rec.pos_x = new_pos.x;
+    rec.pos_y = new_pos.y;
+    rec.pos_z = new_pos.z;
+    rec.rot_x = new_rot.x;
+    rec.rot_y = new_rot.y;
+    rec.rot_z = new_rot.z;
+    rec.scale_x = new_scale.x;
+    rec.scale_y = new_scale.y;
+    rec.scale_z = new_scale.z;
+    rec.material_override_id = material_override;
+    rec.collision_flags = collision_flags;
+    rec.reserved_pad = 0;
+
+    records[idx] = rec;
+    bounds[idx] = editor_build_object_aabb(rec, base_ext, idx as u32);
+    state.is_dirty = true;
+    return true;
+}
+
+// Remove um objeto em O(1) via Swap-and-Pop (mantem o array continuo sem buracos)
+@sealed_sig
+pub fn editor_delete_selected(
+    state: inout EditorSceneState,
+    records: cap MutSlice<pak_format::WorldObjectRecord>,
+    bounds: cap MutSlice<aabb::AABB3D>
+) -> bool {
+    if state.selected_index < 0 || state.object_count == 0 {
+        return false;
+    }
+
+    let del_idx = state.selected_index as usize;
+    let last_idx = (state.object_count - 1) as usize;
+
+    if del_idx != last_idx {
+        records[del_idx] = records[last_idx];
+        bounds[del_idx] = bounds[last_idx];
+        bounds[del_idx].entity_id = del_idx as u32;
+    }
+
+    state.object_count -= 1;
+    state.selected_index = -1;
+    state.is_dirty = true;
+    return true;
+}

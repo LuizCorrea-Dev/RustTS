@@ -1,0 +1,90 @@
+module engine.gpu.vulkan_defs;
+
+pub const VK_SUCCESS: i32 = 0;
+pub const VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO: u32 = 1;
+pub const VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO: u32 = 3;
+pub const VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO: u32 = 12;
+pub const VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2: u32 = 1000314007;
+
+pub const VK_BUFFER_USAGE_TRANSFER_DST_BIT: u32   = 0x00000002;
+pub const VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT: u32 = 0x00000010;
+pub const VK_BUFFER_USAGE_INDEX_BUFFER_BIT: u32   = 0x00000040;
+pub const VK_BUFFER_USAGE_VERTEX_BUFFER_BIT: u32  = 0x00000080;
+
+@repr_c
+pub struct VkBufferCreateInfo {
+    pub s_type: u32,
+    pub pad0: u32,
+    pub p_next: u64,
+    pub flags: u32,
+    pub pad1: u32,
+    pub size: u64,
+    pub usage: u32,
+    pub sharing_mode: u32,
+    pub queue_family_index_count: u32,
+    pub pad2: u32,
+    pub p_queue_family_indices: u64,
+}
+
+@repr_c
+pub struct VkImageMemoryBarrier2 {
+    pub s_type: u32,
+    pub pad0: u32,
+    pub p_next: u64,
+    pub src_stage_mask: u64,
+    pub src_access_mask: u64,
+    pub dst_stage_mask: u64,
+    pub dst_access_mask: u64,
+    pub old_layout: u32,
+    pub new_layout: u32,
+    pub src_queue_family_index: u32,
+    pub dst_queue_family_index: u32,
+    pub image: u64,
+}
+
+// Símbolos da biblioteca nativa vulkan-1.dll / libvulkan.so
+@sealed_sig
+pub extern "C" fn rtsc_vk_init_device(window_handle: u64, width: u32, height: u32, validation: bool) -> u64;
+
+@sealed_sig
+pub extern "C" fn rtsc_vk_alloc_vram_arena(device_h: u64, size_bytes: u64, out_buf_h: inout u64, out_cpu_ptr: inout u64) -> u64;
+
+@sealed_sig
+pub extern "C" fn rtsc_vk_begin_command_buffer(device_h: u64) -> u64;
+
+@sealed_sig
+pub extern "C" fn rtsc_vk_cmd_image_barrier(cmd_h: u64, tex_h: u64, state_before: u32, state_after: u32);
+
+@sealed_sig
+pub extern "C" fn rtsc_vk_cmd_bind_pipeline(cmd_h: u64, pipeline_h: u64);
+
+@sealed_sig
+pub extern "C" fn rtsc_vk_cmd_bind_buffers(cmd_h: u64, vbo_h: u64, vbo_offset: u64, ibo_h: u64, ibo_offset: u64, ubo_h: u64, ubo_offset: u64);
+
+@sealed_sig
+pub extern "C" fn rtsc_vk_cmd_draw_indexed(cmd_h: u64, index_count: u32, first_index: u32, vertex_offset: i32);
+
+@sealed_sig
+pub extern "C" fn rtsc_vk_end_and_present(device_h: u64, cmd_h: u64) -> i32;
+
+@sealed_sig
+pub extern "C" fn rtsc_vk_load_texture(device_h: u64, path: str) -> u64;
+
+@sealed_sig
+pub extern "C" fn rtsc_vk_create_texture_rgba_ptr(device_h: u64, width: u32, height: u32, rgba_ptr: u64) -> u64;
+
+@sealed_sig
+pub extern "C" fn rtsc_vk_cmd_bind_texture(cmd_h: u64, tex_h: u64);
+
+@sealed_sig
+pub extern "C" fn rtsc_vk_create_pipeline_from_spirv(
+    device_h: u64,
+    vs_ptr: u64,
+    vs_bytes: u64,
+    fs_ptr: u64,
+    fs_bytes: u64,
+    stride_bytes: u32
+) -> u64;
+
+@sealed_sig
+pub extern "C" fn rtsc_vk_cmd_bind_texture(cmd_h: u64, tex_h: u64);

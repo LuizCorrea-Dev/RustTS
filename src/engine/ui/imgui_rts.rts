@@ -1,0 +1,395 @@
+module engine.ui.imgui_rts;
+import core.math;
+import core.mem;
+
+// UI Imediata Nativa para GPU e Inspector
+
+// Cores empacotadas RGBA8 (Little-Endian: 0xAABBGGRR)
+pub const COLOR_BG_PANEL: u32      = 0xE61E1E1E;
+pub const COLOR_BG_HEADER: u32     = 0xFF2D2D30;
+pub const COLOR_WIDGET_IDLE: u32   = 0xFF3E3E42;
+pub const COLOR_WIDGET_HOVER: u32  = 0xFF505058;
+pub const COLOR_WIDGET_ACTIVE: u32 = 0xFF007ACC;
+pub const COLOR_TEXT_WHITE: u32    = 0xFFFFFFFF;
+pub const COLOR_ACCENT_GREEN: u32  = 0xFF32CD32;
+pub const COLOR_BTN_DANGER: u32    = 0xFF2828C8; // Vermelho (Delete Object)
+pub const COLOR_BTN_SUCCESS: u32   = 0xFF2E8B22; // Verde (Spawn New Object)
+pub const COLOR_BTN_PRIMARY: u32   = 0xFFB4641E; // Azul Royal (Save .pak)
+pub const COLOR_BTN_WARNING: u32   = 0xFF1E78D2; // Ambar (Load .pak)
+
+// Vertice 2D compacto de 20 bytes para renderizacao de UI numa unica Draw Call
+@repr_c
+pub struct UiVertex {
+    pub ndc_x: float,
+    pub ndc_y: float,
+    pub u: float,
+    pub v: float,
+    pub color_rgba: u32,
+}
+
+@repr_c
+pub struct UiContext {
+    pub screen_w: float,
+    pub screen_h: float,
+    pub inv_half_w: float,
+    pub inv_half_h: float,
+    pub flip_y_vulkan: bool,
+    pub mouse_x: float,
+    pub mouse_y: float,
+    pub mouse_down: bool,
+    pub mouse_clicked: bool,
+    pub mouse_released: bool,
+    pub hot_widget_id: u32,
+    pub active_widget_id: u32,
+    pub cursor_x: float,
+    pub cursor_y: float,
+    pub vertex_count: u32,
+    pub index_count: u32,
+    pub max_vertices: u32,
+    pub max_indices: u32,
+}
+
+@sealed_sig
+pub fn ui_init(screen_w: float, screen_h: float, flip_y_vulkan: bool, max_verts: u32, max_inds: u32) -> UiContext {
+    let sw = if screen_w > 1.0 { screen_w } else { 1920.0 };
+    let sh = if screen_h > 1.0 { screen_h } else { 1080.0 };
+    return UiContext {
+        screen_w: sw,
+        screen_h: sh,
+        inv_half_w: 2.0 / sw,
+        inv_half_h: 2.0 / sh,
+        flip_y_vulkan: flip_y_vulkan,
+        mouse_x: 0.0,
+        mouse_y: 0.0,
+        mouse_down: false,
+        mouse_clicked: false,
+        mouse_released: false,
+        hot_widget_id: 0,
+        active_widget_id: 0,
+        cursor_x: 16.0,
+        cursor_y: 16.0,
+        vertex_count: 0,
+        index_count: 0,
+        max_vertices: max_verts,
+        max_indices: max_inds,
+    };
+}
+
+@sealed_sig
+pub fn ui_begin_frame(
+    ctx: inout UiContext,
+    mouse_x: float,
+    mouse_y: float,
+    mouse_down: bool
+) {
+    ctx.mouse_clicked = (!ctx.mouse_down) && mouse_down;
+    ctx.mouse_released = ctx.mouse_down && (!mouse_down);
+    ctx.mouse_x = mouse_x;
+    ctx.mouse_y = mouse_y;
+    ctx.mouse_down = mouse_down;
+    ctx.hot_widget_id = 0;
+    ctx.vertex_count = 0;
+    ctx.index_count = 0;
+}
+
+@sealed_sig
+pub fn ui_end_frame(ctx: inout UiContext) {
+    if !ctx.mouse_down {
+        ctx.active_widget_id = 0;
+    }
+}
+
+@sealed_sig
+pub fn ui_point_in_rect(px: float, py: float, rx: float, ry: float, rw: float, rh: float) -> bool {
+    return (px >= rx) && (px <= (rx + rw)) && (py >= ry) && (py <= (ry + rh));
+}
+
+// Emite um retangulo 2D em coordenadas de tela convertido diretamente para NDC
+@sealed_sig
+pub fn ui_push_quad(
+    ctx: inout UiContext,
+    verts: cap MutSlice<UiVertex>,
+    inds: cap MutSlice<u32>,
+    x: float, y: float, w: float, h: float,
+    u0: float, v0: float, u1: float, v1: float,
+    color: u32
+) {
+    if (ctx.vertex_count + 4) > ctx.max_vertices || (ctx.index_count + 6) > ctx.max_indices {
+        return;
+    }
+
+    let x0_ndc = (x * ctx.inv_half_w) - 1.0;
+    let x1_ndc = ((x + w) * ctx.inv_half_w) - 1.0;
+
+    let mut y0_ndc = 1.0 - (y * ctx.inv_half_h);
+    let mut y1_ndc = 1.0 - ((y + h) * ctx.inv_half_h);
+
+    if ctx.flip_y_vulkan {
+        y0_ndc = 0.0 - y0_ndc;
+        y1_ndc = 0.0 - y1_ndc;
+    }
+
+    let v_base = ctx.vertex_count;
+    let vp = v_base as usize;
+
+    verts[vp + 0] = UiVertex { ndc_x: x0_ndc, ndc_y: y0_ndc, u: u0, v: v0, color_rgba: color };
+    verts[vp + 1] = UiVertex { ndc_x: x1_ndc, ndc_y: y0_ndc, u: u1, v: v0, color_rgba: color };
+    verts[vp + 2] = UiVertex { ndc_x: x1_ndc, ndc_y: y1_ndc, u: u1, v: v1, color_rgba: color };
+    verts[vp + 3] = UiVertex { ndc_x: x0_ndc, ndc_y: y1_ndc, u: u0, v: v1, color_rgba: color };
+    ctx.vertex_count += 4;
+
+    let ip = ctx.index_count as usize;
+    inds[ip + 0] = v_base + 0;
+    inds[ip + 1] = v_base + 1;
+    inds[ip + 2] = v_base + 2;
+    inds[ip + 3] = v_base + 0;
+    inds[ip + 4] = v_base + 2;
+    inds[ip + 5] = v_base + 3;
+    ctx.index_count += 6;
+}
+
+// Renderiza texto ASCII a partir de uma grade de fonte bitmap 16x16 (UV [0.0..1.0]) sem alocacao
+@sealed_sig
+pub fn ui_draw_ascii_text(
+    ctx: inout UiContext,
+    verts: cap MutSlice<UiVertex>,
+    inds: cap MutSlice<u32>,
+    text_bytes: cap ReadSlice<u8>,
+    text_len: usize,
+    start_x: float,
+    start_y: float,
+    glyph_w: float,
+    glyph_h: float,
+    color: u32
+) {
+    let cell_uv = 1.0 / 16.0;
+    let mut cx = start_x;
+    let mut i: usize = 0;
+
+    while i < text_len {
+        let ch = text_bytes[i];
+        if ch >= 32 && ch <= 126 {
+            let col = (ch % 16) as float;
+            let row = (ch / 16) as float;
+            let u0 = col * cell_uv;
+            let v0 = row * cell_uv;
+            ui_push_quad(ctx, verts, inds, cx, start_y, glyph_w, glyph_h, u0, v0, u0 + cell_uv, v0 + cell_uv, color);
+        }
+        cx += glyph_w * 0.85;
+        i += 1;
+    }
+}
+
+// Inicia um painel de janela (ex: Inspector de Propriedades ou Hierarquia do Mapa)
+@sealed_sig
+pub fn ui_begin_panel(
+    ctx: inout UiContext,
+    verts: cap MutSlice<UiVertex>,
+    inds: cap MutSlice<u32>,
+    x: float, y: float, w: float, h: float
+) {
+    // Pixel branco solido reservado no canto (0,0) do atlas de UI
+    ui_push_quad(ctx, verts, inds, x, y, w, h, 0.0, 0.0, 0.001, 0.001, COLOR_BG_PANEL);
+    ui_push_quad(ctx, verts, inds, x, y, w, 26.0, 0.0, 0.0, 0.001, 0.001, COLOR_BG_HEADER);
+    ctx.cursor_x = x + 10.0;
+    ctx.cursor_y = y + 34.0;
+}
+
+// Botao interativo imediato (Retorna true no exato frame em que foi clicado)
+@sealed_sig
+pub fn ui_button(
+    ctx: inout UiContext,
+    verts: cap MutSlice<UiVertex>,
+    inds: cap MutSlice<u32>,
+    widget_id: u32,
+    w: float, h: float
+) -> bool {
+    let bx = ctx.cursor_x;
+    let by = ctx.cursor_y;
+    let hovered = ui_point_in_rect(ctx.mouse_x, ctx.mouse_y, bx, by, w, h);
+
+    if hovered {
+        ctx.hot_widget_id = widget_id;
+        if ctx.active_widget_id == 0 && ctx.mouse_clicked {
+            ctx.active_widget_id = widget_id;
+        }
+    }
+
+    let mut color = COLOR_WIDGET_IDLE;
+    if ctx.active_widget_id == widget_id {
+        color = COLOR_WIDGET_ACTIVE;
+    } else if ctx.hot_widget_id == widget_id {
+        color = COLOR_WIDGET_HOVER;
+    }
+
+    ui_push_quad(ctx, verts, inds, bx, by, w, h, 0.0, 0.0, 0.001, 0.001, color);
+    ctx.cursor_y += h + 6.0;
+
+    return hovered && (ctx.active_widget_id == widget_id) && ctx.mouse_released;
+}
+
+@sealed_sig
+pub fn ui_button_colored(
+    ctx: inout UiContext,
+    verts: cap MutSlice<UiVertex>,
+    inds: cap MutSlice<u32>,
+    widget_id: u32,
+    w: float, h: float,
+    base_color: u32
+) -> bool {
+    let bx = ctx.cursor_x;
+    let by = ctx.cursor_y;
+    let hovered = ui_point_in_rect(ctx.mouse_x, ctx.mouse_y, bx, by, w, h);
+
+    if hovered {
+        ctx.hot_widget_id = widget_id;
+        if ctx.active_widget_id == 0 && ctx.mouse_clicked {
+            ctx.active_widget_id = widget_id;
+        }
+    }
+
+    let mut color = base_color;
+    if ctx.active_widget_id == widget_id {
+        color = COLOR_ACCENT_GREEN;
+    } else if ctx.hot_widget_id == widget_id {
+        color = COLOR_WIDGET_HOVER;
+    }
+
+    ui_push_quad(ctx, verts, inds, bx, by, w, h, 0.0, 0.0, 0.001, 0.001, color);
+    ctx.cursor_y += h + 6.0;
+
+    return hovered && (ctx.active_widget_id == widget_id) && ctx.mouse_released;
+}
+
+// Slider horizontal para editar coordenadas (Pos X/Y/Z, Rotacao, Escala, FOV) em tempo real no Inspector
+@sealed_sig
+pub fn ui_slider_float(
+    ctx: inout UiContext,
+    verts: cap MutSlice<UiVertex>,
+    inds: cap MutSlice<u32>,
+    widget_id: u32,
+    w: float, h: float,
+    value: inout float,
+    min_val: float,
+    max_val: float
+) -> bool {
+    let sx = ctx.cursor_x;
+    let sy = ctx.cursor_y;
+    let hovered = ui_point_in_rect(ctx.mouse_x, ctx.mouse_y, sx, sy, w, h);
+
+    if hovered {
+        ctx.hot_widget_id = widget_id;
+        if ctx.active_widget_id == 0 && ctx.mouse_clicked {
+            ctx.active_widget_id = widget_id;
+        }
+    }
+
+    let mut changed = false;
+    if ctx.active_widget_id == widget_id && ctx.mouse_down {
+        let mut t = (ctx.mouse_x - sx) / w;
+        t = math::clamp(t, 0.0, 1.0);
+        value = min_val + ((max_val - min_val) * t);
+        changed = true;
+    }
+
+    // Fundo da trilha do slider
+    ui_push_quad(ctx, verts, inds, sx, sy, w, h, 0.0, 0.0, 0.001, 0.001, COLOR_WIDGET_IDLE);
+
+    // Barra de preenchimento proporcional
+    let range = max_val - min_val;
+    let norm = if range > 0.00001 { math::clamp((value - min_val) / range, 0.0, 1.0) } else { 0.0 };
+    let fill_w = w * norm;
+    let fill_color = if ctx.active_widget_id == widget_id { COLOR_ACCENT_GREEN } else { COLOR_WIDGET_ACTIVE };
+
+    if fill_w > 1.0 {
+        ui_push_quad(ctx, verts, inds, sx, sy, fill_w, h, 0.0, 0.0, 0.001, 0.001, fill_color);
+    }
+
+    ctx.cursor_y += h + 6.0;
+    return changed;
+}
+
+pub const COLOR_AXIS_X: u32     = 0xFF3030E8; // Vermelho (Pos X)
+pub const COLOR_AXIS_Y: u32     = 0xFF30D030; // Verde (Pos Y)
+pub const COLOR_AXIS_Z: u32     = 0xFFE87020; // Azul (Pos Z)
+pub const COLOR_AXIS_ROT: u32   = 0xFFD040B0; // Roxo (Rotacao Y)
+pub const COLOR_AXIS_SCALE: u32 = 0xFFD0C020; // Ciano (Escala)
+
+// Renderiza qualquer literal ou string `str` usando o Atlas 8x8 da GPU (Zero Heap)
+@sealed_sig
+pub fn ui_draw_text(
+    ctx: inout UiContext,
+    verts: cap MutSlice<UiVertex>,
+    inds: cap MutSlice<u32>,
+    text: str,
+    start_x: float,
+    start_y: float,
+    glyph_w: float,
+    glyph_h: float,
+    color: u32
+) {
+    let cell_uv = 1.0 / 16.0;
+    let pad_uv = 0.0005;
+    let len = mem::str_len(text);
+    let mut cx = start_x;
+    let mut i: usize = 0;
+
+    while i < len {
+        let ch = mem::str_byte(text, i);
+        if ch >= 32 && ch <= 126 {
+            let col = (ch % 16) as float;
+            let row = (ch / 16) as float;
+            let u0 = (col * cell_uv) + pad_uv;
+            let v0 = (row * cell_uv) + pad_uv;
+            let u1 = ((col + 1.0) * cell_uv) - pad_uv;
+            let v1 = ((row + 1.0) * cell_uv) - pad_uv;
+            ui_push_quad(inout ctx, verts, inds, cx, start_y, glyph_w, glyph_h, u0, v0, u1, v1, color);
+        }
+        cx += glyph_w * 0.90;
+        i += 1;
+    }
+}
+
+@sealed_sig
+pub fn ui_button_labeled(
+    ctx: inout UiContext,
+    verts: cap MutSlice<UiVertex>,
+    inds: cap MutSlice<u32>,
+    widget_id: u32,
+    w: float, h: float,
+    base_color: u32,
+    label: str
+) -> bool {
+    let bx = ctx.cursor_x;
+    let by = ctx.cursor_y;
+    let clicked = ui_button_colored(inout ctx, verts, inds, widget_id, w, h, base_color);
+    ui_draw_text(inout ctx, verts, inds, label, bx + 10.0, by + ((h - 11.0) * 0.5), 10.0, 11.0, COLOR_TEXT_WHITE);
+    return clicked;
+}
+
+@sealed_sig
+pub fn ui_slider_float_labeled(
+    ctx: inout UiContext,
+    verts: cap MutSlice<UiVertex>,
+    inds: cap MutSlice<u32>,
+    widget_id: u32,
+    w: float, h: float,
+    tag_color: u32,
+    label: str,
+    value: inout float,
+    min_val: float,
+    max_val: float
+) -> bool {
+    let sx = ctx.cursor_x;
+    let sy = ctx.cursor_y;
+    let changed = ui_slider_float(inout ctx, verts, inds, widget_id, w, h, inout value, min_val, max_val);
+    ui_push_quad(inout ctx, verts, inds, sx, sy, 6.0, h, 0.0, 0.0, 0.001, 0.001, tag_color);
+
+    let mut line: str64 = str64::new();
+    line.push_str(label);
+    line.push_str(": ");
+    line.push_f32(value, 2);
+
+    ui_draw_text(inout ctx, verts, inds, line.as_str(), sx + 12.0, sy + ((h - 10.0) * 0.5), 9.0, 10.0, COLOR_TEXT_WHITE);
+    return changed;
+}

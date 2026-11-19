@@ -1,0 +1,49 @@
+module engine.platform.window;
+
+// Bits de estado dos botões do rato
+pub const MOUSE_LEFT_BIT: u32  = 1;
+pub const MOUSE_RIGHT_BIT: u32 = 2;
+
+// Bits de estado do teclado para navegação 3D (WASD + QE)
+pub const KEY_W_BIT: u32 = 1;
+pub const KEY_S_BIT: u32 = 2;
+pub const KEY_A_BIT: u32 = 4;
+pub const KEY_D_BIT: u32 = 8;
+pub const KEY_Q_BIT: u32          = 16;
+pub const KEY_E_BIT: u32          = 32;
+pub const KEY_1_BIT: u32          = 64;   // Camara Orbit
+pub const KEY_2_BIT: u32          = 128;  // Camara Free-Look (FPS)
+pub const KEY_3_BIT: u32          = 256;  // Camara Ortografica 2D
+pub const KEY_Z_BIT: u32          = 512;  // Zoom In
+pub const KEY_X_BIT: u32          = 1024; // Zoom Out
+pub const KEY_WHEEL_UP_BIT: u32   = 2048; // Roda do Rato Cima
+pub const KEY_WHEEL_DOWN_BIT: u32 = 4096; // Roda do Rato Baixo
+pub const KEY_L_BIT: u32          = 8192;    // Alternar Console de Logs
+pub const KEY_DEL_BIT: u32        = 16384;   // Tecla Delete
+pub const KEY_TAB_BIT: u32        = 32768;   // Tecla Tab
+pub const KEY_SPACE_BIT: u32      = 65536;   // Barra de Espaco
+pub const KEY_SHIFT_BIT: u32      = 131072;  // Shift
+pub const KEY_ESC_BIT: u32        = 262144;  // Escape
+pub const KEY_UP_BIT: u32         = 524288;  // Seta Cima
+pub const KEY_DOWN_BIT: u32       = 1048576; // Seta Baixo
+pub const KEY_LEFT_BIT: u32       = 2097152; // Seta Esquerda
+pub const KEY_RIGHT_BIT: u32      = 4194304; // Seta Direita
+pub const KEY_ENTER_BIT: u32      = 8388608; // Enter
+
+@sealed_sig
+pub extern "C" fn rtsc_time_now_sec() -> float;
+
+@sealed_sig
+pub extern "C" fn rtsc_window_create(width: u32, height: u32) -> u64;
+
+@sealed_sig
+pub extern "C" fn rtsc_window_get_size_packed(win_h: u64) -> u64;
+
+@sealed_sig
+pub extern "C" fn rtsc_window_poll(
+    win_h: u64,
+    out_mouse_x: inout float,
+    out_mouse_y: inout float,
+    out_mouse_btns: inout u32,
+    out_key_mask: inout u32
+) -> bool;

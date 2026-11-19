@@ -1,0 +1,135 @@
+module engine.anim.sprite_anim;
+import core.math;
+
+//Animação 2D e Billboards Multi-Direcionais em O(1))
+
+// Subsistema de Animação 2D/3D Orientado a Dados
+
+pub const ANIM_FLAG_LOOP: u32   = 1;
+pub const ANIM_FLAG_PAUSED: u32 = 2;
+pub const ANIM_FLAG_FLIP_X: u32 = 4;
+
+// Definicao imutavel de uma sequencia num Atlas/SpriteSheet
+@repr_c
+pub struct SpriteClipDesc {
+    pub clip_id: u32,
+    pub texture_layer: u32,
+    pub start_col: u32,
+    pub start_row: u32,
+    pub frame_count: u32,
+    pub directions_count: u32, // 1 para plataforma 2D, 4 ou 8 para top-down/isometrico/billboard
+    pub atlas_cols: u32,
+    pub atlas_rows: u32,
+    pub fps: float,
+}
+
+// Estado por entidade (24 bytes)
+@repr_c
+pub struct SpriteAnimatorState {
+    pub active_clip_id: u32,
+    pub current_frame: u32,
+    pub direction_index: u32,
+    pub flags: u32,
+    pub elapsed_sec: float,
+    pub speed_multiplier: float,
+}
+
+// Retangulo UV normalizado pronto para os 4 vertices de um quad 2D ou Billboard 3D
+@repr_c
+pub struct SpriteUvFrame {
+    pub u_min: float,
+    pub v_min: float,
+    pub u_max: float,
+    pub v_max: float,
+    pub texture_layer: u32,
+    pub finished_once: bool,
+}
+
+@sealed_sig
+pub fn sprite_anim_init(clip_id: u32, loop_anim: bool) -> SpriteAnimatorState {
+    let flags = if loop_anim { ANIM_FLAG_LOOP } else { 0 };
+    return SpriteAnimatorState {
+        active_clip_id: clip_id,
+        current_frame: 0,
+        direction_index: 0,
+        flags: flags,
+        elapsed_sec: 0.0,
+        speed_multiplier: 1.0,
+    };
+}
+
+// Troca de animacao apenas se o ID for diferente (evita resetar o frame no meio do loop)
+@sealed_sig
+pub fn sprite_anim_set_clip(state: inout SpriteAnimatorState, new_clip_id: u32, loop_anim: bool) {
+    if state.active_clip_id == new_clip_id {
+        return;
+    }
+    state.active_clip_id = new_clip_id;
+    state.current_frame = 0;
+    state.elapsed_sec = 0.0;
+    if loop_anim {
+        state.flags = state.flags | ANIM_FLAG_LOOP;
+    } else {
+        state.flags = state.flags & (~ANIM_FLAG_LOOP);
+    }
+}
+
+// Atualiza o temporizador e calcula o recorte UV em O(1) sem loops
+@sealed_sig
+pub fn sprite_anim_evaluate(
+    state: inout SpriteAnimatorState,
+    clip: SpriteClipDesc,
+    dt: float
+) -> SpriteUvFrame {
+    let is_paused = (state.flags & ANIM_FLAG_PAUSED) != 0;
+    let is_loop = (state.flags & ANIM_FLAG_LOOP) != 0;
+    let flip_x = (state.flags & ANIM_FLAG_FLIP_X) != 0;
+
+    if !is_paused && clip.fps > 0.001 && clip.frame_count > 0 {
+        state.elapsed_sec += dt * state.speed_multiplier;
+        let total_frames_f = math::floor(state.elapsed_sec * clip.fps);
+        let total_frames = total_frames_f as u32;
+
+        if is_loop {
+            state.current_frame = total_frames % clip.frame_count;
+        } else {
+            if total_frames >= clip.frame_count {
+                state.current_frame = clip.frame_count - 1;
+            } else {
+                state.current_frame = total_frames;
+            }
+        }
+    }
+
+    let safe_cols = if clip.atlas_cols > 0 { clip.atlas_cols } else { 1 };
+    let safe_rows = if clip.atlas_rows > 0 { clip.atlas_rows } else { 1 };
+    let dir_offset = if clip.directions_count > 1 {
+        state.direction_index % clip.directions_count
+    } else {
+        0
+    };
+
+    let linear_col = clip.start_col + state.current_frame;
+    let final_col = linear_col % safe_cols;
+    let row_wrap = linear_col / safe_cols;
+    let final_row = (clip.start_row + dir_offset + row_wrap) % safe_rows;
+
+    let inv_w = 1.0 / (safe_cols as float);
+    let inv_h = 1.0 / (safe_rows as float);
+
+    let u0 = (final_col as float) * inv_w;
+    let v0 = (final_row as float) * inv_h;
+    let u1 = u0 + inv_w;
+    let v1 = v0 + inv_h;
+
+    let finished = (!is_loop) && (state.current_frame + 1 >= clip.frame_count);
+
+    return SpriteUvFrame {
+        u_min: if flip_x { u1 } else { u0 },
+        v_min: v0,
+        u_max: if flip_x { u0 } else { u1 },
+        v_max: v1,
+        texture_layer: clip.texture_layer,
+        finished_once: finished,
+    };
+}

@@ -1,0 +1,158 @@
+module engine.vfs.pak_map;
+
+import core.mem;
+import engine.physics.aabb;
+import engine.vfs.pak_format;
+import engine.vfs.pak_loader;
+import engine.editor.world_editor;
+
+pub const MAP_SCENE_ASSET_HASH: u64 = 0x4D41505F5343454E;
+pub const PAK_HEADER_BYTES: u64     = 32;
+pub const PAK_ENTRY_BYTES: u64      = 48;
+pub const PAK_PAYLOAD_OFFSET: u64   = 128;
+pub const WORLD_RECORD_BYTES: u64   = 56;
+pub const MAX_MAP_RECORDS: u32      = 64;
+
+@sealed_sig
+pub fn pak_save_scene_file(
+    fs: cap FileSystem,
+    path: str,
+    state: world_editor::EditorSceneState,
+    records: cap MutSlice<pak_format::WorldObjectRecord>
+) -> bool {
+    let mut count = state.object_count;
+    if count > MAX_MAP_RECORDS {
+        count = MAX_MAP_RECORDS;
+    }
+
+    let payload_bytes = (count as u64) * WORLD_RECORD_BYTES;
+    let total_bytes = PAK_PAYLOAD_OFFSET + payload_bytes;
+
+    let buf = mem::alloc_aligned(total_bytes, 64);
+    if buf == 0 {
+        return false;
+    }
+    mem::zero(buf, total_bytes);
+
+    let hdr = pak_format::pak_header_criar(1);
+    let mut sel_u32: u32 = 0;
+    if state.selected_index >= 0 {
+        sel_u32 = state.selected_index as u32;
+    }
+
+    let entry = pak_format::PakAssetEntry {
+        name_hash: MAP_SCENE_ASSET_HASH,
+        offset_bytes: PAK_PAYLOAD_OFFSET,
+        size_bytes: payload_bytes,
+        uncompressed_size: payload_bytes,
+        asset_type: pak_format::ASSET_MAP_SCENE,
+        sub_format: 0,
+        vertex_or_width: count,
+        index_or_height: sel_u32,
+    };
+
+    mem::copy(buf, mem::addr_of(hdr), PAK_HEADER_BYTES);
+    mem::copy(buf + PAK_HEADER_BYTES, mem::addr_of(entry), PAK_ENTRY_BYTES);
+
+    if payload_bytes > 0 {
+        mem::copy(buf + PAK_PAYLOAD_OFFSET, mem::slice_ptr(records), payload_bytes);
+    }
+
+    let ok = fs.write_raw(path, buf, total_bytes);
+    mem::free_aligned(buf);
+    return ok;
+}
+
+@sealed_sig
+pub fn pak_load_scene_file(
+    fs: cap FileSystem,
+    path: str,
+    state: inout world_editor::EditorSceneState,
+    records: cap MutSlice<pak_format::WorldObjectRecord>,
+    bounds: cap MutSlice<aabb::AABB3D>
+) -> bool {
+    let max_buf: u64 = PAK_PAYLOAD_OFFSET + ((MAX_MAP_RECORDS as u64) * WORLD_RECORD_BYTES);
+    let buf = mem::alloc_aligned(max_buf, 64);
+    if buf == 0 {
+        return false;
+    }
+
+    let bytes_read = fs.read_raw(path, buf, max_buf);
+    if bytes_read < PAK_PAYLOAD_OFFSET {
+        mem::free_aligned(buf);
+        return false;
+    }
+
+    let mut hdr = pak_format::PakHeader {
+        magic: 0,
+        version: 0,
+        entry_count: 0,
+        flags: 0,
+        index_table_offset: 0,
+        data_payload_offset: 0,
+    };
+    mem::copy(mem::addr_of(hdr), buf, PAK_HEADER_BYTES);
+
+    let archive = pak_loader::pak_mount_from_memory(hdr, buf, bytes_read);
+    if !archive.is_mounted || archive.entry_count == 0 {
+        mem::free_aligned(buf);
+        return false;
+    }
+
+    let mut entry = pak_format::PakAssetEntry {
+        name_hash: 0,
+        offset_bytes: 0,
+        size_bytes: 0,
+        uncompressed_size: 0,
+        asset_type: 0,
+        sub_format: 0,
+        vertex_or_width: 0,
+        index_or_height: 0,
+    };
+    mem::copy(mem::addr_of(entry), buf + hdr.index_table_offset, PAK_ENTRY_BYTES);
+
+    if entry.name_hash != MAP_SCENE_ASSET_HASH || entry.asset_type != pak_format::ASSET_MAP_SCENE {
+        mem::free_aligned(buf);
+        return false;
+    }
+    if (entry.offset_bytes + entry.size_bytes) > bytes_read {
+        mem::free_aligned(buf);
+        return false;
+    }
+
+    let mut count = entry.vertex_or_width;
+    if count > MAX_MAP_RECORDS {
+        count = MAX_MAP_RECORDS;
+    }
+    let expected_bytes = (count as u64) * WORLD_RECORD_BYTES;
+    if expected_bytes > entry.size_bytes {
+        mem::free_aligned(buf);
+        return false;
+    }
+
+    if expected_bytes > 0 {
+        mem::copy(mem::slice_ptr(records), buf + entry.offset_bytes, expected_bytes);
+    }
+
+    let mut i: usize = 0;
+    while i < (count as usize) {
+        bounds[i] = world_editor::editor_build_object_aabb(records[i], state.active_brush_half_extents, i as u32);
+        i += 1;
+    }
+
+    state.object_count = count;
+    if count > 0 {
+        if entry.index_or_height < count {
+            state.selected_index = entry.index_or_height as i32;
+        } else {
+            state.selected_index = 0;
+        }
+    } else {
+        state.selected_index = -1;
+    }
+    state.hovered_index = -1;
+    state.is_dirty = true;
+
+    mem::free_aligned(buf);
+    return true;
+}

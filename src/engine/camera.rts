@@ -1,0 +1,300 @@
+module engine.camera;
+import core.math;
+import engine.math.vec3;
+import engine.math.vec4;
+import engine.math.mat4;
+
+//Câmara Universal 2D/3D e Uniform Buffer
+
+pub const DEG_TO_RAD: float = 0.0174532925;
+
+// Modos de Operacao do Rig da Camara
+pub const MODE_ORBIT: u32    = 0;
+pub const MODE_FREELOOK: u32 = 1;
+pub const MODE_ORTHO_2D: u32 = 2;
+
+// Modos de Projecao Matematica
+pub const PROJ_PERSPECTIVE: u32  = 0;
+pub const PROJ_ORTHOGRAPHIC: u32 = 1;
+
+// Struct de 256 bytes exatos (Alinhamento nativo DX12 CBV e Vulkan std140)
+@repr_c
+pub struct CameraUniform {
+    pub view_proj: mat4::Mat4,      // 64 bytes (Offset 0)
+    pub view: mat4::Mat4,           // 64 bytes (Offset 64)
+    pub proj: mat4::Mat4,           // 64 bytes (Offset 128)
+    pub eye_pos: vec4::Vec4,        // 16 bytes (Offset 192)
+    pub forward_dir: vec4::Vec4,    // 16 bytes (Offset 208)
+    pub viewport_depth: vec4::Vec4, // 16 bytes (Offset 224: width, height, near, far)
+    pub reserved_pad: vec4::Vec4,   // 16 bytes (Offset 240 -> Total: 256 bytes)
+}
+
+@repr_c
+pub struct Camera3D {
+    pub mode: u32,
+    pub proj_type: u32,
+    pub position: vec3::Vec3,
+    pub target: vec3::Vec3,
+    pub pitch_deg: float,
+    pub yaw_deg: float,
+    pub roll_deg: float,
+    pub min_pitch_deg: float,
+    pub max_pitch_deg: float,
+    pub distance: float,
+    pub min_distance: float,
+    pub max_distance: float,
+    pub fov_y_deg: float,
+    pub ortho_half_height: float,
+    pub aspect: float,
+    pub z_near: float,
+    pub z_far: float,
+    pub move_speed: float,
+}
+
+// Inicializador flexivel para Camara Orbital/Tatica (15°, 55°, 60° ou livre)
+@sealed_sig
+pub fn camera_init_orbit(
+    aspect: float,
+    initial_pitch_deg: float,
+    min_pitch_deg: float,
+    max_pitch_deg: float,
+    fov_y_deg: float,
+    distance: float
+) -> Camera3D {
+    let clamped_pitch = math::clamp(initial_pitch_deg, min_pitch_deg, max_pitch_deg);
+    return Camera3D {
+        mode: MODE_ORBIT,
+        proj_type: PROJ_PERSPECTIVE,
+        position: vec3::vec3_zero(),
+        target: vec3::vec3_zero(),
+        pitch_deg: clamped_pitch,
+        yaw_deg: 0.0,
+        roll_deg: 0.0,
+        min_pitch_deg: min_pitch_deg,
+        max_pitch_deg: max_pitch_deg,
+        distance: distance,
+        min_distance: 2.0,
+        max_distance: 120.0,
+        fov_y_deg: fov_y_deg,
+        ortho_half_height: 10.0,
+        aspect: if aspect > 0.01 { aspect } else { 1.7777 },
+        z_near: 0.1,
+        z_far: 1000.0,
+        move_speed: 14.0,
+    };
+}
+
+// Inicializador para Primeira Pessoa (FPS) ou Voo Livre do Editor Visual (DayZ Editor style)
+@sealed_sig
+pub fn camera_init_freelook(pos: vec3::Vec3, yaw_deg: float, pitch_deg: float, fov_y_deg: float, aspect: float) -> Camera3D {
+    return Camera3D {
+        mode: MODE_FREELOOK,
+        proj_type: PROJ_PERSPECTIVE,
+        position: pos,
+        target: vec3::vec3_zero(),
+        pitch_deg: math::clamp(pitch_deg, -89.0, 89.0),
+        yaw_deg: yaw_deg,
+        roll_deg: 0.0,
+        min_pitch_deg: -89.0,
+        max_pitch_deg: 89.0,
+        distance: 0.0,
+        min_distance: 0.0,
+        max_distance: 0.0,
+        fov_y_deg: fov_y_deg,
+        ortho_half_height: 10.0,
+        aspect: if aspect > 0.01 { aspect } else { 1.7777 },
+        z_near: 0.05,
+        z_far: 2000.0,
+        move_speed: 18.0,
+    };
+}
+
+// Projecao Ortografica Right-Handed Depth [0.0, 1.0] para 2D ou Isometria Pura
+@sealed_sig
+pub fn mat4_orthographic_rh_zo(
+    left: float, right: float,
+    bottom: float, top: float,
+    z_near: float, z_far: float,
+    flip_y_vulkan: bool
+) -> mat4::Mat4 {
+    let rml = right - left;
+    let tmb = top - bottom;
+    let fmn = z_far - z_near;
+    let sy = if flip_y_vulkan { -2.0 / tmb } else { 2.0 / tmb };
+
+    return mat4::Mat4 {
+        m: [
+            2.0 / rml,               0.0,                     0.0,              0.0,
+            0.0,                     sy,                      0.0,              0.0,
+            0.0,                     0.0,                     -1.0 / fmn,       0.0,
+            -(right + left) / rml,   -(top + bottom) / tmb,   -z_near / fmn,    1.0
+        ],
+    };
+}
+
+// Calcula o vetor direcional frontal a partir de Yaw e Pitch
+@sealed_sig
+pub fn camera_forward_vector(cam: Camera3D) -> vec3::Vec3 {
+    let pitch_rad = cam.pitch_deg * DEG_TO_RAD;
+    let yaw_rad = cam.yaw_deg * DEG_TO_RAD;
+    let cos_p = math::cos(pitch_rad);
+
+    return vec3::vec3_normalize(vec3::Vec3 {
+        x: 0.0 - (math::sin(yaw_rad) * cos_p),
+        y: 0.0 - math::sin(pitch_rad),
+        z: 0.0 - (math::cos(yaw_rad) * cos_p),
+    });
+}
+
+// Rotaciona Yaw e Pitch respeitando os limites configurados na instancia da camara
+@sealed_sig
+pub fn camera_rotate(cam: inout Camera3D, delta_yaw_deg: float, delta_pitch_deg: float) {
+    cam.yaw_deg = cam.yaw_deg + delta_yaw_deg;
+    if cam.yaw_deg >= 360.0 { cam.yaw_deg -= 360.0; }
+    if cam.yaw_deg < 0.0 { cam.yaw_deg += 360.0; }
+
+    cam.pitch_deg = math::clamp(cam.pitch_deg + delta_pitch_deg, cam.min_pitch_deg, cam.max_pitch_deg);
+}
+
+@sealed_sig
+pub fn camera_zoom(cam: inout Camera3D, delta: float) {
+    if cam.proj_type == PROJ_ORTHOGRAPHIC {
+        cam.ortho_half_height = math::clamp(cam.ortho_half_height - (delta * 1.2), 3.0, 90.0);
+    } else if cam.mode == MODE_FREELOOK {
+        let fwd = camera_forward_vector(cam);
+        cam.position = vec3::vec3_add(cam.position, vec3::vec3_scale(fwd, delta * 1.5));
+        cam.target = vec3::vec3_add(cam.position, fwd);
+    } else {
+        cam.distance = math::clamp(cam.distance - (delta * 1.5), 2.5, 120.0);
+        let pitch_rad = cam.pitch_deg * DEG_TO_RAD;
+        let yaw_rad = cam.yaw_deg * DEG_TO_RAD;
+        let vertical = cam.distance * math::sin(pitch_rad);
+        let horizontal = cam.distance * math::cos(pitch_rad);
+        cam.position = vec3::Vec3 {
+            x: cam.target.x + (horizontal * math::sin(yaw_rad)),
+            y: cam.target.y + vertical,
+            z: cam.target.z + (horizontal * math::cos(yaw_rad)),
+        };
+    }
+}
+
+@sealed_sig
+pub fn camera_set_mode(cam: inout Camera3D, new_mode: u32, focus_target: vec3::Vec3) {
+    if new_mode == MODE_ORBIT {
+        cam.mode = MODE_ORBIT;
+        cam.proj_type = PROJ_PERSPECTIVE;
+        cam.target = focus_target;
+        let dx = cam.position.x - cam.target.x;
+        let dy = cam.position.y - cam.target.y;
+        let dz = cam.position.z - cam.target.z;
+        let dist = math::sqrt((dx * dx) + (dy * dy) + (dz * dz));
+        if dist >= 2.5 && dist <= 120.0 {
+            cam.distance = dist;
+        } else {
+            cam.distance = math::clamp(cam.distance, 2.5, 120.0);
+        }
+        let pitch_rad = cam.pitch_deg * DEG_TO_RAD;
+        let yaw_rad = cam.yaw_deg * DEG_TO_RAD;
+        let vertical = cam.distance * math::sin(pitch_rad);
+        let horizontal = cam.distance * math::cos(pitch_rad);
+        cam.position = vec3::Vec3 {
+            x: cam.target.x + (horizontal * math::sin(yaw_rad)),
+            y: cam.target.y + vertical,
+            z: cam.target.z + (horizontal * math::cos(yaw_rad)),
+        };
+    } else if new_mode == MODE_FREELOOK {
+        cam.mode = MODE_FREELOOK;
+        cam.proj_type = PROJ_PERSPECTIVE;
+        let fwd = camera_forward_vector(cam);
+        cam.target = vec3::vec3_add(cam.position, fwd);
+    } else {
+        cam.mode = MODE_ORTHO_2D;
+        cam.proj_type = PROJ_ORTHOGRAPHIC;
+        cam.target = focus_target;
+    }
+}
+
+// Move a camara tanto em modo Orbital (Pan no plano XZ) quanto em Free-Look (Voo 3D completo)
+@sealed_sig
+pub fn camera_move(cam: inout Camera3D, right_in: float, up_in: float, forward_in: float, dt: float) {
+    let step = cam.move_speed * dt;
+    let yaw_rad = cam.yaw_deg * DEG_TO_RAD;
+    let rgt = vec3::Vec3 { x: math::cos(yaw_rad), y: 0.0, z: 0.0 - math::sin(yaw_rad) };
+
+    if cam.mode == MODE_ORBIT || cam.mode == MODE_ORTHO_2D {
+        let fwd_flat = vec3::Vec3 { x: 0.0 - math::sin(yaw_rad), y: 0.0, z: 0.0 - math::cos(yaw_rad) };
+        let delta = vec3::vec3_add(
+            vec3::vec3_scale(rgt, right_in * step),
+            vec3::vec3_scale(fwd_flat, forward_in * step)
+        );
+        cam.target = vec3::vec3_add(cam.target, delta);
+        cam.target.y += up_in * step;
+    } else {
+        let fwd_3d = camera_forward_vector(cam);
+        let move_vec = vec3::vec3_add(
+            vec3::vec3_scale(rgt, right_in * step),
+            vec3::vec3_scale(fwd_3d, forward_in * step)
+        );
+        cam.position = vec3::vec3_add(cam.position, move_vec);
+        cam.position.y += up_in * step;
+    }
+}
+
+// Gera o Uniform Buffer de 256 bytes pronto para gravacao direta na VramArena
+@sealed_sig
+pub fn camera_build_uniform(
+    cam: inout Camera3D,
+    viewport_w: float,
+    viewport_h: float,
+    flip_y_vulkan: bool
+) -> CameraUniform {
+    let mut eye = cam.position;
+    let mut center = cam.target;
+    let fwd = camera_forward_vector(cam);
+
+    if cam.mode == MODE_ORBIT || cam.mode == MODE_ORTHO_2D {
+        let pitch_rad = cam.pitch_deg * DEG_TO_RAD;
+        let yaw_rad = cam.yaw_deg * DEG_TO_RAD;
+        let vertical = cam.distance * math::sin(pitch_rad);
+        let horizontal = cam.distance * math::cos(pitch_rad);
+
+        eye = vec3::Vec3 {
+            x: cam.target.x + (horizontal * math::sin(yaw_rad)),
+            y: cam.target.y + vertical,
+            z: cam.target.z + (horizontal * math::cos(yaw_rad)),
+        };
+        cam.position = eye;
+    } else {
+        center = vec3::vec3_add(cam.position, fwd);
+        cam.target = center;
+    }
+
+    let view_mat = mat4::mat4_look_at_rh(eye, center, vec3::vec3_up());
+    let mut proj_mat = mat4::mat4_identity();
+
+    if cam.proj_type == PROJ_ORTHOGRAPHIC {
+        let half_h = cam.ortho_half_height;
+        let half_w = half_h * cam.aspect;
+        proj_mat = mat4_orthographic_rh_zo(-half_w, half_w, -half_h, half_h, cam.z_near, cam.z_far, flip_y_vulkan);
+    } else {
+        proj_mat = mat4::mat4_perspective_rh_zo(
+            cam.fov_y_deg * DEG_TO_RAD,
+            cam.aspect,
+            cam.z_near,
+            cam.z_far,
+            flip_y_vulkan
+        );
+    }
+
+    let vp_mat = mat4::mat4_mul(proj_mat, view_mat);
+
+    return CameraUniform {
+        view_proj: vp_mat,
+        view: view_mat,
+        proj: proj_mat,
+        eye_pos: vec4::vec4_from_vec3(eye, 1.0),
+        forward_dir: vec4::vec4_from_vec3(fwd, 0.0),
+        viewport_depth: vec4::vec4_new(viewport_w, viewport_h, cam.z_near, cam.z_far),
+        reserved_pad: vec4::vec4_new(0.0, 0.0, 0.0, 0.0),
+    };
+}

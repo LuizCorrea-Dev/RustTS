@@ -1,0 +1,104 @@
+module engine.renderer_3d;
+
+import core.mem;
+import engine.gpu.rhi;
+import engine.gpu.vram_arena;
+import engine.math.vec3;
+import engine.math.vec4;
+import engine.mesh;
+
+pub struct Renderer3D {
+    pub vert_count: u32,
+    pub ind_count: u32,
+    pub max_verts: u32,
+    pub max_inds: u32,
+    pub draw_calls: u32,
+}
+
+pub fn r3d_init(max_verts: u32, max_inds: u32) -> Renderer3D {
+    return Renderer3D {
+        vert_count: 0,
+        ind_count: 0,
+        max_verts: max_verts,
+        max_inds: max_inds,
+        draw_calls: 0,
+    };
+}
+
+pub fn r3d_begin(r: inout Renderer3D) {
+    r.vert_count = 0;
+    r.ind_count = 0;
+    r.draw_calls = 0;
+}
+
+pub fn r3d_add_box(
+    r: inout Renderer3D,
+    verts: cap MutSlice<mesh::Vertex3D>,
+    inds: cap MutSlice<u32>,
+    center: vec3::Vec3,
+    half_ext: vec3::Vec3,
+    yaw_deg: float,
+    color: vec4::Vec4
+) {
+    if r.vert_count + 24 > r.max_verts || r.ind_count + 36 > r.max_inds {
+        return;
+    }
+    mesh::mesh_write_box_rotated(
+        verts,
+        inds,
+        r.vert_count as usize,
+        r.ind_count as usize,
+        center,
+        half_ext,
+        yaw_deg,
+        color
+    );
+    r.vert_count = r.vert_count + 24;
+    r.ind_count = r.ind_count + 36;
+}
+
+pub fn r3d_flush(
+    r: inout Renderer3D,
+    dev: inout rhi::RhiDevice,
+    cmd: rhi::RhiCommandList,
+    verts: cap MutSlice<mesh::Vertex3D>,
+    inds: cap MutSlice<u32>,
+    cam_ubo: vram_arena::VramAllocation
+) {
+    if r.ind_count == 0 {
+        return;
+    }
+
+    let v_bytes = (r.vert_count as u64) * mesh::VERTEX3D_STRIDE_BYTES;
+    let i_bytes = (r.ind_count as u64) * 4;
+
+    let vbo = vram_arena::vram_arena_alloc_aligned(inout dev.arena, v_bytes, vram_arena::GPU_VERTEX_ALIGNMENT);
+    let ibo = vram_arena::vram_arena_alloc_aligned(inout dev.arena, i_bytes, vram_arena::GPU_VERTEX_ALIGNMENT);
+
+    vram_arena::vram_arena_write_raw(dev.arena, vbo, mem::slice_ptr(verts), v_bytes);
+    vram_arena::vram_arena_write_raw(dev.arena, ibo, mem::slice_ptr(inds), i_bytes);
+
+    rhi::rhi_cmd_bind_pipeline(cmd, rhi::PIPELINE_3D);
+    rhi::rhi_cmd_bind_mesh_and_uniforms(cmd, vbo, ibo, cam_ubo);
+    rhi::rhi_cmd_draw_indexed(cmd, r.ind_count, 0, 0);
+
+    r.draw_calls = r.draw_calls + 1;
+    r.vert_count = 0;
+    r.ind_count = 0;
+}
+
+pub fn r3d_submit_mesh_range(
+    cmd: rhi::RhiCommandList,
+    vbo: vram_arena::VramAllocation,
+    ibo: vram_arena::VramAllocation,
+    cam_ubo: vram_arena::VramAllocation,
+    index_count: u32,
+    first_index: u32
+) {
+    if index_count == 0 {
+        return;
+    }
+    rhi::rhi_cmd_bind_pipeline(cmd, rhi::PIPELINE_3D);
+    rhi::rhi_cmd_bind_mesh_and_uniforms(cmd, vbo, ibo, cam_ubo);
+    rhi::rhi_cmd_draw_indexed(cmd, index_count, first_index, 0);
+}

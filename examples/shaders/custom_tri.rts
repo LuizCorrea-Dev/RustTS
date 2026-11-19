@@ -1,0 +1,13 @@
+module examples.shaders.custom_tri;
+
+struct Vec4 { x: float, y: float, z: float, w: float }
+
+@vertex_shader
+pub fn vs_main(pos: Vec4) -> Vec4 {
+    return Vec4 { x: pos.x, y: pos.y, z: pos.z, w: pos.w };
+}
+
+@fragment_shader
+pub fn fs_main() -> Vec4 {
+    return Vec4 { x: 0.25, y: 0.85, z: 0.95, w: 1.0 };
+}
