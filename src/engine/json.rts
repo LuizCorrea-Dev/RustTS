@@ -1,0 +1,146 @@
+module engine.json;
+
+@repr_c
+pub struct JsonWriter {
+    pub buf: str256,
+    pub field_count: u32,
+}
+
+pub fn json_writer_new() -> JsonWriter {
+    let mut b: str256 = str256::new();
+    b.push_str("{");
+    return JsonWriter {
+        buf: b,
+        field_count: 0,
+    };
+}
+
+pub fn json_push_sep(w: inout JsonWriter) {
+    if w.field_count > 0 {
+        w.buf.push_str(",");
+    }
+    w.field_count = w.field_count + 1;
+}
+
+pub fn json_push_u32(w: inout JsonWriter, key: str, val: u32) {
+    json_push_sep(inout w);
+    w.buf.push_str("\"");
+    w.buf.push_str(key);
+    w.buf.push_str("\":");
+    w.buf.push_u32(val);
+}
+
+pub fn json_push_i32(w: inout JsonWriter, key: str, val: i32) {
+    json_push_sep(inout w);
+    w.buf.push_str("\"");
+    w.buf.push_str(key);
+    w.buf.push_str("\":");
+    w.buf.push_i32(val);
+}
+
+pub fn json_push_bool(w: inout JsonWriter, key: str, val: bool) {
+    json_push_sep(inout w);
+    w.buf.push_str("\"");
+    w.buf.push_str(key);
+    if val {
+        w.buf.push_str("\":true");
+    } else {
+        w.buf.push_str("\":false");
+    }
+}
+
+pub fn json_push_str(w: inout JsonWriter, key: str, val: str) {
+    json_push_sep(inout w);
+    w.buf.push_str("\"");
+    w.buf.push_str(key);
+    w.buf.push_str("\":\"");
+    w.buf.push_str(val);
+    w.buf.push_str("\"");
+}
+
+pub fn json_finish(w: inout JsonWriter) -> str256 {
+    w.buf.push_str("}");
+    return w.buf;
+}
+
+pub fn json_find_key_value_offset(buf: cap ReadSlice<u8>, buf_len: usize, key: str) -> i32 {
+    let klen: usize = mem::str_len(key);
+    if klen == 0 || buf_len < (klen + 3) {
+        return -1;
+    }
+    let mut i: usize = 0;
+    while (i + klen + 2) < buf_len {
+        if buf[i] == 34 {
+            let mut match_ok: bool = true;
+            let mut k: usize = 0;
+            while k < klen {
+                if buf[i + 1 + k] != mem::str_byte(key, k) {
+                    match_ok = false;
+                    k = klen;
+                } else {
+                    k = k + 1;
+                }
+            }
+            if match_ok && buf[i + 1 + klen] == 34 {
+                let mut p: usize = i + 2 + klen;
+                while p < buf_len && (buf[p] == 32 || buf[p] == 9 || buf[p] == 10 || buf[p] == 13 || buf[p] == 58) {
+                    if buf[p] == 58 {
+                        p = p + 1;
+                        while p < buf_len && (buf[p] == 32 || buf[p] == 9) {
+                            p = p + 1;
+                        }
+                        return p as i32;
+                    }
+                    p = p + 1;
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+pub fn json_get_i32(buf: cap ReadSlice<u8>, buf_len: usize, key: str, fallback: i32) -> i32 {
+    let off: i32 = json_find_key_value_offset(buf, buf_len, key);
+    if off < 0 {
+        return fallback;
+    }
+    let mut p: usize = off as usize;
+    if p >= buf_len {
+        return fallback;
+    }
+    let mut sign: i32 = 1;
+    if buf[p] == 45 {
+        sign = -1;
+        p = p + 1;
+    }
+    let mut acc: i32 = 0;
+    let mut digits: u32 = 0;
+    while p < buf_len && buf[p] >= 48 && buf[p] <= 57 {
+        acc = (acc * 10) + ((buf[p] - 48) as i32);
+        digits = digits + 1;
+        p = p + 1;
+    }
+    if digits == 0 {
+        return fallback;
+    }
+    return acc * sign;
+}
+
+pub fn json_get_bool(buf: cap ReadSlice<u8>, buf_len: usize, key: str, fallback: bool) -> bool {
+    let off: i32 = json_find_key_value_offset(buf, buf_len, key);
+    if off < 0 {
+        return fallback;
+    }
+    let p: usize = off as usize;
+    if p >= buf_len {
+        return fallback;
+    }
+    if buf[p] == 116 {
+        return true;
+    }
+    if buf[p] == 102 {
+        return false;
+    }
+    return fallback;
+}

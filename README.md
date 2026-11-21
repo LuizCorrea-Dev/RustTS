@@ -218,15 +218,15 @@ pub fn decidir_evacuacao_agente(
 
 ---
 
-## Instalação Rápida (`v2.2.0-rts`)
+## Instalação Rápida (`v2.3.0-rts`)
 
-**Via código-fonte (`v2.2.0-rts` — recomendado, requer Rust/Cargo):**
+**Via código-fonte (`v2.3.0-rts` — recomendado, requer Rust/Cargo):**
 ```bash
 git clone https://github.com/LuizCorrea-Dev/RustTS.git
 cd RustTS
 cargo install --path .
 rtsc --version
-# rtsc 2.2.0-rts
+# rtsc 2.3.0-rts
 ```
 
 **Instaladores pré-compilados (Release GitHub [`v2.0.0`](https://github.com/LuizCorrea-Dev/RustTS/releases/tag/v2.0.0)):**
@@ -245,9 +245,9 @@ Consulte o **[Guia Completo de Instalação e Uso (`INSTALACAO_E_USO.md`)](./INS
 
 ---
 
-## Interface de Linha de Comando (`rtsc 2.2.0-rts`)
+## Interface de Linha de Comando (`rtsc 2.3.0-rts`)
 
-O compilador `rtsc` centraliza criação de projetos, verificação semântica e compilação heterogênea (CPU, GPU e WASI):
+O compilador `rtsc` centraliza criação de projetos, verificação semântica, pipeline de assets e compilação heterogênea (CPU, GPU e WASI):
 
 ```bash
 # 1. Criar novo projeto autônomo com `pub fn main()` e `rts.toml`
@@ -257,8 +257,9 @@ rtsc init meu_projeto
 rtsc run examples/kanori_gpu_wasi_sim/src/main.rts --llvm
 rtsc run examples/kanori_zone_sim/src/main.rts -g
 
-# 3. Validar código e projetos multi-arquivo com saída humana ou JSON (< 15ms)
+# 3. Validar código, paridade C99/LLVM e projetos multi-arquivo com saída humana ou JSON (< 15ms)
 rtsc check examples/kanori_gpu_wasi_sim/src/main.rts
+rtsc check src/main.rts --verify-parity
 rtsc check examples/thermal_control.rts --json-diagnostics
 
 # 4. Backends CPU: C99 AVX2/SoA, MLIR SSA (`.mlir`) e LLVM IR Direto (`.ll` / `--bin`)
@@ -275,9 +276,15 @@ rtsc build examples/kanori_gpu_wasi_sim/src/gpu_particles.rts --target spv -o bu
 rtsc build examples/kanori_gpu_wasi_sim/src/sandbox_agent.rts --target wasi --fuel-limit 75000 -o build/agent.wat
 rtsc build examples/kanori_gpu_wasi_sim/src/sandbox_agent.rts --target wasm --fuel-limit 75000 -o build/agent.wasm
 
-# 7. Transpilar módulos Unreal Engine 5 (.h/.cpp UHT), Unity (C-ABI), TypeScript SDK e gramática GBNF
+# 7. Ferramentas Nativas de Pipeline de Assets (.zpmesh v2 e Texturas PBR)
+rtsc bake-mesh assets/model.fbx -o assets/model.zpmesh
+rtsc bake-textures assets/textures
+
+# 8. Transpilar módulos Unreal Engine 5 (.h/.cpp UHT), Unity (C-ABI), Godot 4 (GDExtension / Módulo SCons), TypeScript SDK e gramática GBNF
 rtsc build examples/combat_unreal.rts --target=unreal --out-dir build/unreal
 rtsc build examples/engine_physics.rts --target=unity --out-dir build/unity
+rtsc build examples/combat_godot.rts --target=godot --out-dir build/godot
+rtsc build examples/combat_godot.rts --target=godot-module --out-dir build/godot_module
 rtsc build examples/telemetry_server.rts --emit-ts-sdk -o build/telemetry_client_sdk.ts
 rtsc --export-gbnf > rustts.gbnf
 ```
@@ -290,7 +297,7 @@ Quando um agente de IA tenta violar uma regra de memória ou permissão de hardw
 
 ```json
 {
-  "compiler_version": "2.2.0-rts",
+  "compiler_version": "2.3.0-rts",
   "status": "error",
   "diagnostics": [
     {
@@ -324,7 +331,7 @@ Quando um agente de IA tenta violar uma regra de memória ou permissão de hardw
 * [`INSTALACAO_E_USO.md`](./INSTALACAO_E_USO.md) — **Guia Oficial de Instalação e Uso:** Instalação, build via Cargo, manual da CLI `rtsc`, backends MLIR/LLVM/SPIR-V/WGSL/WASI, exemplos e solução de problemas.
 * [`MANUAL_TIPOS_RUSTTS.md`](./MANUAL_TIPOS_RUSTTS.md) — **Manual Oficial de Tipos, Capacidades e Memória:** Referência dos 14 tipos escalares e seus aliases, inferência `let`, tipos SIMD, coleções `[T; N]`, tipos algébricos e tokens `cap`.
 * [`manual_e_matriz_de_regras_da_linguagem_rustts.md`](./manual_e_matriz_de_regras_da_linguagem_rustts.md) — **Manual e Matriz de Regras da Linguagem:** Regras sintáticas, capacidades, atributos e restrições semânticas.
-* [`roadmap_mestre_e_arquitetura_rustts_v3_0_0_pro.md`](./roadmap_mestre_e_arquitetura_rustts_v3_0_0_pro.md) — **Master Roadmap & Arquitetura da Engine 2D/3D (`v2.2.0-rts`):** RHI Vulkan nativo, `VramArena`, `Renderer3D`, `SpriteBatch2D` e compilação de shaders em `.rts`.
+* [`roadmap_mestre_e_arquitetura_rustts_v3_0_0_pro.md`](./roadmap_mestre_e_arquitetura_rustts_v3_0_0_pro.md) — **Master Roadmap & Arquitetura da Engine 2D/3D (`v2.3.0-rts`):** RHI Vulkan nativo, `VramArena`, `Renderer3D`, `SpriteBatch2D` e compilação de shaders em `.rts`.
 * [`Guia_Interativo_e_Documentacao_RustTS.html`](./Guia_Interativo_e_Documentacao_RustTS.html) — **Guia Interativo & Documentação HTML:** Dashboard interativo com documentação da linguagem e Cheat Sheet.
 * [`CONTRIBUTING.md`](./CONTRIBUTING.md) — **Guia de Contribuição:** Mapa do compilador (`src/`), padrões de código, suíte `cargo test` e checklist para Pull Requests.
 * [`devlog.md`](./devlog.md) — **Devlog & Cronologia:** Histórico técnico de versões, auditorias e benchmarks.
@@ -333,6 +340,7 @@ Quando um agente de IA tenta violar uma regra de memória ou permissão de hardw
 * [`examples/demo_shader.rts`](./examples/demo_shader.rts) — **Demo Shaders Customizados:** Shaders `@vertex_shader`/`@fragment_shader` ([`examples/shaders/custom_tri.rts`](./examples/shaders/custom_tri.rts)) compilados para SPIR-V (`--target spirv-vert`/`spirv-frag`) e carregados em runtime via `rhi_create_graphics_pipeline`.
 * [`examples/village_editor.rts`](./examples/village_editor.rts) — **Editor Visual 3D & Persistência `.pak`:** Showcase completo com editor de cena, instancing, `.OBJ` e formato binário `.pak`.
 * [`examples/kanori_gpu_wasi_sim/`](./examples/kanori_gpu_wasi_sim/src/main.rts) — **Showcase Heterogêneo KANORI:** Pipeline unificado CPU (`--target llvm-ir`) + GPU Compute (`@gpu_kernel` $\rightarrow$ `spirv`/`wgsl`) + Sandbox WASI com *Fuel Metering*.
+* [`examples/combat_godot.rts`](./examples/combat_godot.rts) — **Backend Godot 4 (`@godot_node`, `@godot_impl`, `@gdexport`):** Geração de GDExtension C++17 (`godot-cpp`, `SConstruct`, `.gdextension`) e Módulo Customizado SCons (`--target=godot` / `--target=godot-module`).
 ---
 
 ## Roadmap de Implementação (`rtsc`)
@@ -348,6 +356,7 @@ Quando um agente de IA tenta violar uma regra de memória ou permissão de hardw
 - [x] **Fase 8 (`v1.8.0-rts`):** Backend GPU Compute (`@gpu_kernel` e `@shader_shared`) para WebGPU (`--target=wgsl`) e SPIR-V 1.5 (`--target=spirv`).
 - [x] **Fase 9 & 10 (`v1.9.0-rts` → `v2.0.0-rts`):** Sandbox WASI determinística (`.wat` e `.wasm`) com *Fuel Metering* (`--fuel-limit <N>` + `RTS-E0701`) e imutabilidade `let` vs `let mut` (`RTS-E0405`).
 - [x] **Fase 11 (`v2.2.0-rts`):** Motor Gráfico Nativo 2D/3D em Vulkan (`src/engine/*`): RHI + `VramArena`, `Renderer3D`, `SpriteBatch2D` multi-textura, decodificador de texturas PNG/BMP/TGA + DMA Staging, loader `.OBJ`, áudio WAV (`engine.audio`), input completo + `rtsc_time_now_sec()`, e shaders gráficos `@vertex_shader` / `@fragment_shader` (`--target spirv-vert` / `spirv-frag`, `PushConstant Mat4`, `Sampler2D`) carregados em runtime (`cargo test` **73/73 PASS**).
+- [x] **Fase 12 (`v2.3.0-rts`):** Backend Godot 4 & Consolidação P0/P1/P2: gerador C++17 Godot 4 (`--target=godot` GDExtension/`godot-cpp`/`SConstruct`/`.gdextension` e `--target=godot-module` SCons), HAL FPS/Input/Windowed (`set_cursor_locked`, `open_windowed`, primitivas 2D), `FileSystem` + PNG nativo (`load_image_rgba`), `StaticArena` configurável em `rts.toml`, `@view struct`, `AudioDevice` mixer + `AudioInput`, `NetworkSocket`, PBR RHI (`PIPELINE_PBR_3D`), módulos `engine.{json,collections,threads,zpmesh,diagnostics}`, ferramentas nativas `rtsc bake-mesh` / `bake-textures` e verificação `rtsc check --verify-parity` (`cargo test` **80/80 PASS**).
 
 ---
 

@@ -11,6 +11,7 @@ pub const PIPELINE_3D: u64        = 1;
 pub const PIPELINE_UI: u64        = 2;
 pub const PIPELINE_3D_INST: u64   = 3;
 pub const PIPELINE_SPRITE_2D: u64 = 4;
+pub const PIPELINE_PBR_3D: u64    = 5;
 
 @repr_c
 pub struct RhiDevice {
@@ -169,6 +170,50 @@ pub fn rhi_texture_create_rgba(dev: RhiDevice, width: u32, height: u32, rgba_ptr
 pub fn rhi_cmd_bind_texture(cmd: RhiCommandList, tex_h: u64) {
     if !cmd.is_recording { return; }
     vulkan_defs::rtsc_vk_cmd_bind_texture(cmd.native_cmd_h, tex_h);
+}
+
+@sealed_sig
+pub fn rhi_cmd_bind_pbr_textures(
+    cmd: RhiCommandList,
+    albedo_tex_h: u64,
+    normal_tex_h: u64,
+    ao_tex_h: u64,
+    metal_tex_h: u64
+) {
+    if !cmd.is_recording { return; }
+    vulkan_defs::rtsc_vk_cmd_bind_pbr_textures(cmd.native_cmd_h, albedo_tex_h, normal_tex_h, ao_tex_h, metal_tex_h);
+}
+
+@sealed_sig
+pub fn rhi_cmd_bind_lights(cmd: RhiCommandList, lights_ubo: vram_arena::VramAllocation) {
+    if !cmd.is_recording { return; }
+    vulkan_defs::rtsc_vk_cmd_bind_lights(cmd.native_cmd_h, lights_ubo.offset);
+}
+
+@sealed_sig
+pub fn rhi_cmd_bind_bones(cmd: RhiCommandList, bones_ubo: vram_arena::VramAllocation) {
+    if !cmd.is_recording { return; }
+    vulkan_defs::rtsc_vk_cmd_bind_bones(cmd.native_cmd_h, bones_ubo.offset);
+}
+
+@sealed_sig
+pub fn rhi_cmd_draw_indexed_instanced(
+    cmd: RhiCommandList,
+    index_count: u32,
+    instance_count: u32,
+    first_index: u32,
+    vertex_offset: i32,
+    first_instance: u32
+) {
+    if !cmd.is_recording { return; }
+    vulkan_defs::rtsc_vk_cmd_draw_indexed_instanced(
+        cmd.native_cmd_h,
+        index_count,
+        instance_count,
+        first_index,
+        vertex_offset,
+        first_instance
+    );
 }
 
 @sealed_sig

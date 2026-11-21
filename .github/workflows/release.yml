@@ -51,6 +51,7 @@ jobs:
       - name: Publish Binary to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
+          name: "RustTS v2.3.0-rts — Backend Godot 4 (GDExtension/SCons), HAL FPS/Áudio/Rede, Vulkan PBR RHI & Ferramentas Nativas"
+          body_path: RELEASE_NOTES_v2.3.0.md
           files: ${{ matrix.asset_name }}
-          generate_release_notes: true
 

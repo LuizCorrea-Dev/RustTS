@@ -1,4 +1,7 @@
 use clap::{Parser as ClapParser, Subcommand};
+use rtsc_core::bake_mesh::bake_fbx_to_zpmesh;
+use rtsc_core::bake_textures::bake_textures_dir;
+use rtsc_core::codegen_godot::GodotCodegen;
 use rtsc_core::codegen_gpu::GpuCodegen;
 use rtsc_core::codegen_llvm::LlvmIrCodegen;
 use rtsc_core::codegen_mlir::MlirCodegen;
@@ -9,11 +12,12 @@ use rtsc_core::codegen_unity::UnityCodegen;
 use rtsc_core::codegen_unreal::UnrealCodegen;
 use rtsc_core::compile_and_check_project;
 use rtsc_core::gbnf_exporter::export_rustts_gbnf;
+use rtsc_core::read_static_arena_mb_from_rts_toml;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{self, Command};
 
-pub const RTSC_VERSION: &str = "2.2.0-rts";
+pub const RTSC_VERSION: &str = "2.3.0-rts";
 
 #[derive(ClapParser)]
 #[command(
@@ -45,18 +49,37 @@ enum Commands {
         /// Emit structured JSON AST diagnostics for AI self-correction
         #[arg(long = "json-diagnostics")]
         json_diagnostics: bool,
+        /// Verify that both C99 and direct LLVM IR codegen lower cleanly
+        #[arg(long = "verify-parity")]
+        verify_parity: bool,
+    },
+    /// Convert a binary Kaydara FBX mesh into `.zpmesh` v2 format (Q16.16)
+    BakeMesh {
+        /// Source `.fbx` file
+        input: PathBuf,
+        /// Destination `.zpmesh` file
+        #[arg(short = 'o', long = "output")]
+        output: PathBuf,
+    },
+    /// Bake PBR PNG textures (Color + AO) recursively into `.rts` or `.zptex`
+    BakeTextures {
+        /// Input directory containing PBR textures (`*_Color.png`, `*_AmbientOcclusion.png`)
+        input_dir: PathBuf,
+        /// Destination `.rts` or `.zptex` file
+        #[arg(short = 'o', long = "output")]
+        output: PathBuf,
     },
     /// Transpile and compile `.rts` source code to the target platform or native executable
     Build {
         /// Path to the `.rts` file
         file: PathBuf,
-        /// Compilation target: `native` (C99/SIMD/SoA), `unreal` (UE5 UHT .h/.cpp), `unity` (C-ABI + C# NativeArray), or `ts-sdk`
+        /// Compilation target: `native` (C99/SIMD/SoA), `unreal` (UE5 UHT .h/.cpp), `unity` (C-ABI + C# NativeArray), `godot` (GDExtension), `godot-module` (SCons module), or `ts-sdk`
         #[arg(long = "target", default_value = "native")]
         target: String,
         /// Write output directly to UTF-8 file (without BOM) instead of stdout
         #[arg(short = 'o', long = "output")]
         output: Option<PathBuf>,
-        /// Output directory for multi-file targets (`unreal` .h/.cpp, `unity` .rs/.cs, `native` .c/.exe)
+        /// Output directory for multi-file targets (`unreal` .h/.cpp, `unity` .rs/.cs, `godot` GDExtension, `godot-module` SCons, `native` .c/.exe)
         #[arg(long = "out-dir")]
         out_dir: Option<PathBuf>,
         /// Compile generated C99 directly into a native executable binary via Clang/LLVM
@@ -268,7 +291,7 @@ fn scaffold_project(target_dir: &Path) {
         .unwrap_or("meu_projeto_rts");
 
     let rts_toml = format!(
-        "[package]\nname = \"{}\"\nversion = \"0.1.0\"\ncompiler = \"2.2.0-rts\"\ntarget = \"native\"\n",
+        "[package]\nname = \"{}\"\nversion = \"0.1.0\"\ncompiler = \"2.3.0-rts\"\ntarget = \"native\"\n\n[memory]\nstatic_arena_mb = 16\n",
         project_name
     );
     write_utf8_no_bom(&target_dir.join("rts.toml"), &rts_toml);
@@ -317,11 +340,11 @@ pub fn main() -> i32 {
     let leitura: Result<f32, FalhaSensor> = self::monitorar(lim, i2c, cooler);
     match leitura {
         Ok(temp) => {
-            io::print_f32("[RustTS v2.2.0-rts] Temperatura Nominal (C): ", temp);
+            io::print_f32("[RustTS v2.3.0-rts] Temperatura Nominal (C): ", temp);
             return 0;
         },
         Err(falha) => {
-            io::println("[RustTS v2.2.0-rts] Alerta: Falha de Sensor Detectada!");
+            io::println("[RustTS v2.3.0-rts] Alerta: Falha de Sensor Detectada!");
             return 1;
         },
     }
@@ -333,7 +356,7 @@ pub fn main() -> i32 {
     }
 
     println!(
-        "[rtsc 2.2.0-rts] Initialized RustTS project in '{}'\n  -> Run project: rtsc run {}",
+        "[rtsc 2.3.0-rts] Initialized RustTS project in '{}'\n  -> Run project: rtsc run {}",
         target_dir.display(),
         main_rts_path.display()
     );
@@ -354,6 +377,7 @@ fn main() {
         Some(Commands::Check {
             file,
             json_diagnostics,
+            verify_parity,
         }) => {
             let file_str = file.to_string_lossy().replace('\\', "/");
             if let Err(err) = fs::metadata(&file) {
@@ -361,7 +385,7 @@ fn main() {
                 process::exit(1);
             }
 
-            let (_module, report) = compile_and_check_project(&file);
+            let (module_opt, report) = compile_and_check_project(&file);
             if json_diagnostics {
                 println!("{}", report.to_json_pretty());
             } else {
@@ -370,6 +394,60 @@ fn main() {
 
             if report.status != "ok" {
                 process::exit(1);
+            }
+            if verify_parity {
+                if let Some(module) = module_opt {
+                    let arena_mb = read_static_arena_mb_from_rts_toml(&file);
+                    let c99 = NativeCodegen::emit_c99_with_arena_mb(&module, arena_mb);
+                    let ll = LlvmIrCodegen::emit_llvm_ir_with_arena_mb(&module, arena_mb);
+                    println!(
+                        "[rtsc {}] Parity verified (StaticArena={} MB): C99={} bytes, LLVM-IR={} bytes",
+                        RTSC_VERSION,
+                        arena_mb,
+                        c99.len(),
+                        ll.len()
+                    );
+                }
+            }
+        }
+        Some(Commands::BakeMesh { input, output }) => {
+            match bake_fbx_to_zpmesh(&input, &output) {
+                Ok(rep) => {
+                    println!(
+                        "[rtsc {}] Baked .zpmesh v2 '{}': {} verts, {} tris, {} mats, {} tex, {} bones, {} anims ({} bytes)",
+                        RTSC_VERSION,
+                        output.display(),
+                        rep.vertices,
+                        rep.triangles,
+                        rep.materials,
+                        rep.textures,
+                        rep.bones,
+                        rep.animations,
+                        rep.bytes_written
+                    );
+                }
+                Err(e) => {
+                    eprintln!("bake-mesh error: {}", e);
+                    process::exit(1);
+                }
+            }
+        }
+        Some(Commands::BakeTextures { input_dir, output }) => {
+            match bake_textures_dir(&input_dir, &output) {
+                Ok(rep) => {
+                    println!(
+                        "[rtsc {}] Baked {} texture(s) into '{}' ({} pixels, {} bytes)",
+                        RTSC_VERSION,
+                        rep.textures_baked,
+                        output.display(),
+                        rep.pixels_total,
+                        rep.bytes_written
+                    );
+                }
+                Err(e) => {
+                    eprintln!("bake-textures error: {}", e);
+                    process::exit(1);
+                }
             }
         }
         Some(Commands::Build {
@@ -414,15 +492,15 @@ fn main() {
                 if let Some(dir) = &out_dir {
                     let h_path = dir.join(format!("{}.h", stem));
                     write_utf8_no_bom(&h_path, &header_code);
-                    println!("[rtsc 2.2.0-rts] Emitted C/C++ ABI header: {}", h_path.display());
+                    println!("[rtsc 2.3.0-rts] Emitted C/C++ ABI header: {}", h_path.display());
                 } else if let Some(out_path) = &output {
                     let h_path = out_path.with_extension("h");
                     write_utf8_no_bom(&h_path, &header_code);
-                    println!("[rtsc 2.2.0-rts] Emitted C/C++ ABI header: {}", h_path.display());
+                    println!("[rtsc 2.3.0-rts] Emitted C/C++ ABI header: {}", h_path.display());
                 } else {
                     let h_path = PathBuf::from("build").join(format!("{}.h", stem));
                     write_utf8_no_bom(&h_path, &header_code);
-                    println!("[rtsc 2.2.0-rts] Emitted C/C++ ABI header: {}", h_path.display());
+                    println!("[rtsc 2.3.0-rts] Emitted C/C++ ABI header: {}", h_path.display());
                 }
             }
 
@@ -430,20 +508,21 @@ fn main() {
                 let ts_code = TsSdkCodegen::emit_typescript_sdk(&module);
                 if let Some(out_path) = output {
                     write_utf8_no_bom(&out_path, &ts_code);
-                    println!("[rtsc 2.2.0-rts] Emitted TypeScript SDK: {}", out_path.display());
+                    println!("[rtsc 2.3.0-rts] Emitted TypeScript SDK: {}", out_path.display());
                 } else if let Some(dir) = out_dir {
                     let p = dir.join(format!("{}_sdk.ts", stem));
                     write_utf8_no_bom(&p, &ts_code);
-                    println!("[rtsc 2.2.0-rts] Emitted TypeScript SDK: {}", p.display());
+                    println!("[rtsc 2.3.0-rts] Emitted TypeScript SDK: {}", p.display());
                 } else {
                     println!("{}", ts_code);
                 }
                 return;
             }
 
+            let arena_mb = read_static_arena_mb_from_rts_toml(&file);
             match target.as_str() {
                 "native" | "c99" => {
-                    let c99_code = NativeCodegen::emit_c99(&module);
+                    let c99_code = NativeCodegen::emit_c99_with_arena_mb(&module, arena_mb);
                     let wants_bin = compile_bin
                         || output
                             .as_ref()
@@ -465,16 +544,16 @@ fn main() {
                         });
                         compile_c99_with_clang(&c_path, &bin_path, &include_dirs, &lib_dirs, &link_libs, debug_symbols);
                         println!(
-                            "[rtsc 2.2.0-rts] Compiled native AVX2 binary: {}",
+                            "[rtsc 2.3.0-rts] Compiled native AVX2 binary: {}",
                             bin_path.display()
                         );
                     } else if let Some(out_path) = output {
                         write_utf8_no_bom(&out_path, &c99_code);
-                        println!("[rtsc 2.2.0-rts] Emitted C99 source: {}", out_path.display());
+                        println!("[rtsc 2.3.0-rts] Emitted C99 source: {}", out_path.display());
                     } else if let Some(dir) = out_dir {
                         let p = dir.join(format!("{}.c", stem));
                         write_utf8_no_bom(&p, &c99_code);
-                        println!("[rtsc 2.2.0-rts] Emitted C99 source: {}", p.display());
+                        println!("[rtsc 2.3.0-rts] Emitted C99 source: {}", p.display());
                     } else {
                         println!("{}", c99_code);
                     }
@@ -492,7 +571,7 @@ fn main() {
                             write_utf8_no_bom(&h_path, &artifact.header_code);
                             write_utf8_no_bom(&cpp_path, &artifact.source_code);
                             println!(
-                                "[rtsc 2.2.0-rts] Emitted Unreal UHT files: {}, {}",
+                                "[rtsc 2.3.0-rts] Emitted Unreal UHT files: {}, {}",
                                 h_path.display(),
                                 cpp_path.display()
                             );
@@ -522,7 +601,7 @@ fn main() {
                         write_utf8_no_bom(&rs_path, &out.rust_ffi_code);
                         write_utf8_no_bom(&cs_path, &out.csharp_wrapper_code);
                         println!(
-                            "[rtsc 2.2.0-rts] Emitted Unity FFI files: {}, {}",
+                            "[rtsc 2.3.0-rts] Emitted Unity FFI files: {}, {}",
                             rs_path.display(),
                             cs_path.display()
                         );
@@ -531,21 +610,87 @@ fn main() {
                         println!("// === C# NATIVEARRAY WRAPPER ===\n{}", out.csharp_wrapper_code);
                     }
                 }
+                "godot" | "godot-cpp" | "gdextension" => {
+                    let out = GodotCodegen::emit_godot_extension(&module);
+                    if let Some(dir) = out_dir.or_else(|| {
+                        output
+                            .as_ref()
+                            .and_then(|p| p.parent().map(|par| par.to_path_buf()))
+                    }) {
+                        for c in &out.classes {
+                            write_utf8_no_bom(&dir.join("src").join(&c.header_filename), &c.header_code);
+                            write_utf8_no_bom(&dir.join("src").join(&c.source_filename), &c.source_code);
+                        }
+                        write_utf8_no_bom(&dir.join("src").join("register_types.h"), &out.register_types_h);
+                        write_utf8_no_bom(&dir.join("src").join("register_types.cpp"), &out.register_types_cpp);
+                        write_utf8_no_bom(&dir.join("SConstruct"), &out.sconstruct);
+                        write_utf8_no_bom(
+                            &dir.join("bin").join(&out.gdextension_manifest_filename),
+                            &out.gdextension_manifest,
+                        );
+                        println!(
+                            "[rtsc 2.3.0-rts] Emitted Godot 4 GDExtension (C++17 / SCons) project in: {}",
+                            dir.display()
+                        );
+                    } else {
+                        for c in &out.classes {
+                            println!("// === FILE: src/{} ===\n{}", c.header_filename, c.header_code);
+                            println!("// === FILE: src/{} ===\n{}", c.source_filename, c.source_code);
+                        }
+                        println!("// === FILE: src/register_types.h ===\n{}", out.register_types_h);
+                        println!("// === FILE: src/register_types.cpp ===\n{}", out.register_types_cpp);
+                        println!("# === FILE: SConstruct ===\n{}", out.sconstruct);
+                        println!(
+                            "; === FILE: bin/{} ===\n{}",
+                            out.gdextension_manifest_filename, out.gdextension_manifest
+                        );
+                    }
+                }
+                "godot-module" => {
+                    let out = GodotCodegen::emit_godot_module(&module);
+                    if let Some(dir) = out_dir.or_else(|| {
+                        output
+                            .as_ref()
+                            .and_then(|p| p.parent().map(|par| par.to_path_buf()))
+                    }) {
+                        for c in &out.classes {
+                            write_utf8_no_bom(&dir.join(&c.header_filename), &c.header_code);
+                            write_utf8_no_bom(&dir.join(&c.source_filename), &c.source_code);
+                        }
+                        write_utf8_no_bom(&dir.join("register_types.h"), &out.register_types_h);
+                        write_utf8_no_bom(&dir.join("register_types.cpp"), &out.register_types_cpp);
+                        write_utf8_no_bom(&dir.join("SCsub"), &out.scsub);
+                        write_utf8_no_bom(&dir.join("config.py"), &out.config_py);
+                        println!(
+                            "[rtsc 2.3.0-rts] Emitted Godot 4 Custom C++17 Module (SCons) in: {}",
+                            dir.display()
+                        );
+                    } else {
+                        for c in &out.classes {
+                            println!("// === FILE: {} ===\n{}", c.header_filename, c.header_code);
+                            println!("// === FILE: {} ===\n{}", c.source_filename, c.source_code);
+                        }
+                        println!("// === FILE: register_types.h ===\n{}", out.register_types_h);
+                        println!("// === FILE: register_types.cpp ===\n{}", out.register_types_cpp);
+                        println!("# === FILE: SCsub ===\n{}", out.scsub);
+                        println!("# === FILE: config.py ===\n{}", out.config_py);
+                    }
+                }
                 "mlir" => {
                     let mlir_code = MlirCodegen::emit_mlir(&module);
                     if let Some(out_path) = output {
                         write_utf8_no_bom(&out_path, &mlir_code);
-                        println!("[rtsc 2.2.0-rts] Emitted MLIR SSA module: {}", out_path.display());
+                        println!("[rtsc 2.3.0-rts] Emitted MLIR SSA module: {}", out_path.display());
                     } else if let Some(dir) = out_dir {
                         let p = dir.join(format!("{}.mlir", stem));
                         write_utf8_no_bom(&p, &mlir_code);
-                        println!("[rtsc 2.2.0-rts] Emitted MLIR SSA module: {}", p.display());
+                        println!("[rtsc 2.3.0-rts] Emitted MLIR SSA module: {}", p.display());
                     } else {
                         println!("{}", mlir_code);
                     }
                 }
                 "llvm-ir" | "llvm" => {
-                    let ir_code = LlvmIrCodegen::emit_llvm_ir(&module);
+                    let ir_code = LlvmIrCodegen::emit_llvm_ir_with_arena_mb(&module, arena_mb);
                     if compile_bin {
                         let build_dir = out_dir.unwrap_or_else(|| PathBuf::from("build"));
                         let ll_path = build_dir.join(format!("{}.ll", stem));
@@ -565,16 +710,16 @@ fn main() {
                             debug_symbols,
                         );
                         println!(
-                            "[rtsc 2.2.0-rts] Direct LLVM IR (.ll -> native binary) compiled: {}",
+                            "[rtsc 2.3.0-rts] Direct LLVM IR (.ll -> native binary) compiled: {}",
                             bin_path.display()
                         );
                     } else if let Some(out_path) = output {
                         write_utf8_no_bom(&out_path, &ir_code);
-                        println!("[rtsc 2.2.0-rts] Emitted LLVM IR (.ll) module: {}", out_path.display());
+                        println!("[rtsc 2.3.0-rts] Emitted LLVM IR (.ll) module: {}", out_path.display());
                     } else if let Some(dir) = out_dir {
                         let p = dir.join(format!("{}.ll", stem));
                         write_utf8_no_bom(&p, &ir_code);
-                        println!("[rtsc 2.2.0-rts] Emitted LLVM IR (.ll) module: {}", p.display());
+                        println!("[rtsc 2.3.0-rts] Emitted LLVM IR (.ll) module: {}", p.display());
                     } else {
                         println!("{}", ir_code);
                     }
@@ -584,14 +729,14 @@ fn main() {
                     if let Some(out_path) = output {
                         write_utf8_no_bom(&out_path, &wgsl_code);
                         println!(
-                            "[rtsc 2.2.0-rts] Emitted WebGPU WGSL Compute Shader: {}",
+                            "[rtsc 2.3.0-rts] Emitted WebGPU WGSL Compute Shader: {}",
                             out_path.display()
                         );
                     } else if let Some(dir) = out_dir {
                         let p = dir.join(format!("{}.wgsl", stem));
                         write_utf8_no_bom(&p, &wgsl_code);
                         println!(
-                            "[rtsc 2.2.0-rts] Emitted WebGPU WGSL Compute Shader: {}",
+                            "[rtsc 2.3.0-rts] Emitted WebGPU WGSL Compute Shader: {}",
                             p.display()
                         );
                     } else {
@@ -630,7 +775,7 @@ fn main() {
                             process::exit(1);
                         }
                         println!(
-                            "[rtsc 2.2.0-rts] Emitted SPIR-V 1.5 Binary Module (magic 0x07230203, {} bytes): {}",
+                            "[rtsc 2.3.0-rts] Emitted SPIR-V 1.5 Binary Module (magic 0x07230203, {} bytes): {}",
                             spv_bytes.len(),
                             out_path.display()
                         );
@@ -639,14 +784,14 @@ fn main() {
                         if let Some(out_path) = output {
                             write_utf8_no_bom(&out_path, &spvasm_code);
                             println!(
-                                "[rtsc 2.2.0-rts] Emitted SPIR-V 1.5 Assembly (.spvasm): {}",
+                                "[rtsc 2.3.0-rts] Emitted SPIR-V 1.5 Assembly (.spvasm): {}",
                                 out_path.display()
                             );
                         } else if let Some(dir) = out_dir {
                             let p = dir.join(format!("{}.spvasm", stem));
                             write_utf8_no_bom(&p, &spvasm_code);
                             println!(
-                                "[rtsc 2.2.0-rts] Emitted SPIR-V 1.5 Assembly (.spvasm): {}",
+                                "[rtsc 2.3.0-rts] Emitted SPIR-V 1.5 Assembly (.spvasm): {}",
                                 p.display()
                             );
                         } else {
@@ -678,7 +823,7 @@ fn main() {
                             process::exit(1);
                         }
                         println!(
-                            "[rtsc 2.2.0-rts] Emitted WASI Fuel-Metered Binary (.wasm, fuel={}, {} bytes): {}",
+                            "[rtsc 2.3.0-rts] Emitted WASI Fuel-Metered Binary (.wasm, fuel={}, {} bytes): {}",
                             fuel_limit,
                             wasm_bytes.len(),
                             out_path.display()
@@ -688,7 +833,7 @@ fn main() {
                         if let Some(out_path) = output {
                             write_utf8_no_bom(&out_path, &wat_code);
                             println!(
-                                "[rtsc 2.2.0-rts] Emitted WASI Fuel-Metered Text (.wat, fuel={}): {}",
+                                "[rtsc 2.3.0-rts] Emitted WASI Fuel-Metered Text (.wat, fuel={}): {}",
                                 fuel_limit,
                                 out_path.display()
                             );
@@ -696,7 +841,7 @@ fn main() {
                             let p = dir.join(format!("{}.wat", stem));
                             write_utf8_no_bom(&p, &wat_code);
                             println!(
-                                "[rtsc 2.2.0-rts] Emitted WASI Fuel-Metered Text (.wat, fuel={}): {}",
+                                "[rtsc 2.3.0-rts] Emitted WASI Fuel-Metered Text (.wat, fuel={}): {}",
                                 fuel_limit,
                                 p.display()
                             );
@@ -707,7 +852,7 @@ fn main() {
                 }
                 other => {
                     eprintln!(
-                        "Unsupported target '{}'. Valid targets: native, mlir, llvm-ir, wgsl, spirv, wasi, wasm, unreal, unity, ts-sdk",
+                        "Unsupported target '{}'. Valid targets: native, mlir, llvm-ir, wgsl, spirv, wasi, wasm, unreal, unity, godot, godot-module, ts-sdk",
                         other
                     );
                     process::exit(1);
@@ -753,8 +898,9 @@ fn main() {
                 build_dir.join(stem)
             };
 
+            let arena_mb = read_static_arena_mb_from_rts_toml(&file);
             if llvm {
-                let ir_code = LlvmIrCodegen::emit_llvm_ir(&module);
+                let ir_code = LlvmIrCodegen::emit_llvm_ir_with_arena_mb(&module, arena_mb);
                 let ll_path = build_dir.join(format!("{}.ll", stem));
                 write_utf8_no_bom(&ll_path, &ir_code);
                 compile_llvm_ir_with_clang(
@@ -765,7 +911,7 @@ fn main() {
                     debug_symbols,
                 );
             } else {
-                let c99_code = NativeCodegen::emit_c99(&module);
+                let c99_code = NativeCodegen::emit_c99_with_arena_mb(&module, arena_mb);
                 let c_path = build_dir.join(format!("{}.c", stem));
                 write_utf8_no_bom(&c_path, &c99_code);
                 compile_c99_with_clang(

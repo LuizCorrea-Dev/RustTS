@@ -21,7 +21,7 @@ pub const VRAM_POOL_SIZE_BYTES: u64 = 67108864; // 64 MB
 @sealed_sig
 pub fn main(arena: cap StaticArena) -> int {
     io::println("======================================================================");
-    io::println(" RUSTTS ENGINE v2.2.0-rts — MOTOR GRAFICO 2D/3D NATIVO (VULKAN + RHI)");
+    io::println(" RUSTTS ENGINE v2.3.0-rts — MOTOR GRAFICO 2D/3D NATIVO (VULKAN + RHI)");
     io::println("======================================================================");
 
     let log_entries: cap MutSlice<logger::LogEntry> = arena.alloc_slice(logger::LOG_RING_CAP);

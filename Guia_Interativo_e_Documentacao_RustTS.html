@@ -945,7 +945,7 @@
           <div>
             <h1 class="doc-title">RustTS (.rts) — Guia da Linguagem &amp; Cheat Sheet</h1>
             <p class="doc-subtitle">
-              Referência técnica interativa da sintaxe canônica única, sistema de tipos algébricos, contratos estáticos de capacidade (<code class="code-inline">cap</code>), hierarquia de arenas e verificador simulado <code class="code-inline">rtsc v2.2.0-rts</code>.
+              Referência técnica interativa da sintaxe canônica única, sistema de tipos algébricos, contratos estáticos de capacidade (<code class="code-inline">cap</code>), hierarquia de arenas e verificador simulado <code class="code-inline">rtsc v2.3.0-rts</code>.
             </p>
           </div>
         </div>
@@ -1475,7 +1475,7 @@ rtsc --export-gbnf &gt; rustts.gbnf</pre>
     </div>
 
     <footer class="footer-note">
-      <span>Referência técnica baseada na especificação arquitetural e código-fonte do compilador <strong>RustTS (rtsc v2.2.0-rts)</strong>: lexer logos, parser LL(k), verificador semântico de capacidades, arenas, debugging <code class="code-inline">#line</code> e backends C99 AVX2/FMA3, Unreal UHT, Unity C-ABI, TypeScript SDK e GBNF.</span>
+      <span>Referência técnica baseada na especificação arquitetural e código-fonte do compilador <strong>RustTS (rtsc v2.3.0-rts)</strong>: lexer logos, parser LL(k), verificador semântico de capacidades, arenas, debugging <code class="code-inline">#line</code> e backends C99 AVX2/FMA3, Unreal UHT, Unity C-ABI, Godot 4 GDExtension, TypeScript SDK e GBNF.</span>
       <span>Todos os exemplos podem ser validados localmente no playground simulado.</span>
     </footer>
   </div>
@@ -1483,7 +1483,7 @@ rtsc --export-gbnf &gt; rustts.gbnf</pre>
   <api-shim></api-shim>
   <script>
     // =========================================================================
-    // DADOS ESTRUTURADOS DA LINGUAGEM RUSTTS (.rts) — v2.2.0-rts
+    // DADOS ESTRUTURADOS DA LINGUAGEM RUSTTS (.rts) — v2.3.0-rts
     // =========================================================================
     const TYPES_DATA = [
       { name: `i8`, cat: `int`, catLabel: `Inteiro`, sem: `8 bits com sinal (-128..127)`, c99: `int8_t`, ue5: `int8`, unityTs: `sbyte / number`, example: `let delta: i8 = -12;` },
@@ -1631,7 +1631,7 @@ rtsc --export-gbnf &gt; rustts.gbnf</pre>
         domain: `syntax`,
         rule: `Rejeita caracteres ou tokens fora do alfabeto canônico LL(k) usando cálculo O(log N) de linha e coluna.`,
         fixPolicy: `Corrigir token inválido no código-fonte.`,
-        sampleJson: `{\n  "status": "error",\n  "compiler_version": "2.2.0-rts",\n  "diagnostics": [{\n    "error_code": "RTS-E0101",\n    "category": "SyntaxError",\n    "ast_node": "LexerToken",\n    "message": "Unexpected token '@' outside attribute position.",\n    "deterministic_fixes": []\n  }]\n}`
+        sampleJson: `{\n  "status": "error",\n  "compiler_version": "2.3.0-rts",\n  "diagnostics": [{\n    "error_code": "RTS-E0101",\n    "category": "SyntaxError",\n    "ast_node": "LexerToken",\n    "message": "Unexpected token '@' outside attribute position.",\n    "deterministic_fixes": []\n  }]\n}`
       },
       {
         code: `RTS-E0201`,
@@ -1639,7 +1639,7 @@ rtsc --export-gbnf &gt; rustts.gbnf</pre>
         domain: `syntax`,
         rule: `Garante aderência estrita à gramática canônica única (One Canonical Way) — sem açúcar sintático alternativo.`,
         fixPolicy: `Reescrever instrução seguindo a gramática LL canônica (.gbnf).`,
-        sampleJson: `{\n  "status": "error",\n  "compiler_version": "2.2.0-rts",\n  "diagnostics": [{\n    "error_code": "RTS-E0201",\n    "category": "SyntaxError",\n    "ast_node": "ParserNode",\n    "message": "Expected ':' before type annotation in 'let' binding.",\n    "deterministic_fixes": []\n  }]\n}`
+        sampleJson: `{\n  "status": "error",\n  "compiler_version": "2.3.0-rts",\n  "diagnostics": [{\n    "error_code": "RTS-E0201",\n    "category": "SyntaxError",\n    "ast_node": "ParserNode",\n    "message": "Expected ':' before type annotation in 'let' binding.",\n    "deterministic_fixes": []\n  }]\n}`
       },
       {
         code: `RTS-E0301`,
@@ -1647,7 +1647,7 @@ rtsc --export-gbnf &gt; rustts.gbnf</pre>
         domain: `types`,
         rule: `Valida compatibilidade estática em let, =, operações binárias, argumentos, campos de StructInit, Handle<T> e return.`,
         fixPolicy: `Usar conversão explícita 'as' ou alinhar tipos compatíveis.`,
-        sampleJson: `{\n  "status": "error",\n  "compiler_version": "2.2.0-rts",\n  "diagnostics": [{\n    "error_code": "RTS-E0301",\n    "category": "TypeMismatch",\n    "ast_node": "BinaryExpr(f32 Add str)",\n    "message": "Invalid binary operation in 'broken_types': cannot apply operator 'Add' between 'f32' and 'str'.",\n    "deterministic_fixes": []\n  }]\n}`
+        sampleJson: `{\n  "status": "error",\n  "compiler_version": "2.3.0-rts",\n  "diagnostics": [{\n    "error_code": "RTS-E0301",\n    "category": "TypeMismatch",\n    "ast_node": "BinaryExpr(f32 Add str)",\n    "message": "Invalid binary operation in 'broken_types': cannot apply operator 'Add' between 'f32' and 'str'.",\n    "deterministic_fixes": []\n  }]\n}`
       },
       {
         code: `RTS-E0302`,
@@ -1655,7 +1655,7 @@ rtsc --export-gbnf &gt; rustts.gbnf</pre>
         domain: `types`,
         rule: `Exige cobertura total de todas as variantes em match sobre enum, Result<T, E> e Option<T> (ou braço curinga _).`,
         fixPolicy: `Adicionar braços faltantes (ex: Err(e), None ou variante ausente).`,
-        sampleJson: `{\n  "status": "error",\n  "compiler_version": "2.2.0-rts",\n  "diagnostics": [{\n    "error_code": "RTS-E0302",\n    "category": "NonExhaustiveMatch",\n    "ast_node": "MatchStmt(HardwareFault)",\n    "message": "Non-exhaustive match: missing variant 'HardwareFault::OverheatCritical'.",\n    "deterministic_fixes": []\n  }]\n}`
+        sampleJson: `{\n  "status": "error",\n  "compiler_version": "2.3.0-rts",\n  "diagnostics": [{\n    "error_code": "RTS-E0302",\n    "category": "NonExhaustiveMatch",\n    "ast_node": "MatchStmt(HardwareFault)",\n    "message": "Non-exhaustive match: missing variant 'HardwareFault::OverheatCritical'.",\n    "deterministic_fixes": []\n  }]\n}`
       },
       {
         code: `RTS-E0402`,
@@ -1663,7 +1663,7 @@ rtsc --export-gbnf &gt; rustts.gbnf</pre>
         domain: `caps`,
         rule: `Bloqueia chamadas de I/O, rede, hardware, SQL ou mutação sem o token cap correspondente na assinatura.`,
         fixPolicy: `@sealed_sig: remove_unauthorized_call | @open_sig: add_parameter_capability.`,
-        sampleJson: `{\n  "status": "error",\n  "compiler_version": "2.2.0-rts",\n  "diagnostics": [{\n    "error_code": "RTS-E0402",\n    "category": "CapabilityViolation",\n    "ast_node": "MethodCall(db.delete_by_id)",\n    "message": "Function 'get_user_profile' attempted a write operation ('delete_by_id') on resource 'UsersTable', but only possesses read capability 'cap SqlRead<UsersTable>'.",\n    "deterministic_fixes": [{\n      "action": "remove_unauthorized_call",\n      "line_to_remove": 18,\n      "security_policy": "SealedSignatureBoundary: AI agent is forbidden from mutating function signature to escalate privileges."\n    }]\n  }]\n}`
+        sampleJson: `{\n  "status": "error",\n  "compiler_version": "2.3.0-rts",\n  "diagnostics": [{\n    "error_code": "RTS-E0402",\n    "category": "CapabilityViolation",\n    "ast_node": "MethodCall(db.delete_by_id)",\n    "message": "Function 'get_user_profile' attempted a write operation ('delete_by_id') on resource 'UsersTable', but only possesses read capability 'cap SqlRead<UsersTable>'.",\n    "deterministic_fixes": [{\n      "action": "remove_unauthorized_call",\n      "line_to_remove": 18,\n      "security_policy": "SealedSignatureBoundary: AI agent is forbidden from mutating function signature to escalate privileges."\n    }]\n  }]\n}`
       },
       {
         code: `RTS-E0403`,
@@ -1671,7 +1671,7 @@ rtsc --export-gbnf &gt; rustts.gbnf</pre>
         domain: `caps`,
         rule: `Fecho transitivo no Call Graph: exige que Caps(f_callee) seja subconjunto de Caps(f_caller), inclusive em expressões unárias.`,
         fixPolicy: `@sealed_sig impede escalação automática no caller; remover chamada indireta.`,
-        sampleJson: `{\n  "status": "error",\n  "compiler_version": "2.2.0-rts",\n  "diagnostics": [{\n    "error_code": "RTS-E0403",\n    "category": "TransitiveCapabilityViolation",\n    "ast_node": "CallExpr(helper_send_telemetry)",\n    "message": "Transitive capability violation: calling 'helper_send_telemetry' requires 'cap NetSocket' (chain: tick -> helper_send_telemetry -> NetworkSocket::send).",\n    "deterministic_fixes": [{\n      "action": "remove_unauthorized_call",\n      "line_to_remove": 14,\n      "security_policy": "SealedSignatureBoundary"\n    }]\n  }]\n}`
+        sampleJson: `{\n  "status": "error",\n  "compiler_version": "2.3.0-rts",\n  "diagnostics": [{\n    "error_code": "RTS-E0403",\n    "category": "TransitiveCapabilityViolation",\n    "ast_node": "CallExpr(helper_send_telemetry)",\n    "message": "Transitive capability violation: calling 'helper_send_telemetry' requires 'cap NetSocket' (chain: tick -> helper_send_telemetry -> NetworkSocket::send).",\n    "deterministic_fixes": [{\n      "action": "remove_unauthorized_call",\n      "line_to_remove": 14,\n      "security_policy": "SealedSignatureBoundary"\n    }]\n  }]\n}`
       },
       {
         code: `RTS-E0404`,
@@ -1679,7 +1679,7 @@ rtsc --export-gbnf &gt; rustts.gbnf</pre>
         domain: `caps`,
         rule: `Impede instanciação artificial de tokens cap via StructInit, fábricas (::new(), ::forge(), ::open_ambient()) ou let local fora de main.`,
         fixPolicy: `Remover forja e receber token cap via parâmetro de entrypoint.`,
-        sampleJson: `{\n  "status": "error",\n  "compiler_version": "2.2.0-rts",\n  "diagnostics": [{\n    "error_code": "RTS-E0404",\n    "category": "CapabilityForgeryAttempt",\n    "ast_node": "CallExpr(I2CBus::new)",\n    "message": "Function 'spoof_sensor' attempted to forge capability token via 'I2CBus::new'. Capabilities are unforgeable linear tokens.",\n    "deterministic_fixes": [{\n      "action": "remove_unauthorized_call",\n      "line_to_remove": 9,\n      "security_policy": "SealedSignatureBoundary"\n    }]\n  }]\n}`
+        sampleJson: `{\n  "status": "error",\n  "compiler_version": "2.3.0-rts",\n  "diagnostics": [{\n    "error_code": "RTS-E0404",\n    "category": "CapabilityForgeryAttempt",\n    "ast_node": "CallExpr(I2CBus::new)",\n    "message": "Function 'spoof_sensor' attempted to forge capability token via 'I2CBus::new'. Capabilities are unforgeable linear tokens.",\n    "deterministic_fixes": [{\n      "action": "remove_unauthorized_call",\n      "line_to_remove": 9,\n      "security_policy": "SealedSignatureBoundary"\n    }]\n  }]\n}`
       },
       {
         code: `RTS-E0405`,
@@ -1687,7 +1687,7 @@ rtsc --export-gbnf &gt; rustts.gbnf</pre>
         domain: `memory`,
         rule: `Proíbe aliasing entre colunas ECS (MutColumn<T> duplicado ou MutColumn<T> + ReadColumn<T>) ou FrameArena<T> + ReadFrameArena<T>.`,
         fixPolicy: `Separar sistemas produtor e consumidor em estágios sequenciais.`,
-        sampleJson: `{\n  "status": "error",\n  "compiler_version": "2.2.0-rts",\n  "diagnostics": [{\n    "error_code": "RTS-E0405",\n    "category": "AliasingViolation",\n    "ast_node": "FnParam(pos_b: cap MutColumn<Transform>)",\n    "message": "Conflicting ECS column capabilities for component 'Transform'. Parallel SIMD scheduling requires exclusive MutColumn access.",\n    "deterministic_fixes": []\n  }]\n}`
+        sampleJson: `{\n  "status": "error",\n  "compiler_version": "2.3.0-rts",\n  "diagnostics": [{\n    "error_code": "RTS-E0405",\n    "category": "AliasingViolation",\n    "ast_node": "FnParam(pos_b: cap MutColumn<Transform>)",\n    "message": "Conflicting ECS column capabilities for component 'Transform'. Parallel SIMD scheduling requires exclusive MutColumn access.",\n    "deterministic_fixes": []\n  }]\n}`
       },
       {
         code: `RTS-E0501`,
@@ -1695,7 +1695,7 @@ rtsc --export-gbnf &gt; rustts.gbnf</pre>
         domain: `memory`,
         rule: `Impõe Rank(Static)=3 > Rank(Level/Session)=2 > Rank(Frame/Request)=1, inclusive em indexação events[k].`,
         fixPolicy: `remove_arena_lifetime_escape: manter dados efêmeros na arena de origem.`,
-        sampleJson: `{\n  "status": "error",\n  "compiler_version": "2.2.0-rts",\n  "diagnostics": [{\n    "error_code": "RTS-E0501",\n    "category": "ArenaLifetimeEscape",\n    "ast_node": "MethodCall(level_cache.store)",\n    "message": "Cannot store handle from ephemeral 'events' (Frame/RequestArena Rank 1) into persistent 'level_cache' (Level/SessionArena Rank 2). Rank 1 < Rank 2.",\n    "deterministic_fixes": [{\n      "action": "remove_arena_lifetime_escape",\n      "line_to_remove": 8,\n      "expected_arena_rank": "Level/SessionArena (Rank 2)"\n    }]\n  }]\n}`
+        sampleJson: `{\n  "status": "error",\n  "compiler_version": "2.3.0-rts",\n  "diagnostics": [{\n    "error_code": "RTS-E0501",\n    "category": "ArenaLifetimeEscape",\n    "ast_node": "MethodCall(level_cache.store)",\n    "message": "Cannot store handle from ephemeral 'events' (Frame/RequestArena Rank 1) into persistent 'level_cache' (Level/SessionArena Rank 2). Rank 1 < Rank 2.",\n    "deterministic_fixes": [{\n      "action": "remove_arena_lifetime_escape",\n      "line_to_remove": 8,\n      "expected_arena_rank": "Level/SessionArena (Rank 2)"\n    }]\n  }]\n}`
       },
       {
         code: `RTS-E0900`,
@@ -1703,7 +1703,7 @@ rtsc --export-gbnf &gt; rustts.gbnf</pre>
         domain: `memory`,
         rule: `Bloqueia qualquer tentativa de modelar DOM, HTML ou CSS tradicional dentro da linguagem (.rts).`,
         fixPolicy: `Delegar UI para TypeScript/Next.js usando --emit-ts-sdk.`,
-        sampleJson: `{\n  "status": "error",\n  "compiler_version": "2.2.0-rts",\n  "diagnostics": [{\n    "error_code": "RTS-E0900",\n    "category": "TierZeroForbiddenDomain",\n    "ast_node": "StructDecl(DOMNode)",\n    "message": "Struct 'DOMNode' attempts to model Tier-0 forbidden Traditional Web DOM/HTML/CSS state. Use '--emit-ts-sdk'.",\n    "deterministic_fixes": []\n  }]\n}`
+        sampleJson: `{\n  "status": "error",\n  "compiler_version": "2.3.0-rts",\n  "diagnostics": [{\n    "error_code": "RTS-E0900",\n    "category": "TierZeroForbiddenDomain",\n    "ast_node": "StructDecl(DOMNode)",\n    "message": "Struct 'DOMNode' attempts to model Tier-0 forbidden Traditional Web DOM/HTML/CSS state. Use '--emit-ts-sdk'.",\n    "deterministic_fixes": []\n  }]\n}`
       }
     ];
 
@@ -2714,7 +2714,7 @@ pub fn bad_system(
 
       return {
         status: diagnostics.length === 0 ? `ok` : `error`,
-        compiler_version: `2.2.0-rts`,
+        compiler_version: `2.3.0-rts`,
         elapsed_ms: (2.8 + (lines.length * 0.09)).toFixed(1),
         diagnostics: diagnostics
       };

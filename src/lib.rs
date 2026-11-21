@@ -1,4 +1,7 @@
 pub mod ast;
+pub mod bake_mesh;
+pub mod bake_textures;
+pub mod codegen_godot;
 pub mod codegen_gpu;
 pub mod codegen_llvm;
 pub mod codegen_mlir;
@@ -62,6 +65,37 @@ pub fn compile_and_check(source: &str, file_path: &str) -> (Option<Module>, Comp
     let analyzer = SemanticAnalyzer::new(file_path);
     let report = analyzer.analyze_module(&module);
     (Some(module), report)
+}
+
+pub fn read_static_arena_mb_from_rts_toml(source_file: &Path) -> usize {
+    let mut dir = source_file.parent();
+    while let Some(d) = dir {
+        let toml_path = d.join("rts.toml");
+        if toml_path.exists() {
+            if let Ok(content) = fs::read_to_string(&toml_path) {
+                let mut in_memory = false;
+                for raw_line in content.lines() {
+                    let line = raw_line.split('#').next().unwrap_or("").trim();
+                    if line.starts_with('[') && line.ends_with(']') {
+                        in_memory = line.trim_matches(&['[', ']'][..]).trim() == "memory";
+                        continue;
+                    }
+                    if in_memory || line.starts_with("static_arena_mb") {
+                        if let Some((k, v)) = line.split_once('=') {
+                            if k.trim() == "static_arena_mb" {
+                                if let Ok(mb) = v.trim().parse::<usize>() {
+                                    return mb.clamp(1, 512);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            break;
+        }
+        dir = d.parent();
+    }
+    16
 }
 
 fn resolve_import_path(entry_dir: &Path, current_file: &Path, imp_path: &[String]) -> Option<PathBuf> {
@@ -343,6 +377,9 @@ fn load_module_recursive(
     }
 
     for mut item in module.items.clone() {
+        if let Item::Function(f) = &mut item {
+            f.source_file = Some(file_str.clone());
+        }
         if !local_const_renames.is_empty() {
             rewrite_item_const_idents(&mut item, &local_const_renames);
         }
@@ -1879,9 +1916,9 @@ pub fn tentar_mutar_let_imutavel(dose_inicial: f32) -> f32 {
 
     #[test]
     fn test_v200_compiler_version_and_full_diagnostic_taxonomy_homologation() {
-        assert_eq!(diagnostics::COMPILER_VERSION, "2.2.0-rts");
+        assert_eq!(diagnostics::COMPILER_VERSION, "2.3.0-rts");
         let ok_report = diagnostics::CompilerDiagnosticsReport::ok();
-        assert_eq!(ok_report.compiler_version, "2.2.0-rts");
+        assert_eq!(ok_report.compiler_version, "2.3.0-rts");
         assert_eq!(ok_report.status, "ok");
     }
 
@@ -3282,7 +3319,7 @@ pub fn main(arena: cap StaticArena) -> int {
 
     #[test]
     fn test_70_v300_version_and_docs_consistency() {
-        assert_eq!(diagnostics::COMPILER_VERSION, "2.2.0-rts");
+        assert_eq!(diagnostics::COMPILER_VERSION, "2.3.0-rts");
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let doc_files = [
             "README.md",
@@ -3291,16 +3328,24 @@ pub fn main(arena: cap StaticArena) -> int {
             "manual_e_matriz_de_regras_da_linguagem_rustts.md",
             "CONTRIBUTING.md",
             "devlog.md",
-            "roadmap_mestre_e_arquitetura_rustts_v3_0_0_pro.md",
             "Guia_Interativo_e_Documentacao_RustTS.html",
         ];
         for rel in doc_files {
             let text = std::fs::read_to_string(root.join(rel))
                 .unwrap_or_else(|e| panic!("Falha ao ler {}: {}", rel, e));
             assert!(
-                text.contains("2.2.0-rts"),
-                "Documento '{}' deveria referenciar a versao unificada 2.2.0-rts",
+                text.contains("2.3.0-rts"),
+                "Documento '{}' deveria referenciar a versao unificada 2.3.0-rts",
                 rel
+            );
+        }
+        let roadmap_rel = "roadmap_mestre_e_arquitetura_rustts_v3_0_0_pro.md";
+        if root.join(roadmap_rel).exists() {
+            let text = std::fs::read_to_string(root.join(roadmap_rel)).unwrap();
+            assert!(
+                text.contains("2.3.0-rts"),
+                "Documento '{}' deveria referenciar a versao unificada 2.3.0-rts",
+                roadmap_rel
             );
         }
         for rel in [
@@ -3315,5 +3360,941 @@ pub fn main(arena: cap StaticArena) -> int {
                 rel
             );
         }
+        let cargo_toml = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        assert!(
+            cargo_toml.contains("version = \"2.3.0-rts\""),
+            "Cargo.toml deveria estar na versao 2.3.0-rts"
+        );
+        for rel in ["README.md", "INSTALACAO_E_USO.md"] {
+            let text = std::fs::read_to_string(root.join(rel)).unwrap();
+            assert!(
+                text.contains("bake-mesh")
+                    && text.contains("bake-textures")
+                    && text.contains("--verify-parity")
+                    && text.contains("combat_godot.rts")
+                    && text.contains("--target=godot"),
+                "Guia '{}' deveria documentar bake-mesh, bake-textures, --verify-parity e backend Godot 4",
+                rel
+            );
+        }
+    }
+
+    struct TempDirGuard(PathBuf);
+    impl Drop for TempDirGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    fn find_test_clang() -> Option<PathBuf> {
+        if std::process::Command::new("clang").arg("--version").output().is_ok() {
+            return Some(PathBuf::from("clang"));
+        }
+        let candidates = [
+            r"C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\Llvm\x64\bin\clang.exe",
+            r"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\Llvm\x64\bin\clang.exe",
+            r"C:\Program Files\LLVM\bin\clang.exe",
+        ];
+        candidates.into_iter().map(PathBuf::from).find(|p| p.exists())
+    }
+
+    fn compile_and_run_dual(
+        rts_path: &Path,
+        work_dir: &Path,
+        tag: &str,
+    ) -> (String, String, Option<(String, String)>) {
+        let arena_mb = crate::read_static_arena_mb_from_rts_toml(rts_path);
+        let (ast_opt, rep) = compile_and_check_project(rts_path);
+        assert_eq!(rep.status, "ok", "[{}] check failed:\n{}", tag, rep.to_human_terminal());
+        let checked = ast_opt.expect("AST after check");
+
+        let c99 = codegen_native::NativeCodegen::emit_c99_with_arena_mb(&checked, arena_mb);
+        let llvm = codegen_llvm::LlvmIrCodegen::emit_llvm_ir_with_arena_mb(&checked, arena_mb);
+
+        #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+        let run_outputs = if let Some(clang) = find_test_clang() {
+            let c_src = work_dir.join(format!("{}.c", tag));
+            let ll_src = work_dir.join(format!("{}.ll", tag));
+            let c_exe = work_dir.join(format!("{}_c.exe", tag));
+            let ll_exe = work_dir.join(format!("{}_ll.exe", tag));
+            std::fs::write(&c_src, c99.as_bytes()).unwrap();
+            std::fs::write(&ll_src, llvm.as_bytes()).unwrap();
+
+            let mut c_cmd = std::process::Command::new(&clang);
+            c_cmd.args([
+                "-std=c11",
+                "-O3",
+                "-mavx2",
+                "-mfma",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+            ])
+            .arg(&c_src)
+            .arg("-o")
+            .arg(&c_exe);
+            c_cmd.args(["-luser32", "-lgdi32", "-lwinmm"]);
+            let c_comp = c_cmd.output().unwrap();
+            assert!(
+                c_comp.status.success(),
+                "[{}] clang C99 failed:\n{}",
+                tag,
+                String::from_utf8_lossy(&c_comp.stderr)
+            );
+
+            let mut ll_cmd = std::process::Command::new(&clang);
+            ll_cmd
+                .args(["-x", "ir", "-O3", "-mavx2", "-mfma", "-Wno-override-module"])
+                .arg(&ll_src)
+                .arg("-o")
+                .arg(&ll_exe);
+            ll_cmd.args(["-luser32", "-lgdi32", "-lwinmm"]);
+            let ll_comp = ll_cmd.output().unwrap();
+            assert!(
+                ll_comp.status.success(),
+                "[{}] clang LLVM IR failed:\n{}",
+                tag,
+                String::from_utf8_lossy(&ll_comp.stderr)
+            );
+
+            let c_run = std::process::Command::new(&c_exe)
+                .current_dir(work_dir)
+                .env("RTS_SMOKE_TEST", "1")
+                .output()
+                .unwrap();
+            assert!(
+                c_run.status.success(),
+                "[{}] C99 binary exited non-zero ({:?}): stdout={} stderr={}",
+                tag,
+                c_run.status.code(),
+                String::from_utf8_lossy(&c_run.stdout),
+                String::from_utf8_lossy(&c_run.stderr)
+            );
+
+            let ll_run = std::process::Command::new(&ll_exe)
+                .current_dir(work_dir)
+                .env("RTS_SMOKE_TEST", "1")
+                .output()
+                .unwrap();
+            assert!(
+                ll_run.status.success(),
+                "[{}] LLVM binary exited non-zero ({:?}): stdout={} stderr={}",
+                tag,
+                ll_run.status.code(),
+                String::from_utf8_lossy(&ll_run.stdout),
+                String::from_utf8_lossy(&ll_run.stderr)
+            );
+
+            Some((
+                String::from_utf8_lossy(&c_run.stdout).replace("\r\n", "\n"),
+                String::from_utf8_lossy(&ll_run.stdout).replace("\r\n", "\n"),
+            ))
+        } else {
+            None
+        };
+        #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
+        let run_outputs: Option<(String, String)> = {
+            let _ = (work_dir, tag);
+            None
+        };
+
+        (c99, llvm, run_outputs)
+    }
+
+    fn crc32_ieee(data: &[u8]) -> u32 {
+        let mut crc = 0xFFFF_FFFFu32;
+        for &b in data {
+            crc ^= b as u32;
+            for _ in 0..8 {
+                let mask = (crc & 1).wrapping_neg();
+                crc = (crc >> 1) ^ (0xEDB8_8320u32 & mask);
+            }
+        }
+        !crc
+    }
+
+    fn adler32(data: &[u8]) -> u32 {
+        let mut s1 = 1u32;
+        let mut s2 = 0u32;
+        for &b in data {
+            s1 = (s1 + b as u32) % 65521;
+            s2 = (s2 + s1) % 65521;
+        }
+        (s2 << 16) | s1
+    }
+
+    fn png_chunk(ctype: &[u8; 4], cdata: &[u8], out: &mut Vec<u8>) {
+        out.extend_from_slice(&(cdata.len() as u32).to_be_bytes());
+        out.extend_from_slice(ctype);
+        out.extend_from_slice(cdata);
+        let mut crc_in = Vec::with_capacity(4 + cdata.len());
+        crc_in.extend_from_slice(ctype);
+        crc_in.extend_from_slice(cdata);
+        out.extend_from_slice(&crc32_ieee(&crc_in).to_be_bytes());
+    }
+
+    fn make_valid_rgba_png(w: u32, h: u32, rgba: &[u8]) -> Vec<u8> {
+        let mut png = vec![137, 80, 78, 71, 13, 10, 26, 10];
+        let mut ihdr = Vec::with_capacity(13);
+        ihdr.extend_from_slice(&w.to_be_bytes());
+        ihdr.extend_from_slice(&h.to_be_bytes());
+        ihdr.push(8); // bit_depth
+        ihdr.push(6); // RGBA
+        ihdr.push(0);
+        ihdr.push(0);
+        ihdr.push(0);
+        png_chunk(b"IHDR", &ihdr, &mut png);
+
+        let stride = (w as usize) * 4;
+        let mut raw_scan = Vec::with_capacity((stride + 1) * h as usize);
+        for y in 0..h as usize {
+            raw_scan.push(0); // filter None
+            raw_scan.extend_from_slice(&rgba[y * stride..(y + 1) * stride]);
+        }
+        let mut zlib = vec![0x78, 0x01, 0x01]; // zlib + final stored block
+        let len = raw_scan.len() as u16;
+        zlib.extend_from_slice(&len.to_le_bytes());
+        zlib.extend_from_slice(&(!len).to_le_bytes());
+        zlib.extend_from_slice(&raw_scan);
+        zlib.extend_from_slice(&adler32(&raw_scan).to_be_bytes());
+        png_chunk(b"IDAT", &zlib, &mut png);
+        png_chunk(b"IEND", &[], &mut png);
+        png
+    }
+
+    fn make_synthetic_fbx_7400() -> Vec<u8> {
+        fn push_node(out: &mut Vec<u8>, base_off: usize, name: &str, props: &[u8], children: &[u8]) {
+            let start = out.len();
+            out.extend_from_slice(&[0u8; 12]);
+            out.push(name.len() as u8);
+            out.extend_from_slice(name.as_bytes());
+            out.extend_from_slice(props);
+            out.extend_from_slice(children);
+            if !children.is_empty() {
+                out.extend_from_slice(&[0u8; 13]);
+            }
+            let end_off = (base_off + out.len()) as u32;
+            let num_props = if props.is_empty() { 0u32 } else { 1u32 };
+            let prop_len = props.len() as u32;
+            out[start..start + 4].copy_from_slice(&end_off.to_le_bytes());
+            out[start + 4..start + 8].copy_from_slice(&num_props.to_le_bytes());
+            out[start + 8..start + 12].copy_from_slice(&prop_len.to_le_bytes());
+        }
+        fn f64_arr_prop(vals: &[f64]) -> Vec<u8> {
+            let mut p = vec![b'd'];
+            p.extend_from_slice(&(vals.len() as u32).to_le_bytes());
+            p.extend_from_slice(&0u32.to_le_bytes());
+            p.extend_from_slice(&((vals.len() * 8) as u32).to_le_bytes());
+            for v in vals {
+                p.extend_from_slice(&v.to_le_bytes());
+            }
+            p
+        }
+        fn i32_arr_prop(vals: &[i32]) -> Vec<u8> {
+            let mut p = vec![b'i'];
+            p.extend_from_slice(&(vals.len() as u32).to_le_bytes());
+            p.extend_from_slice(&0u32.to_le_bytes());
+            p.extend_from_slice(&((vals.len() * 4) as u32).to_le_bytes());
+            for v in vals {
+                p.extend_from_slice(&v.to_le_bytes());
+            }
+            p
+        }
+
+        let mut fbx = Vec::new();
+        fbx.extend_from_slice(b"Kaydara FBX Binary  \x00\x1a\x00");
+        fbx.extend_from_slice(&7400u32.to_le_bytes());
+
+        // Build from inside out so end_offsets match absolute file offsets
+        let objects_header_len = 13 + "Objects".len();
+        let geom_header_len = 13 + "Geometry".len();
+        let geom_base = fbx.len() + objects_header_len;
+        let mut geom_children = Vec::new();
+        let pos_p = f64_arr_prop(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.5, 0.0]);
+        push_node(&mut geom_children, geom_base + geom_header_len, "Vertices", &pos_p, &[]);
+        let poly_p = i32_arr_prop(&[0, 1, !2]);
+        push_node(
+            &mut geom_children,
+            geom_base + geom_header_len,
+            "PolygonVertexIndex",
+            &poly_p,
+            &[],
+        );
+
+        let norm_hdr_len = 13 + "LayerElementNormal".len();
+        let mut norm_children = Vec::new();
+        let norm_p = f64_arr_prop(&[0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0]);
+        push_node(
+            &mut norm_children,
+            geom_base + geom_header_len + geom_children.len() + norm_hdr_len,
+            "Normals",
+            &norm_p,
+            &[],
+        );
+        push_node(
+            &mut geom_children,
+            geom_base + geom_header_len,
+            "LayerElementNormal",
+            &[],
+            &norm_children,
+        );
+
+        let uv_hdr_len = 13 + "LayerElementUV".len();
+        let mut uv_children = Vec::new();
+        let uv_p = f64_arr_prop(&[0.0, 0.0, 1.0, 0.0, 0.0, 1.0]);
+        push_node(
+            &mut uv_children,
+            geom_base + geom_header_len + geom_children.len() + uv_hdr_len,
+            "UV",
+            &uv_p,
+            &[],
+        );
+        push_node(
+            &mut geom_children,
+            geom_base + geom_header_len,
+            "LayerElementUV",
+            &[],
+            &uv_children,
+        );
+
+        let mut objects_children = Vec::new();
+        push_node(&mut objects_children, geom_base, "Geometry", &[], &geom_children);
+
+        let top_base = fbx.len();
+        push_node(&mut fbx, top_base, "Objects", &[], &objects_children);
+        fbx.extend_from_slice(&[0u8; 13]);
+        fbx
+    }
+
+    #[test]
+    fn test_71_p0_parser_view_struct_sign_compare_and_llvm_bool_if_parity() {
+        let dir = std::env::temp_dir().join("rtsc_test_71_parity");
+        let _ = std::fs::remove_dir_all(&dir);
+        let src_dir = dir.join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        let _guard = TempDirGuard(dir.clone());
+
+        let sub_rts = src_dir.join("sub_mod.rts");
+        std::fs::write(
+            &sub_rts,
+            r#"
+module sub_mod;
+
+pub const TARGET_OK: i32 = 42;
+
+pub @view struct EntityView {
+    pub pos_x: cap MutSlice<f32>,
+    pub count: usize,
+}
+
+@repr_c
+pub struct Enemy {
+    pub hp: i32,
+}
+
+pub fn step_entities(view: EntityView) {
+    let mut i: usize = 0;
+    while i < view.pos_x.len() && i < view.count {
+        view.pos_x[i] = view.pos_x[i] + 2.5;
+        i = i + 1;
+    }
+}
+
+pub fn check_flag(v: i32) -> bool {
+    return if v == TARGET_OK { true } else { false };
+}
+"#,
+        )
+        .unwrap();
+
+        let main_rts = src_dir.join("main.rts");
+        std::fs::write(
+            &main_rts,
+            r#"
+module test_p0_main;
+import core.io;
+import sub_mod;
+
+pub fn main(arena: cap StaticArena) -> int {
+    let px: cap MutSlice<f32> = arena.alloc_slice(4);
+    px.fill(1.0);
+    let view = sub_mod::EntityView { pos_x: px, count: 4 };
+    sub_mod::step_entities(view);
+
+    let enemies: cap MutSlice<sub_mod::Enemy> = arena.alloc_slice(2);
+    enemies[0].hp = 99;
+    enemies[1].hp = 42;
+
+    let mut cur: i32 = enemies[1].hp;
+    let mut const_hit: i32 = 0;
+    if cur == sub_mod::TARGET_OK {
+        const_hit = 1;
+    }
+
+    let s: i32 = -5;
+    let u: usize = 3;
+    let mut sign_ok: i32 = 0;
+    if s < 0 && u > 1 && s < u {
+        sign_ok = 1;
+    }
+
+    let flag_a: bool = sub_mod::check_flag(cur);
+    let flag_b: bool = if const_hit > 0 { flag_a } else { false };
+
+    let ok_val: i32 = if flag_b { 1 } else { 0 };
+    let total: i32 = enemies[0].hp + ok_val + const_hit + sign_ok + (view.pos_x[0] as i32);
+    io::print_i32("TOTAL=", total);
+    return 0;
+}
+"#,
+        )
+        .unwrap();
+
+        let (c99, _llvm, run_outs) = compile_and_run_dual(&main_rts, &dir, "t71");
+        assert!(c99.contains("sub_mod.rts"), "Expected sub_mod.rts in #line directives");
+        assert!(c99.contains("main.rts"), "Expected main.rts in #line directives");
+        if let Some((c_out, ll_out)) = run_outs {
+            assert_eq!(c_out, ll_out, "C99 and --llvm outputs differ!");
+            assert!(c_out.contains("TOTAL=105"), "Unexpected output: {}", c_out);
+        }
+
+        let bad_view = r#"
+module test.bad_view;
+@view
+struct MyView {
+    buf: cap MutSlice<u32>,
+}
+struct NestedBad {
+    inner: MyView,
+}
+pub fn leak_view(v: MyView) -> MyView {
+    return v;
+}
+"#;
+        let (_ast, rep) = compile_and_check(bad_view, "bad_view.rts");
+        assert_eq!(rep.status, "error");
+        let e0501 = rep.diagnostics.iter().filter(|d| d.error_code == "RTS-E0501").count();
+        assert!(e0501 >= 2, "Expected RTS-E0501 on nested and returned @view, got: {:?}", rep.diagnostics);
+    }
+
+    #[test]
+    fn test_72_p0_window_input_fs_png_and_static_arena_config() {
+        let dir = std::env::temp_dir().join("rtsc_test_72_p0_hal");
+        let _ = std::fs::remove_dir_all(&dir);
+        let src_dir = dir.join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        let _guard = TempDirGuard(dir.clone());
+
+        std::fs::write(
+            dir.join("rts.toml"),
+            "[package]\nname = \"t72\"\nversion = \"2.3.0-rts\"\n\n[memory]\nstatic_arena_mb = 24\n",
+        )
+        .unwrap();
+        let main_rts = src_dir.join("main.rts");
+        assert_eq!(crate::read_static_arena_mb_from_rts_toml(&main_rts), 24);
+
+        let rgba = [
+            255u8, 10, 20, 255, // (0,0) -> 0xFFFF0A14
+            0, 255, 0, 128,     // (1,0) -> 0x8000FF00
+            10, 20, 255, 255,   // (0,1) -> 0xFF0A14FF
+            200, 150, 100, 255, // (1,1) -> 0xFFC89664
+        ];
+        std::fs::write(dir.join("probe.png"), make_valid_rgba_png(2, 2, &rgba)).unwrap();
+
+        std::fs::write(
+            &main_rts,
+            r#"
+module test_p0_hal;
+import core.io;
+import core.mem;
+import core.math;
+
+pub fn main(
+    arena: cap StaticArena,
+    win: cap WindowHost,
+    inp: cap InputDevice,
+    fs: cap FileSystem
+) -> int {
+    let cap_b: usize = arena.capacity_bytes();
+    let scratch: cap MutSlice<u8> = arena.alloc_slice(256);
+    let used_b: usize = arena.used_bytes();
+
+    let _okw: bool = win.open_headless(320, 240, 2);
+    win.set_cursor_locked(true);
+    win.set_cursor_visible(false);
+    let fb: cap MutSlice<u32> = arena.alloc_slice(4);
+    fb.fill(0xFF112233);
+    win.draw_rect(0, 0, 10, 10, 0xFF00FF00);
+    win.draw_text_scaled(4, 4, 2, 0xFFFFFFFF, "HUD");
+    win.draw_blit_rgba(0, 0, 2, 2, fb);
+    let _p: bool = win.poll_events();
+
+    inp.poll();
+    let _dx: i32 = inp.mouse_dx();
+    let _dy: i32 = inp.mouse_dy();
+    let _wh: i32 = inp.mouse_wheel_delta();
+    let _rd: bool = inp.mouse_right_down();
+    let _rc: bool = inp.mouse_right_clicked();
+
+    let w_txt: bool = fs.write_text("note.txt", "hello-v221");
+    let ex: bool = fs.exists("note.txt");
+    let fsz: u64 = fs.file_size("note.txt");
+    let rd_n: usize = fs.read_text("note.txt", scratch);
+
+    let bin_w: cap MutSlice<u8> = arena.alloc_slice(4);
+    bin_w[0] = 77;
+    bin_w[1] = 88;
+    bin_w[2] = 99;
+    bin_w[3] = 111;
+    let _bw: bool = fs.write_raw_slice("bin.dat", bin_w);
+    let bin_r: cap MutSlice<u8> = arena.alloc_slice(4);
+    let br_n: usize = fs.read_raw_slice("bin.dat", bin_r);
+    let list_n: usize = fs.list_dir(".", scratch);
+
+    let img_px: cap MutSlice<u32> = arena.alloc_slice(4);
+    let img_dims: cap MutSlice<u32> = arena.alloc_slice(2);
+    let png_ok: bool = fs.load_image_rgba("probe.png", img_px, img_dims);
+
+    let f_val: f32 = mem::f32_from_bits(0x3F800000);
+    let bits: u32 = mem::f32_to_bits(f_val);
+    let m_val: f32 = math::asin(0.5) + math::acos(0.5) + math::atan(1.0) + math::exp(0.0) + math::log(1.0) + math::pow(2.0, 3.0);
+
+    win.close();
+
+    if cap_b >= 25165824 && used_b >= 256 && w_txt && ex && fsz == 10 && rd_n == 10
+       && br_n == 4 && bin_r[2] == 99 && list_n > 0 && png_ok
+       && img_dims[0] == 2 && img_dims[1] == 2
+       && img_px[0] == 0xFFFF0A14 && img_px[1] == 0x8000FF00
+       && img_px[2] == 0xFF0A14FF && img_px[3] == 0xFFC89664
+       && bits == 0x3F800000 && m_val > 9.0 {
+        io::println("OK_P0");
+        return 0;
+    }
+    return 1;
+}
+"#,
+        )
+        .unwrap();
+
+        let (_c99, _llvm, run_outs) = compile_and_run_dual(&main_rts, &dir, "t72");
+        if let Some((c_out, ll_out)) = run_outs {
+            assert_eq!(c_out, ll_out, "C99 and --llvm outputs differ!");
+            assert!(c_out.contains("OK_P0"), "Expected OK_P0, got:\n{}", c_out);
+        }
+    }
+
+    #[test]
+    fn test_73_p1_audio_mixer_mic_cut_network_and_pbr_rhi() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let dir = root.join("build").join("_rtsc_test_73");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let _guard = TempDirGuard(dir.clone());
+
+        let main_rts = dir.join("main.rts");
+        std::fs::write(
+            &main_rts,
+            r#"
+module test_p1_main;
+import core.io;
+import engine.gpu.rhi;
+import engine.gpu.vram_arena;
+
+pub fn main(
+    arena: cap StaticArena,
+    audio: cap AudioDevice,
+    mic: cap AudioInput,
+    net: cap NetworkSocket
+) -> int {
+    let wav_ok: bool = audio.write_synth_wav("sfx_t73.wav", 44100, 1024, 1);
+    let mix_ok: bool = audio.mixer_init(44100);
+    let ld_ok: bool = audio.mixer_load_wav(0, "sfx_t73.wav");
+    let ch: i32 = audio.mixer_play(0, 0.85, 0.2, 2200.0, false);
+    audio.mixer_set_channel(ch, 0.9, -0.3, 1800.0);
+    let st_buf: cap MutSlice<i16> = arena.alloc_slice(64);
+    let mixed_n: usize = audio.mixer_mix_frame(st_buf);
+    audio.mixer_stop_channel(ch);
+
+    let mut non_zero_pcm: bool = false;
+    let mut k: usize = 0;
+    while k < mixed_n {
+        if st_buf[k] != 0 {
+            non_zero_pcm = true;
+        }
+        k = k + 1;
+    }
+
+    let mic_ok: bool = mic.open(16000);
+    let pcm_buf: cap MutSlice<i16> = arena.alloc_slice(8);
+    pcm_buf.fill(1234);
+    mic.set_muted(true);
+    let muted_chk: bool = mic.is_muted();
+    let mic_rd: usize = mic.read_pcm(pcm_buf);
+    mic.close();
+
+    let mut port_a: u16 = 45320;
+    let mut s_rx: i32 = -1;
+    while port_a < 45340 && s_rx < 0 {
+        s_rx = net.udp_bind(port_a);
+        if s_rx < 0 { port_a = port_a + 1; }
+    }
+    let mut port_b: u16 = port_a + 1;
+    let mut s_tx: i32 = -1;
+    while port_b < 45350 && s_tx < 0 {
+        s_tx = net.udp_bind(port_b);
+        if s_tx < 0 { port_b = port_b + 1; }
+    }
+
+    let pkt_tx: cap MutSlice<u8> = arena.alloc_slice(4);
+    pkt_tx[0] = 70;
+    pkt_tx[1] = 79;
+    pkt_tx[2] = 68;
+    pkt_tx[3] = 86;
+    let sent_n: i32 = net.udp_send_to(s_tx, "127.0.0.1", port_a, pkt_tx);
+
+    let pkt_rx: cap MutSlice<u8> = arena.alloc_slice(16);
+    let sender_ip: cap MutSlice<u8> = arena.alloc_slice(32);
+    let mut recv_n: i32 = -1;
+    let mut tries: u32 = 0;
+    while tries < 200 && recv_n <= 0 {
+        recv_n = net.udp_recv_from(s_rx, pkt_rx, sender_ip);
+        tries = tries + 1;
+    }
+    net.close_socket(s_rx);
+    net.close_socket(s_tx);
+
+    let mut dev = rhi::rhi_device_init(rhi::BACKEND_VULKAN, 0, 320, 240, 1048576, false);
+    let mut cmd = rhi::rhi_begin_frame(inout dev);
+    let ubo = vram_arena::vram_arena_alloc_aligned(inout dev.arena, 256, vram_arena::GPU_CBUFFER_ALIGNMENT);
+    rhi::rhi_cmd_bind_pipeline(cmd, rhi::PIPELINE_PBR_3D);
+    rhi::rhi_cmd_bind_pbr_textures(cmd, 1, 2, 3, 4);
+    rhi::rhi_cmd_bind_lights(cmd, ubo);
+    rhi::rhi_cmd_bind_bones(cmd, ubo);
+    rhi::rhi_cmd_draw_indexed_instanced(cmd, 36, 1, 0, 0, 0);
+    let _pbr_ok = rhi::rhi_end_frame_and_present(dev, inout cmd);
+
+    if wav_ok && mix_ok && ld_ok && ch >= 0 && mixed_n == 64 && non_zero_pcm
+       && mic_ok && muted_chk && mic_rd == 0 && pcm_buf[0] == 0 && pcm_buf[7] == 0
+       && s_rx >= 0 && s_tx >= 0 && sent_n == 4 && recv_n == 4
+       && pkt_rx[0] == 70 && pkt_rx[1] == 79 && pkt_rx[2] == 68 && pkt_rx[3] == 86 {
+        io::println("OK_P1");
+        return 0;
+    }
+    return 1;
+}
+"#,
+        )
+        .unwrap();
+
+        let (c99, llvm, run_outs) = compile_and_run_dual(&main_rts, &dir, "t73");
+        assert!(c99.contains("rtsc_vk_cmd_bind_pbr_textures"));
+        assert!(llvm.contains("@rtsc_vk_cmd_bind_pbr_textures"));
+        if let Some((c_out, ll_out)) = run_outs {
+            assert!(c_out.contains("OK_P1"), "Expected OK_P1 in C99, got:\n{}", c_out);
+            assert!(ll_out.contains("OK_P1"), "Expected OK_P1 in --llvm, got:\n{}", ll_out);
+        }
+
+        let cap_viol = r#"
+module test.p1_cap_sec;
+pub fn illegal_calls(arena: cap StaticArena, wrong_mic: cap AudioDevice, wrong_net: cap FileSystem) {
+    let forged_mic = AudioInput::new();
+    let forged_net = NetworkSocket::new();
+    let pcm: cap MutSlice<i16> = arena.alloc_slice(4);
+    let _r = wrong_mic.read_pcm(pcm);
+    let _s = wrong_net.udp_bind(9999);
+    let _u = forged_mic;
+    let _v = forged_net;
+}
+"#;
+        let (_ast, rep) = compile_and_check(cap_viol, "p1_cap_sec.rts");
+        assert_eq!(rep.status, "error");
+        let e0404 = rep.diagnostics.iter().filter(|d| d.error_code == "RTS-E0404").count();
+        let e0402 = rep.diagnostics.iter().filter(|d| d.error_code == "RTS-E0402").count();
+        assert!(e0404 >= 2, "Forgery AudioInput::new/NetworkSocket::new should trigger RTS-E0404: {:?}", rep.diagnostics);
+        assert!(e0402 >= 2, "Wrong caps for AudioInput/NetworkSocket methods should trigger RTS-E0402: {:?}", rep.diagnostics);
+    }
+
+    #[test]
+    fn test_74_stdlib_modules_check_and_run() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let dir = root.join("build").join("_rtsc_test_74");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let _guard = TempDirGuard(dir.clone());
+
+        let main_rts = dir.join("main.rts");
+        std::fs::write(
+            &main_rts,
+            r#"
+module test_stdlib_main;
+import core.io;
+import core.mem;
+import engine.json;
+import engine.collections;
+import engine.threads;
+import engine.zpmesh;
+import engine.diagnostics;
+
+fn write_u32_le(buf: cap MutSlice<u8>, off: usize, v: u32) {
+    buf[off + 0] = (v & 0xFF) as u8;
+    buf[off + 1] = ((v >> 8) & 0xFF) as u8;
+    buf[off + 2] = ((v >> 16) & 0xFF) as u8;
+    buf[off + 3] = ((v >> 24) & 0xFF) as u8;
+}
+
+pub fn main(arena: cap StaticArena, fs: cap FileSystem) -> int {
+    // 1. engine.json
+    let mut jw = json::json_writer_new();
+    json::json_push_i32(inout jw, "credits", 750);
+    json::json_push_bool(inout jw, "alive", true);
+    json::json_push_str(inout jw, "zone", "ALPHA");
+    let finished: str256 = json::json_finish(inout jw);
+    let jbuf: cap MutSlice<u8> = arena.alloc_slice(256);
+    let mut ji: usize = 0;
+    let jlen: usize = finished.len();
+    let jstr_p: str = finished.as_str();
+    while ji < jlen {
+        jbuf[ji] = mem::str_byte(jstr_p, ji);
+        ji = ji + 1;
+    }
+    let parsed_credits: i32 = json::json_get_i32(jbuf, jlen, "credits", -1);
+    let parsed_alive: bool = json::json_get_bool(jbuf, jlen, "alive", false);
+
+    // 2. engine.collections
+    let v_mem: cap MutSlice<u32> = arena.alloc_slice(8);
+    let mut vec = collections::ArenaVecU32 { data: v_mem, len: 0, capacity: 8 };
+    let _p1 = collections::vec_u32_push(inout vec, 100);
+    let _p2 = collections::vec_u32_push(inout vec, 250);
+    let v_pop: u32 = collections::vec_u32_pop(inout vec, 0);
+
+    let q_mem: cap MutSlice<u32> = arena.alloc_slice(4);
+    let mut q = collections::ArenaQueueU32 { data: q_mem, head: 0, tail: 0, count: 0, capacity: 4 };
+    let _qp = collections::queue_u32_push(inout q, 42);
+    let q_pop: u32 = collections::queue_u32_pop(inout q, 0);
+
+    let mk: cap MutSlice<u32> = arena.alloc_slice(8);
+    let mv: cap MutSlice<u32> = arena.alloc_slice(8);
+    let mu: cap MutSlice<u8> = arena.alloc_slice(8);
+    let mut mp = collections::ArenaMapU32 { keys: mk, vals: mv, used: mu, capacity: 8 };
+    collections::map_u32_init(inout mp);
+    let _mi = collections::map_u32_insert(inout mp, 77, 999);
+    let mp_val: u32 = collections::map_u32_get(mp, 77, 0);
+
+    // 3. engine.threads
+    let wc: u32 = threads::parallel_worker_count(2);
+    let rng = threads::parallel_chunk_range(100, 0, 2);
+
+    // 4. engine.zpmesh
+    let zp: cap MutSlice<u8> = arena.alloc_slice(128);
+    write_u32_le(zp, 0, zpmesh::MAGIC_ZPM2);
+    write_u32_le(zp, 4, 2);
+    write_u32_le(zp, 12, 1);
+    write_u32_le(zp, 52, (zpmesh::zpmesh_f32_to_q16(1.5)) as u32);
+    let zh = zpmesh::zpmesh_parse_v2_header(zp, 128);
+    let zv = zpmesh::zpmesh_read_vertex_v2(zp, 128, 0);
+
+    // 5. engine.diagnostics
+    let d_none = diagnostics::error_registrar_se_houver(fs, diagnostics::error_none(), "logs/no_err.json");
+    let no_err_ex: bool = fs.exists("logs/no_err.json");
+    let bad = diagnostics::DiagErrorInfo {
+        code: diagnostics::ERR_ASSET,
+        stage: str64::from("load"),
+        message: str128::from("missing"),
+        detail: str128::from("wall"),
+    };
+    let d_err = diagnostics::error_registrar_se_houver(fs, bad, "logs/err.json");
+    let err_ex: bool = fs.exists("logs/err.json");
+    let err_buf: cap MutSlice<u8> = arena.alloc_slice(256);
+    let err_len: usize = fs.read_text("logs/err.json", err_buf);
+    let parsed_code: i32 = json::json_get_i32(err_buf, err_len, "code", -1);
+
+    // 6. Regressao de sequencias de escape em literais de string (C99 vs --llvm)
+    let esc_s: str = "\"a\nb\tc\\d\"";
+    let esc_ok: bool = mem::str_len(esc_s) == 9
+        && mem::str_byte(esc_s, 0) == 34
+        && mem::str_byte(esc_s, 2) == 10
+        && mem::str_byte(esc_s, 4) == 9
+        && mem::str_byte(esc_s, 6) == 92
+        && mem::str_byte(esc_s, 8) == 34;
+
+    if parsed_credits == 750 && parsed_alive
+       && v_pop == 250 && q_pop == 42 && mp_val == 999
+       && wc >= 1 && rng.start == 0 && rng.end == 50
+       && zh.magic == zpmesh::MAGIC_ZPM2 && zh.vertex_count == 1 && zv.pos.x > 1.4 && zv.pos.x < 1.6
+       && !d_none && !no_err_ex && d_err && err_ex && parsed_code == diagnostics::ERR_ASSET
+       && esc_ok {
+        io::println("OK_STDLIB");
+        return 0;
+    }
+    return 1;
+}
+"#,
+        )
+        .unwrap();
+
+        let (_c99, _llvm, run_outs) = compile_and_run_dual(&main_rts, &dir, "t74");
+        if let Some((c_out, ll_out)) = run_outs {
+            let c_clean: String = c_out
+                .lines()
+                .filter(|l| !l.starts_with("[MULTICORE] "))
+                .map(|l| format!("{}\n", l))
+                .collect();
+            assert_eq!(c_clean, ll_out, "C99 and --llvm outputs differ!");
+            assert!(
+                ll_out.contains("OK_STDLIB"),
+                "Expected OK_STDLIB, got c_out:\n{}\nll_out:\n{}",
+                c_out,
+                ll_out
+            );
+        }
+    }
+
+    #[test]
+    fn test_75_native_tools_bake_mesh_and_bake_textures() {
+        let dir = std::env::temp_dir().join("rtsc_test_75_tools");
+        let _ = std::fs::remove_dir_all(&dir);
+        let tex_sub = dir.join("textures").join("props");
+        std::fs::create_dir_all(&tex_sub).unwrap();
+        let _guard = TempDirGuard(dir.clone());
+
+        // 1. inflate_zlib stored block check
+        let payload = b"RUSTTS_ZLIB";
+        let mut z = vec![0x78, 0x01, 0x01];
+        z.extend_from_slice(&(payload.len() as u16).to_le_bytes());
+        z.extend_from_slice(&(!(payload.len() as u16)).to_le_bytes());
+        z.extend_from_slice(payload);
+        z.extend_from_slice(&adler32(payload).to_be_bytes());
+        assert_eq!(crate::bake_mesh::inflate_zlib(&z).unwrap(), payload);
+
+        // 2. FBX 7400 -> .zpmesh v2
+        let fbx_path = dir.join("tri.fbx");
+        let zp_path = dir.join("tri.zpmesh");
+        std::fs::write(&fbx_path, make_synthetic_fbx_7400()).unwrap();
+        let m_rep = crate::bake_mesh::bake_fbx_to_zpmesh(&fbx_path, &zp_path).unwrap();
+        assert_eq!(m_rep.vertices, 3);
+        assert_eq!(m_rep.triangles, 1);
+
+        let zp_bytes = std::fs::read(&zp_path).unwrap();
+        assert!(zp_bytes.len() >= 52 + 3 * 60 + 3 * 4);
+        let magic = u32::from_le_bytes(zp_bytes[0..4].try_into().unwrap());
+        let ver = u32::from_le_bytes(zp_bytes[4..8].try_into().unwrap());
+        let vcnt = u32::from_le_bytes(zp_bytes[12..16].try_into().unwrap());
+        let icnt = u32::from_le_bytes(zp_bytes[16..20].try_into().unwrap());
+        let v1_x_q16 = i32::from_le_bytes(zp_bytes[52 + 60..52 + 64].try_into().unwrap());
+        assert_eq!(magic, crate::bake_mesh::MAGIC_ZPM2);
+        assert_eq!(ver, 2);
+        assert_eq!(vcnt, 3);
+        assert_eq!(icnt, 3);
+        assert_eq!(v1_x_q16, 65536);
+
+        // 3. Recursive bake_textures_dir (Color + AmbientOcclusion)
+        // Color = (200, 100, 50, 255), AO = 0 => 0.35 * Color = (70, 35, 18, 255) = 0xFF462312
+        let color_px = [200u8, 100, 50, 255, 200, 100, 50, 255, 200, 100, 50, 255, 200, 100, 50, 255];
+        let ao_px = [0u8, 0, 0, 255, 255, 255, 255, 255, 0, 0, 0, 255, 255, 255, 255, 255];
+        std::fs::write(
+            tex_sub.join("wall_Color.png"),
+            make_valid_rgba_png(2, 2, &color_px),
+        )
+        .unwrap();
+        std::fs::write(
+            tex_sub.join("wall_AmbientOcclusion.png"),
+            make_valid_rgba_png(2, 2, &ao_px),
+        )
+        .unwrap();
+
+        let baked_rts = dir.join("baked_tex.rts");
+        let t_rep = crate::bake_textures::bake_textures_dir(&dir.join("textures"), &baked_rts).unwrap();
+        assert_eq!(t_rep.textures_baked, 1);
+        assert_eq!(t_rep.pixels_total, 4);
+        let rts_text = std::fs::read_to_string(&baked_rts).unwrap();
+        assert!(rts_text.contains("WALL_W: u32 = 2"));
+        assert!(rts_text.contains("0xFF462312"), "Expected AO=0 shaded pixel in:\n{}", rts_text);
+        assert!(rts_text.contains("0xFFC86432"), "Expected AO=255 pixel in:\n{}", rts_text);
+    }
+
+    #[test]
+    fn test_76_godot_gdextension_and_custom_module_codegen() {
+        // 1. GBNF formal grammar includes Godot 4 attributes
+        let gbnf = crate::gbnf_exporter::export_rustts_gbnf();
+        assert!(gbnf.contains("@godot_node"), "GBNF missing @godot_node");
+        assert!(gbnf.contains("@godot_impl"), "GBNF missing @godot_impl");
+        assert!(gbnf.contains("@gdexport"), "GBNF missing @gdexport");
+
+        // 2. Compile & validate examples/combat_godot.rts
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let godot_example = root.join("examples").join("combat_godot.rts");
+        let (mod_opt, rep) = compile_and_check_project(&godot_example);
+        assert_eq!(
+            rep.status, "ok",
+            "combat_godot.rts check failed: {:?}",
+            rep.diagnostics
+        );
+        let module = mod_opt.expect("Valid AST from combat_godot.rts");
+
+        // 3. Semantic capability check: mutating self under cap Read<KinematicMover> triggers RTS-E0402
+        let bad_godot = r#"
+module test.godot_sec;
+@godot_node(base = "CharacterBody3D", category = "Movement")
+struct GuardNode {
+    @gdexport
+    speed: f32,
+}
+@godot_impl(GuardNode)
+pub fn illegal_write(self: cap Read<GuardNode>, delta: f32) {
+    self.speed = delta;
+}
+"#;
+        let (_bad_ast, bad_rep) = compile_and_check(bad_godot, "bad_godot.rts");
+        assert_eq!(bad_rep.status, "error");
+        assert!(
+            bad_rep.diagnostics.iter().any(|d| d.error_code == "RTS-E0402"),
+            "Expected RTS-E0402 when mutating Read<GuardNode>, got: {:?}",
+            bad_rep.diagnostics
+        );
+
+        // 4. GDExtension output (--target=godot)
+        let ext = crate::codegen_godot::GodotCodegen::emit_godot_extension(&module);
+        assert_eq!(ext.classes.len(), 1);
+        let cls = &ext.classes[0];
+        assert_eq!(cls.class_name, "KinematicMover");
+        assert!(cls.header_code.contains("GDCLASS(KinematicMover, CharacterBody3D);"));
+        assert!(cls.header_code.contains("<godot_cpp/classes/character_body3d.hpp>"));
+        assert!(cls.header_code.contains("compute_effective_speed(float friction) const;"));
+        assert!(cls.header_code.contains("void apply_impulse(float boost);"));
+        assert!(cls.source_code.contains("ClassDB::bind_method(D_METHOD(\"compute_effective_speed\", \"friction\"), &KinematicMover::compute_effective_speed);"));
+        assert!(cls.source_code.contains("ADD_PROPERTY(PropertyInfo(Variant::FLOAT, \"base_speed\", PROPERTY_HINT_RANGE, \"1.0,20.0,0.5\"), \"set_base_speed\", \"get_base_speed\");"));
+        assert!(cls.source_code.contains("Math::clamp("));
+        assert!(ext.register_types_cpp.contains("GDREGISTER_CLASS(KinematicMover);"));
+        assert!(ext.register_types_cpp.contains("<gdextension_interface.h>"));
+        assert!(ext.register_types_cpp.contains("godot::GDExtensionBinding::InitObject"));
+        assert!(ext.sconstruct.contains("godot-cpp/SConstruct"));
+        assert!(ext.sconstruct.contains("SharedLibrary"));
+        assert!(ext.gdextension_manifest.contains("compatibility_minimum = \"4.2\""));
+        assert!(ext.gdextension_manifest.contains("entry_symbol = \"game_godot_movement_library_init\""));
+
+        // 5. Custom Engine Module output (--target=godot-module)
+        let gmod = crate::codegen_godot::GodotCodegen::emit_godot_module(&module);
+        assert_eq!(gmod.classes.len(), 1);
+        assert!(gmod.classes[0].header_code.contains("\"scene/3d/physics/character_body_3d.h\""));
+        assert!(gmod.register_types_h.contains("\"modules/register_module_types.h\""));
+        assert!(gmod.register_types_cpp.contains("ClassDB::register_class<KinematicMover>();"));
+        assert!(gmod.scsub.contains("add_source_files"));
+        assert!(gmod.config_py.contains("def can_build("));
+
+        // 6. Fallback RefCounted static helper generation when module has no @godot_node
+        let util_src = r#"
+module demo.helpers;
+pub fn triple_val(x: i32) -> i32 {
+    return x * 3;
+}
+"#;
+        let (util_ast, util_rep) = compile_and_check(util_src, "helpers.rts");
+        assert_eq!(util_rep.status, "ok");
+        let util_ext = crate::codegen_godot::GodotCodegen::emit_godot_extension(&util_ast.unwrap());
+        assert_eq!(util_ext.classes.len(), 1);
+        assert!(util_ext.classes[0].header_code.contains(": public RefCounted"));
+        assert!(util_ext.classes[0].header_code.contains("static int32_t triple_val(int32_t x);"));
+        assert!(util_ext.classes[0].source_code.contains("ClassDB::bind_static_method(\"DemoHelpersExtension\", D_METHOD(\"triple_val\", \"x\"), &DemoHelpersExtension::triple_val);"));
     }
 }

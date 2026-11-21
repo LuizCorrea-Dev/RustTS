@@ -1,0 +1,124 @@
+module engine.collections;
+
+@view
+pub struct ArenaVecU32 {
+    pub data: cap MutSlice<u32>,
+    pub len: usize,
+    pub capacity: usize,
+}
+
+pub fn vec_u32_push(v: inout ArenaVecU32, val: u32) -> bool {
+    if v.len >= v.capacity {
+        return false;
+    }
+    v.data[v.len] = val;
+    v.len = v.len + 1;
+    return true;
+}
+
+pub fn vec_u32_pop(v: inout ArenaVecU32, fallback: u32) -> u32 {
+    if v.len == 0 {
+        return fallback;
+    }
+    v.len = v.len - 1;
+    return v.data[v.len];
+}
+
+@view
+pub struct ArenaVecF32 {
+    pub data: cap MutSlice<f32>,
+    pub len: usize,
+    pub capacity: usize,
+}
+
+pub fn vec_f32_push(v: inout ArenaVecF32, val: f32) -> bool {
+    if v.len >= v.capacity {
+        return false;
+    }
+    v.data[v.len] = val;
+    v.len = v.len + 1;
+    return true;
+}
+
+@view
+pub struct ArenaQueueU32 {
+    pub data: cap MutSlice<u32>,
+    pub head: usize,
+    pub tail: usize,
+    pub count: usize,
+    pub capacity: usize,
+}
+
+pub fn queue_u32_push(q: inout ArenaQueueU32, val: u32) -> bool {
+    if q.count >= q.capacity {
+        return false;
+    }
+    q.data[q.tail] = val;
+    q.tail = (q.tail + 1) % q.capacity;
+    q.count = q.count + 1;
+    return true;
+}
+
+pub fn queue_u32_pop(q: inout ArenaQueueU32, fallback: u32) -> u32 {
+    if q.count == 0 {
+        return fallback;
+    }
+    let val: u32 = q.data[q.head];
+    q.head = (q.head + 1) % q.capacity;
+    q.count = q.count - 1;
+    return val;
+}
+
+@view
+pub struct ArenaMapU32 {
+    pub keys: cap MutSlice<u32>,
+    pub vals: cap MutSlice<u32>,
+    pub used: cap MutSlice<u8>,
+    pub capacity: usize,
+}
+
+pub fn map_u32_init(m: inout ArenaMapU32) {
+    let mut i: usize = 0;
+    while i < m.capacity {
+        m.used[i] = 0;
+        i = i + 1;
+    }
+}
+
+pub fn map_u32_insert(m: inout ArenaMapU32, key: u32, val: u32) -> bool {
+    if m.capacity == 0 {
+        return false;
+    }
+    let mut slot: usize = (key as usize) % m.capacity;
+    let mut probe: usize = 0;
+    while probe < m.capacity {
+        if m.used[slot] == 0 || m.keys[slot] == key {
+            m.keys[slot] = key;
+            m.vals[slot] = val;
+            m.used[slot] = 1;
+            return true;
+        }
+        slot = (slot + 1) % m.capacity;
+        probe = probe + 1;
+    }
+    return false;
+}
+
+pub fn map_u32_get(m: ArenaMapU32, key: u32, fallback: u32) -> u32 {
+    if m.capacity == 0 {
+        return fallback;
+    }
+    let mut slot: usize = (key as usize) % m.capacity;
+    let mut probe: usize = 0;
+    while probe < m.capacity {
+        if m.used[slot] == 0 {
+            return fallback;
+        }
+        if m.keys[slot] == key {
+            return m.vals[slot];
+        }
+        slot = (slot + 1) % m.capacity;
+        probe = probe + 1;
+    }
+    return fallback;
+}

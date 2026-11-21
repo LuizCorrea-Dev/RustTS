@@ -1,0 +1,31 @@
+module engine.threads;
+
+@repr_c
+pub struct ThreadRange {
+    pub worker_id: u32,
+    pub total_workers: u32,
+    pub start: u32,
+    pub end: u32,
+}
+
+pub extern "C" fn rtsc_threads_init_pool(requested_threads: u32) -> u32;
+pub extern "C" fn rtsc_threads_Wait_idle();
+
+pub fn parallel_chunk_range(total_items: u32, worker_id: u32, total_workers: u32) -> ThreadRange {
+    let w: u32 = if total_workers == 0 { 1 } else { total_workers };
+    let id: u32 = if worker_id >= w { w - 1 } else { worker_id };
+    let chunk: u32 = (total_items + w - 1) / w;
+    let s: u32 = id * chunk;
+    let raw_e: u32 = s + chunk;
+    let e: u32 = if raw_e > total_items { total_items } else { raw_e };
+    return ThreadRange {
+        worker_id: id,
+        total_workers: w,
+        start: s,
+        end: e,
+    };
+}
+
+pub fn parallel_worker_count(requested_threads: u32) -> u32 {
+    return rtsc_threads_init_pool(requested_threads);
+}

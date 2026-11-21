@@ -1,0 +1,128 @@
+module engine.zpmesh;
+
+pub const MAGIC_ZPM1: u32 = 0x4D505A31;
+pub const MAGIC_ZPM2: u32 = 0x4D505A32;
+pub const ZPMESH_V2_HEADER_BYTES: usize = 52;
+pub const ZPMESH_V2_VERTEX_BYTES: usize = 60;
+
+@repr_c
+pub struct ZpmeshV2Header {
+    pub magic: u32,
+    pub version: u32,
+    pub flags: u32,
+    pub vertex_count: u32,
+    pub index_count: u32,
+    pub material_count: u32,
+    pub texture_count: u32,
+    pub bone_count: u32,
+    pub skin_count: u32,
+    pub morph_count: u32,
+    pub anim_count: u32,
+    pub has_camera: u32,
+    pub light_count: u32,
+}
+
+@repr_c
+pub struct ZpmeshVertex {
+    pub pos: vec3,
+    pub normal: vec3,
+    pub tangent: vec4,
+    pub uv: vec2,
+    pub color_rgba: u32,
+    pub bone_index: u32,
+    pub bone_weight: u32,
+}
+
+pub fn zpmesh_q16_to_f32(q: i32) -> f32 {
+    return (q as f32) / 65536.0;
+}
+
+pub fn zpmesh_f32_to_q16(v: f32) -> i32 {
+    return (v * 65536.0) as i32;
+}
+
+pub fn zpmesh_read_u32_le(buf: cap ReadSlice<u8>, off: usize) -> u32 {
+    let b0: u32 = buf[off + 0] as u32;
+    let b1: u32 = buf[off + 1] as u32;
+    let b2: u32 = buf[off + 2] as u32;
+    let b3: u32 = buf[off + 3] as u32;
+    return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+}
+
+pub fn zpmesh_read_i32_le(buf: cap ReadSlice<u8>, off: usize) -> i32 {
+    return zpmesh_read_u32_le(buf, off) as i32;
+}
+
+pub fn zpmesh_parse_v2_header(buf: cap ReadSlice<u8>, buf_len: usize) -> ZpmeshV2Header {
+    if buf_len < ZPMESH_V2_HEADER_BYTES {
+        return ZpmeshV2Header {
+            magic: 0,
+            version: 0,
+            flags: 0,
+            vertex_count: 0,
+            index_count: 0,
+            material_count: 0,
+            texture_count: 0,
+            bone_count: 0,
+            skin_count: 0,
+            morph_count: 0,
+            anim_count: 0,
+            has_camera: 0,
+            light_count: 0,
+        };
+    }
+    return ZpmeshV2Header {
+        magic: zpmesh_read_u32_le(buf, 0),
+        version: zpmesh_read_u32_le(buf, 4),
+        flags: zpmesh_read_u32_le(buf, 8),
+        vertex_count: zpmesh_read_u32_le(buf, 12),
+        index_count: zpmesh_read_u32_le(buf, 16),
+        material_count: zpmesh_read_u32_le(buf, 20),
+        texture_count: zpmesh_read_u32_le(buf, 24),
+        bone_count: zpmesh_read_u32_le(buf, 28),
+        skin_count: zpmesh_read_u32_le(buf, 32),
+        morph_count: zpmesh_read_u32_le(buf, 36),
+        anim_count: zpmesh_read_u32_le(buf, 40),
+        has_camera: zpmesh_read_u32_le(buf, 44),
+        light_count: zpmesh_read_u32_le(buf, 48),
+    };
+}
+
+pub fn zpmesh_read_vertex_v2(buf: cap ReadSlice<u8>, buf_len: usize, vert_idx: usize) -> ZpmeshVertex {
+    let base: usize = ZPMESH_V2_HEADER_BYTES + (vert_idx * ZPMESH_V2_VERTEX_BYTES);
+    if (base + ZPMESH_V2_VERTEX_BYTES) > buf_len {
+        return ZpmeshVertex {
+            pos: vec3(0.0, 0.0, 0.0),
+            normal: vec3(0.0, 1.0, 0.0),
+            tangent: vec4(1.0, 0.0, 0.0, 1.0),
+            uv: vec2(0.0, 0.0),
+            color_rgba: 0xFFFFFFFF,
+            bone_index: 0,
+            bone_weight: 0,
+        };
+    }
+    let px: f32 = zpmesh_q16_to_f32(zpmesh_read_i32_le(buf, base + 0));
+    let py: f32 = zpmesh_q16_to_f32(zpmesh_read_i32_le(buf, base + 4));
+    let pz: f32 = zpmesh_q16_to_f32(zpmesh_read_i32_le(buf, base + 8));
+    let nx: f32 = zpmesh_q16_to_f32(zpmesh_read_i32_le(buf, base + 12));
+    let ny: f32 = zpmesh_q16_to_f32(zpmesh_read_i32_le(buf, base + 16));
+    let nz: f32 = zpmesh_q16_to_f32(zpmesh_read_i32_le(buf, base + 20));
+    let tx: f32 = zpmesh_q16_to_f32(zpmesh_read_i32_le(buf, base + 24));
+    let ty: f32 = zpmesh_q16_to_f32(zpmesh_read_i32_le(buf, base + 28));
+    let tz: f32 = zpmesh_q16_to_f32(zpmesh_read_i32_le(buf, base + 32));
+    let tw: f32 = zpmesh_q16_to_f32(zpmesh_read_i32_le(buf, base + 36));
+    let u: f32  = zpmesh_q16_to_f32(zpmesh_read_i32_le(buf, base + 40));
+    let v: f32  = zpmesh_q16_to_f32(zpmesh_read_i32_le(buf, base + 44));
+    let col: u32  = zpmesh_read_u32_le(buf, base + 48);
+    let bidx: u32 = zpmesh_read_u32_le(buf, base + 52);
+    let bw: u32   = zpmesh_read_u32_le(buf, base + 56);
+    return ZpmeshVertex {
+        pos: vec3(px, py, pz),
+        normal: vec3(nx, ny, nz),
+        tangent: vec4(tx, ty, tz, tw),
+        uv: vec2(u, v),
+        color_rgba: col,
+        bone_index: bidx,
+        bone_weight: bw,
+    };
+}

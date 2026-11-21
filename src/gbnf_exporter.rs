@@ -4,7 +4,7 @@
 pub fn export_rustts_gbnf() -> &'static str {
     r#"# ==============================================================================
 # RustTS (.rts) Official Formal Grammar for Constrained LLM Decoding (GBNF)
-# Compiler: rtsc 2.2.0-rts | Specification: README.md / MANUAL_TIPOS_RUSTTS.md (One Canonical Way)
+# Compiler: rtsc 2.3.0-rts | Specification: README.md / MANUAL_TIPOS_RUSTTS.md (One Canonical Way)
 # ==============================================================================
 
 root            ::= ws module-decl? (import-decl)* (item ws)*
@@ -25,6 +25,7 @@ attribute       ::= "@component"
                   | "@fragment_shader"
                   | "@shader_shared"
                   | "@repr_c"
+                  | "@view"
                   | "@sealed_sig"
                   | "@open_sig"
                   | "@system" ws "(" ws "stage" ws "=" ws string-lit ws ")"
@@ -32,6 +33,9 @@ attribute       ::= "@component"
                   | "@unreal_actor" ws "(" ws "replicate" ws "=" ws bool-lit ws "," ws "category" ws "=" ws string-lit ws ")"
                   | "@unreal_impl" ws "(" ws ident ws ")"
                   | "@uproperty" ws "(" ws ident (ws "," ws ident)* ws ")"
+                  | "@godot_node" (ws "(" ws "base" ws "=" ws string-lit (ws "," ws "category" ws "=" ws string-lit)? ws ")")?
+                  | "@godot_impl" ws "(" ws ident ws ")"
+                  | "@gdexport" (ws "(" ws "hint" ws "=" ws string-lit (ws "," ws "hint_string" ws "=" ws string-lit)? ws ")")?
                   | "@route" ws "(" ws string-lit ws "," ws string-lit ws ")"
 
 struct-decl     ::= "struct" ws1 ident ws "{" ws (struct-field ws)* "}"
@@ -51,10 +55,10 @@ cap-domain      ::= "I2CBus" | "I2CRead" | "I2CPort" | "PWMPin" | "PWMWrite"
                   | "ReadColumn" | "MutColumn" | "ReadSlice" | "MutSlice" | "Read" | "Mut"
                   | "StaticArena" | "LevelArena" | "SessionArena" | "FrameArena" | "RequestArena" | "TaskArena"
                   | "ReadFrameArena" | "ReadRequestArena" | "ReadTaskArena"
-                  | "NetSocket" | "TcpSocket" | "UdpTick" | "HttpRoute"
+                  | "NetSocket" | "NetworkSocket" | "TcpSocket" | "UdpTick" | "HttpRoute"
                   | "SqlRead" | "SqlWrite"
                   | "GpuQueue" | "WebGpuDevice" | "CanvasContext" | "AudioBuffer"
-                  | "WindowHost" | "InputDevice" | "FileSystem" | "AudioDevice"
+                  | "WindowHost" | "InputDevice" | "FileSystem" | "AudioDevice" | "AudioInput"
 
 type-expr       ::= primitive-type
                   | math-type

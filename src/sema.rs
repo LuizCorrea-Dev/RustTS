@@ -156,12 +156,16 @@ impl SymbolTable {
 
         // Intrínsecos matemáticos determinísticos do Prelude (`core.math` -> `<math.h>`)
         let f32_ty = TypeExpr::Primitive(PrimitiveType::F32);
-        for unary_math in ["abs", "sqrt", "sin", "cos", "floor", "ceil"] {
+        let u32_ty = TypeExpr::Primitive(PrimitiveType::U32);
+        for unary_math in [
+            "abs", "sqrt", "sin", "cos", "tan", "asin", "acos", "atan", "exp", "log", "floor",
+            "ceil",
+        ] {
             let key = format!("math::{}", unary_math);
             fn_return_types.insert(key.clone(), Some(f32_ty.clone()));
             fn_param_types.insert(key, vec![f32_ty.clone()]);
         }
-        for binary_math in ["min", "max", "atan2"] {
+        for binary_math in ["min", "max", "atan2", "pow"] {
             let key = format!("math::{}", binary_math);
             fn_return_types.insert(key.clone(), Some(f32_ty.clone()));
             fn_param_types.insert(key, vec![f32_ty.clone(), f32_ty.clone()]);
@@ -171,6 +175,10 @@ impl SymbolTable {
             fn_return_types.insert(key.clone(), Some(f32_ty.clone()));
             fn_param_types.insert(key, vec![f32_ty.clone(), f32_ty.clone(), f32_ty.clone()]);
         }
+        fn_return_types.insert("math::f32_from_bits".to_string(), Some(f32_ty.clone()));
+        fn_param_types.insert("math::f32_from_bits".to_string(), vec![u32_ty.clone()]);
+        fn_return_types.insert("math::f32_to_bits".to_string(), Some(u32_ty.clone()));
+        fn_param_types.insert("math::f32_to_bits".to_string(), vec![f32_ty.clone()]);
 
         // Intrínsecos de I/O determinístico para CLI e telemetria (`io::println`, `io::print_f32`, `io::print_i32`, `io::print_u32`)
         fn_return_types.insert("io::println".to_string(), None);
@@ -732,7 +740,38 @@ impl SemanticAnalyzer {
                 | "InputDevice"
                 | "FileSystem"
                 | "AudioDevice"
+                | "AudioInput"
+                | "NetworkSocket"
         )
+    }
+
+    fn type_contains_view_or_slice(
+        ty: &TypeExpr,
+        sym_table: &SymbolTable,
+        visiting: &mut HashSet<String>,
+    ) -> bool {
+        if ty.is_slice_capability() {
+            return true;
+        }
+        match ty {
+            TypeExpr::Named { name, .. } => {
+                if !visiting.insert(name.clone()) {
+                    return false;
+                }
+                let is_view = sym_table.struct_decls.get(name).map_or(false, |d| {
+                    d.is_view()
+                        || d.fields.iter().any(|f| {
+                            Self::type_contains_view_or_slice(&f.ty, sym_table, visiting)
+                        })
+                });
+                visiting.remove(name);
+                is_view
+            }
+            TypeExpr::Array(inner, _) | TypeExpr::Option(inner) => {
+                Self::type_contains_view_or_slice(inner, sym_table, visiting)
+            }
+            _ => false,
+        }
     }
 
     fn build_fixes_for_violation(
@@ -861,21 +900,26 @@ impl SemanticAnalyzer {
             });
         }
 
-        // RTS-E0501: Bloqueia MutSlice<T> / ReadSlice<T> dentro de campos de struct (Guarda Anti-Escape)
-        for field in &s.fields {
-            if field.ty.is_slice_capability() {
-                self.diagnostics.push(DiagnosticEntry {
-                    error_code: "RTS-E0501".to_string(),
-                    category: DiagnosticCategory::ArenaLifetimeEscape,
-                    file: self.file_path.clone(),
-                    span: field.span,
-                    ast_node: format!("StructField({}.{})", s.name, field.name),
-                    message: format!(
-                        "Capability slices ('MutSlice<T>' / 'ReadSlice<T>') cannot escape function scope via struct field '{}.{}' (prevents dangling pointers).",
-                        s.name, field.name
-                    ),
-                    deterministic_fixes: vec![],
-                });
+        // RTS-E0501: Bloqueia MutSlice<T> / ReadSlice<T> (ou `@view struct` aninhado) dentro de struct normal.
+        // Structs anotadas com `@view` agrupam slices emprestadas localmente (visões SoA) sem escape via `return`.
+        if !s.is_view() {
+            for field in &s.fields {
+                if field.ty.is_slice_capability()
+                    || Self::type_contains_view_or_slice(&field.ty, sym_table, &mut HashSet::new())
+                {
+                    self.diagnostics.push(DiagnosticEntry {
+                        error_code: "RTS-E0501".to_string(),
+                        category: DiagnosticCategory::ArenaLifetimeEscape,
+                        file: self.file_path.clone(),
+                        span: field.span,
+                        ast_node: format!("StructField({}.{})", s.name, field.name),
+                        message: format!(
+                            "Capability slices ('MutSlice<T>' / 'ReadSlice<T>') and '@view' structs cannot escape function scope via struct field '{}.{}' (prevents dangling pointers; annotate '{}' with '@view').",
+                            s.name, field.name, s.name
+                        ),
+                        deterministic_fixes: vec![],
+                    });
+                }
             }
         }
 
@@ -1009,7 +1053,7 @@ impl SemanticAnalyzer {
         if func
             .return_type
             .as_ref()
-            .map(|t| t.is_slice_capability())
+            .map(|t| Self::type_contains_view_or_slice(t, sym_table, &mut HashSet::new()))
             .unwrap_or(false)
         {
             self.diagnostics.push(DiagnosticEntry {
@@ -1019,7 +1063,7 @@ impl SemanticAnalyzer {
                 span: func.span,
                 ast_node: format!("FnReturn({})", func.name),
                 message: format!(
-                    "Function '{}' cannot return capability slice ('MutSlice<T>' / 'ReadSlice<T>'); slice capabilities must remain scoped to caller lifetimes.",
+                    "Function '{}' cannot return capability slice ('MutSlice<T>' / 'ReadSlice<T>') or '@view' struct; slice capabilities must remain scoped to caller lifetimes.",
                     func.name
                 ),
                 deterministic_fixes: vec![],
@@ -1623,6 +1667,15 @@ impl SemanticAnalyzer {
         target: &Expr,
         span: Span,
     ) {
+        let index_recv_cap = if let Expr::Index { receiver, .. } = target {
+            if let Some(TypeExpr::Capability(c)) = self.infer_expr_type(env, sym_table, receiver) {
+                Some(c)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         if let Some(root_ident) = Self::extract_root_receiver(target) {
             if sym_table.consts.contains_key(&root_ident) {
                 self.diagnostics.push(DiagnosticEntry {
@@ -1639,9 +1692,11 @@ impl SemanticAnalyzer {
                 });
             } else if env.immutable_locals.contains(&root_ident) {
                 let is_mut_cap_element_write = !matches!(target, Expr::Ident(_, _))
-                    && env.param_caps.get(&root_ident).map_or(false, |c| {
+                    && (index_recv_cap.as_ref().map_or(false, |c| {
                         matches!(c.kind, CapabilityKind::MutSlice | CapabilityKind::MutColumn)
-                    });
+                    }) || env.param_caps.get(&root_ident).map_or(false, |c| {
+                        matches!(c.kind, CapabilityKind::MutSlice | CapabilityKind::MutColumn)
+                    }));
                 if !is_mut_cap_element_write {
                     self.diagnostics.push(DiagnosticEntry {
                         error_code: "RTS-E0405".to_string(),
@@ -1657,7 +1712,10 @@ impl SemanticAnalyzer {
                     });
                 }
             }
-            if let Some(cap_spec) = env.param_caps.get(&root_ident) {
+            if let Some(cap_spec) = index_recv_cap
+                .as_ref()
+                .or_else(|| env.param_caps.get(&root_ident))
+            {
                 if matches!(
                     cap_spec.kind,
                     CapabilityKind::ReadColumn
@@ -1832,7 +1890,8 @@ impl SemanticAnalyzer {
                         self.check_expr(func, env, sym_table, a);
                     }
                     let expected_arity = match called_fn.as_str() {
-                        "addr_of" | "slice_ptr" | "free_aligned" | "str_len" => Some(1usize),
+                        "addr_of" | "slice_ptr" | "free_aligned" | "str_len" | "f32_from_bits"
+                        | "f32_to_bits" => Some(1usize),
                         "zero" | "alloc_aligned" | "str_byte" => Some(2usize),
                         "copy" => Some(3usize),
                         _ => None,
@@ -2132,8 +2191,20 @@ impl SemanticAnalyzer {
 
                     // Validação Estrita de Capacidade no Receptor de `MethodCall` (Fecha Brecha de `.metodo()` sem `cap`)
                     if let Some(req_cap) = Self::required_capability_for_method(method) {
-                        match env.param_caps.get(&root_ident) {
+                        let inferred_cap = match self.infer_expr_type(env, sym_table, receiver) {
+                            Some(TypeExpr::Capability(c)) => Some(c),
+                            _ => env.param_caps.get(&root_ident).cloned(),
+                        };
+                        match inferred_cap {
                             Some(cap_spec) => {
+                                let close_ok = method == "close"
+                                    && matches!(
+                                        cap_spec.kind,
+                                        CapabilityKind::WindowHost
+                                            | CapabilityKind::AudioInput
+                                            | CapabilityKind::AudioDevice
+                                            | CapabilityKind::Network
+                                    );
                                 if cap_spec.kind == CapabilityKind::SqlRead
                                     && req_cap.kind == CapabilityKind::SqlWrite
                                 {
@@ -2157,10 +2228,12 @@ impl SemanticAnalyzer {
                                             ),
                                         ],
                                     });
-                                } else if !Self::receiver_cap_matches_method(
-                                    &cap_spec.kind,
-                                    &req_cap.kind,
-                                ) {
+                                } else if !close_ok
+                                    && !Self::receiver_cap_matches_method(
+                                        &cap_spec.kind,
+                                        &req_cap.kind,
+                                    )
+                                {
                                     let fixes = Self::build_fixes_for_violation(
                                         func,
                                         &root_ident,
@@ -2586,10 +2659,14 @@ impl SemanticAnalyzer {
                 }
             }
             Expr::Index { receiver, .. } => {
-                if let Some(TypeExpr::Array(inner, _)) =
-                    self.infer_expr_type(env, sym_table, receiver)
-                {
-                    return Some(*inner);
+                match self.infer_expr_type(env, sym_table, receiver) {
+                    Some(TypeExpr::Array(inner, _)) => return Some(*inner),
+                    Some(TypeExpr::Capability(cap)) => {
+                        if let Some(elem_ty) = cap.slice_element_type() {
+                            return Some(elem_ty);
+                        }
+                    }
+                    _ => {}
                 }
                 if let Some(root) = Self::extract_root_receiver(receiver) {
                     if let Some(cap) = env.param_caps.get(&root) {
@@ -2715,6 +2792,8 @@ impl SemanticAnalyzer {
                         "addr_of" | "slice_ptr" | "alloc_aligned" => {
                             Some(TypeExpr::Primitive(PrimitiveType::U64))
                         }
+                        "f32_from_bits" => Some(TypeExpr::Primitive(PrimitiveType::F32)),
+                        "f32_to_bits" => Some(TypeExpr::Primitive(PrimitiveType::U32)),
                         "str_len" => Some(TypeExpr::Primitive(PrimitiveType::Usize)),
                         "str_byte" => Some(TypeExpr::Primitive(PrimitiveType::U8)),
                         _ => None,
@@ -2863,13 +2942,17 @@ impl SemanticAnalyzer {
                     Some(CapGenericArg::TypeName("Event".to_string())),
                 ))
             }
+            "used_bytes" | "capacity_bytes" => Some(CapabilitySpec::from_name_and_arg(
+                "ReadFrameArena",
+                Some(CapGenericArg::TypeName("Event".to_string())),
+            )),
             "fill" => Some(CapabilitySpec::from_name_and_arg(
                 "MutSlice",
                 Some(CapGenericArg::TypeName("T".to_string())),
             )),
-            "send" | "recv" | "broadcast" | "connect" => {
-                Some(CapabilitySpec::from_name_and_arg("NetSocket", None))
-            }
+            "send" | "recv" | "broadcast" | "connect" | "udp_bind" | "udp_send_to"
+            | "udp_recv_from" | "tcp_connect" | "tcp_listen" | "tcp_accept" | "tcp_send"
+            | "tcp_recv" | "close_socket" => Some(CapabilitySpec::from_name_and_arg("NetSocket", None)),
             "query" | "select" | "find_by_id" | "fetch_one" => {
                 Some(CapabilitySpec::from_name_and_arg(
                     "SqlRead",
@@ -2886,17 +2969,34 @@ impl SemanticAnalyzer {
                 "ReadColumn",
                 Some(CapGenericArg::TypeName("Component".to_string())),
             )),
-            "open_fullscreen" | "open_headless" | "width" | "height" | "poll_events"
-            | "present_rgba" | "draw_text" | "close" | "is_smoke_test" => {
-                Some(CapabilitySpec::from_name_and_arg("WindowHost", None))
-            }
+            "open_fullscreen"
+            | "open_windowed"
+            | "open_headless"
+            | "set_fullscreen"
+            | "set_cursor_locked"
+            | "set_cursor_visible"
+            | "width"
+            | "height"
+            | "poll_events"
+            | "present_rgba"
+            | "draw_text"
+            | "draw_rect"
+            | "draw_text_scaled"
+            | "draw_blit_rgba"
+            | "close"
+            | "is_smoke_test" => Some(CapabilitySpec::from_name_and_arg("WindowHost", None)),
             "poll"
             | "is_key_down"
             | "was_key_pressed"
             | "mouse_x"
             | "mouse_y"
+            | "mouse_dx"
+            | "mouse_dy"
+            | "mouse_wheel_delta"
             | "mouse_left_down"
             | "mouse_clicked"
+            | "mouse_right_down"
+            | "mouse_right_clicked"
             | "gamepad_connected"
             | "gamepad_move_x"
             | "gamepad_move_y"
@@ -2906,11 +3006,29 @@ impl SemanticAnalyzer {
             | "gamepad_fire_down"
             | "was_gamepad_pressed"
             | "set_vibration" => Some(CapabilitySpec::from_name_and_arg("InputDevice", None)),
-            "create_dir" | "write_text" | "write_struct" | "read_struct" | "write_raw" | "read_raw" => {
-                Some(CapabilitySpec::from_name_and_arg("FileSystem", None))
-            }
-            "write_synth_wav" | "play_wav_async" => {
-                Some(CapabilitySpec::from_name_and_arg("AudioDevice", None))
+            "create_dir"
+            | "write_text"
+            | "write_struct"
+            | "read_struct"
+            | "write_raw"
+            | "read_raw"
+            | "exists"
+            | "file_size"
+            | "read_text"
+            | "read_raw_slice"
+            | "write_raw_slice"
+            | "list_dir"
+            | "load_image_rgba" => Some(CapabilitySpec::from_name_and_arg("FileSystem", None)),
+            "write_synth_wav"
+            | "play_wav_async"
+            | "mixer_init"
+            | "mixer_load_wav"
+            | "mixer_play"
+            | "mixer_set_channel"
+            | "mixer_stop_channel"
+            | "mixer_mix_frame" => Some(CapabilitySpec::from_name_and_arg("AudioDevice", None)),
+            "open" | "set_muted" | "is_muted" | "read_pcm" => {
+                Some(CapabilitySpec::from_name_and_arg("AudioInput", None))
             }
             "tick_frame_fps" | "last_frame_ms" => {
                 Some(CapabilitySpec::from_name_and_arg("MonotonicClock", None))
@@ -2925,6 +3043,8 @@ impl SemanticAnalyzer {
     ) -> bool {
         match (receiver_kind, required_kind) {
             (CapabilityKind::ScopedArena(_), CapabilityKind::ScopedArena(_)) => true,
+            (CapabilityKind::ScopedArena(_), CapabilityKind::ReadScopedArena(_)) => true,
+            (CapabilityKind::ReadScopedArena(_), CapabilityKind::ReadScopedArena(_)) => true,
             (CapabilityKind::SqlWrite, CapabilityKind::SqlRead) => true,
             (CapabilityKind::MutColumn, CapabilityKind::ReadColumn) => true,
             (CapabilityKind::MutSlice, CapabilityKind::ReadSlice) => true,
@@ -3073,27 +3193,53 @@ impl SemanticAnalyzer {
     ) -> Option<Option<TypeExpr>> {
         let b = Some(Some(TypeExpr::Primitive(PrimitiveType::Bool)));
         let i = Some(Some(TypeExpr::Primitive(PrimitiveType::I32)));
+        let u64_t = Some(Some(TypeExpr::Primitive(PrimitiveType::U64)));
+        let usize_t = Some(Some(TypeExpr::Primitive(PrimitiveType::Usize)));
         let f = Some(Some(TypeExpr::Primitive(PrimitiveType::F32)));
         let v = Some(None);
         match (kind, method) {
             (
+                CapabilityKind::ScopedArena(_) | CapabilityKind::ReadScopedArena(_),
+                "used_bytes" | "capacity_bytes",
+            ) => usize_t,
+            (
                 CapabilityKind::WindowHost,
-                "open_fullscreen" | "open_headless" | "poll_events" | "is_smoke_test",
+                "open_fullscreen"
+                | "open_windowed"
+                | "open_headless"
+                | "poll_events"
+                | "is_smoke_test",
             ) => b,
             (CapabilityKind::WindowHost, "width" | "height") => i,
-            (CapabilityKind::WindowHost, "present_rgba" | "draw_text" | "close") => v,
+            (
+                CapabilityKind::WindowHost,
+                "set_fullscreen"
+                | "set_cursor_locked"
+                | "set_cursor_visible"
+                | "present_rgba"
+                | "draw_text"
+                | "draw_rect"
+                | "draw_text_scaled"
+                | "draw_blit_rgba"
+                | "close",
+            ) => v,
             (
                 CapabilityKind::InputDevice,
                 "is_key_down"
                 | "was_key_pressed"
                 | "mouse_left_down"
                 | "mouse_clicked"
+                | "mouse_right_down"
+                | "mouse_right_clicked"
                 | "gamepad_connected"
                 | "gamepad_aim_active"
                 | "gamepad_fire_down"
                 | "was_gamepad_pressed",
             ) => b,
-            (CapabilityKind::InputDevice, "mouse_x" | "mouse_y") => i,
+            (
+                CapabilityKind::InputDevice,
+                "mouse_x" | "mouse_y" | "mouse_dx" | "mouse_dy" | "mouse_wheel_delta",
+            ) => i,
             (
                 CapabilityKind::InputDevice,
                 "gamepad_move_x" | "gamepad_move_y" | "gamepad_aim_x" | "gamepad_aim_y",
@@ -3101,13 +3247,42 @@ impl SemanticAnalyzer {
             (CapabilityKind::InputDevice, "poll" | "set_vibration") => v,
             (
                 CapabilityKind::FileSystem,
-                "create_dir" | "write_text" | "write_struct" | "read_struct" | "write_raw",
+                "create_dir"
+                | "write_text"
+                | "write_struct"
+                | "read_struct"
+                | "write_raw"
+                | "exists"
+                | "write_raw_slice"
+                | "load_image_rgba",
             ) => b,
-            (CapabilityKind::FileSystem, "read_raw") => {
-                Some(Some(TypeExpr::Primitive(PrimitiveType::U64)))
-            }
-            (CapabilityKind::AudioDevice, "write_synth_wav") => b,
-            (CapabilityKind::AudioDevice, "play_wav_async") => v,
+            (CapabilityKind::FileSystem, "read_raw" | "file_size") => u64_t,
+            (CapabilityKind::FileSystem, "read_text" | "read_raw_slice" | "list_dir") => usize_t,
+            (
+                CapabilityKind::AudioDevice,
+                "write_synth_wav" | "mixer_init" | "mixer_load_wav",
+            ) => b,
+            (CapabilityKind::AudioDevice, "mixer_play") => i,
+            (CapabilityKind::AudioDevice, "mixer_mix_frame") => usize_t,
+            (
+                CapabilityKind::AudioDevice,
+                "play_wav_async" | "mixer_set_channel" | "mixer_stop_channel",
+            ) => v,
+            (CapabilityKind::AudioInput, "open" | "is_muted") => b,
+            (CapabilityKind::AudioInput, "read_pcm") => usize_t,
+            (CapabilityKind::AudioInput, "set_muted" | "close") => v,
+            (
+                CapabilityKind::Network,
+                "udp_bind"
+                | "udp_send_to"
+                | "udp_recv_from"
+                | "tcp_connect"
+                | "tcp_listen"
+                | "tcp_accept"
+                | "tcp_send"
+                | "tcp_recv",
+            ) => i,
+            (CapabilityKind::Network, "close_socket") => v,
             (CapabilityKind::Clock, "tick_frame_fps" | "last_frame_ms") => f,
             _ => None,
         }
@@ -3128,16 +3303,40 @@ impl SemanticAnalyzer {
             return;
         };
         let str_ty = TypeExpr::Primitive(PrimitiveType::Str);
+        let bool_ty = TypeExpr::Primitive(PrimitiveType::Bool);
+        let i16_ty = TypeExpr::Primitive(PrimitiveType::I16);
         let i32_ty = TypeExpr::Primitive(PrimitiveType::I32);
+        let u8_ty = TypeExpr::Primitive(PrimitiveType::U8);
+        let u16_ty = TypeExpr::Primitive(PrimitiveType::U16);
         let u32_ty = TypeExpr::Primitive(PrimitiveType::U32);
         let f32_ty = TypeExpr::Primitive(PrimitiveType::F32);
         let slice_u32_ty = TypeExpr::Capability(CapabilitySpec::from_name_and_arg(
             "ReadSlice",
             Some(CapGenericArg::ElementType(Box::new(u32_ty.clone()))),
         ));
+        let mut_slice_u32_ty = TypeExpr::Capability(CapabilitySpec::from_name_and_arg(
+            "MutSlice",
+            Some(CapGenericArg::ElementType(Box::new(u32_ty.clone()))),
+        ));
+        let slice_u8_ty = TypeExpr::Capability(CapabilitySpec::from_name_and_arg(
+            "ReadSlice",
+            Some(CapGenericArg::ElementType(Box::new(u8_ty.clone()))),
+        ));
+        let mut_slice_u8_ty = TypeExpr::Capability(CapabilitySpec::from_name_and_arg(
+            "MutSlice",
+            Some(CapGenericArg::ElementType(Box::new(u8_ty))),
+        ));
+        let mut_slice_i16_ty = TypeExpr::Capability(CapabilitySpec::from_name_and_arg(
+            "MutSlice",
+            Some(CapGenericArg::ElementType(Box::new(i16_ty))),
+        ));
 
         let expected: Option<Vec<TypeExpr>> = match (&rec_cap.kind, method) {
-            (CapabilityKind::WindowHost, "open_fullscreen") => {
+            (
+                CapabilityKind::ScopedArena(_) | CapabilityKind::ReadScopedArena(_),
+                "used_bytes" | "capacity_bytes",
+            ) => Some(vec![]),
+            (CapabilityKind::WindowHost, "open_fullscreen" | "open_windowed") => {
                 Some(vec![str_ty.clone(), i32_ty.clone(), i32_ty.clone()])
             }
             (CapabilityKind::WindowHost, "open_headless") => {
@@ -3145,19 +3344,49 @@ impl SemanticAnalyzer {
             }
             (
                 CapabilityKind::WindowHost,
+                "set_fullscreen" | "set_cursor_locked" | "set_cursor_visible",
+            ) => Some(vec![bool_ty.clone()]),
+            (
+                CapabilityKind::WindowHost,
                 "width" | "height" | "poll_events" | "close" | "is_smoke_test",
             ) => Some(vec![]),
-            (CapabilityKind::WindowHost, "present_rgba") => Some(vec![slice_u32_ty]),
+            (CapabilityKind::WindowHost, "present_rgba") => Some(vec![slice_u32_ty.clone()]),
             (CapabilityKind::WindowHost, "draw_text") => {
                 Some(vec![i32_ty.clone(), i32_ty.clone(), u32_ty.clone(), str_ty.clone()])
             }
+            (CapabilityKind::WindowHost, "draw_rect") => Some(vec![
+                i32_ty.clone(),
+                i32_ty.clone(),
+                i32_ty.clone(),
+                i32_ty.clone(),
+                u32_ty.clone(),
+            ]),
+            (CapabilityKind::WindowHost, "draw_text_scaled") => Some(vec![
+                i32_ty.clone(),
+                i32_ty.clone(),
+                i32_ty.clone(),
+                u32_ty.clone(),
+                str_ty.clone(),
+            ]),
+            (CapabilityKind::WindowHost, "draw_blit_rgba") => Some(vec![
+                i32_ty.clone(),
+                i32_ty.clone(),
+                i32_ty.clone(),
+                i32_ty.clone(),
+                slice_u32_ty,
+            ]),
             (
                 CapabilityKind::InputDevice,
                 "poll"
                 | "mouse_x"
                 | "mouse_y"
+                | "mouse_dx"
+                | "mouse_dy"
+                | "mouse_wheel_delta"
                 | "mouse_left_down"
                 | "mouse_clicked"
+                | "mouse_right_down"
+                | "mouse_right_clicked"
                 | "gamepad_connected"
                 | "gamepad_move_x"
                 | "gamepad_move_y"
@@ -3171,10 +3400,23 @@ impl SemanticAnalyzer {
                 "is_key_down" | "was_key_pressed" | "was_gamepad_pressed",
             ) => Some(vec![u32_ty.clone()]),
             (CapabilityKind::InputDevice, "set_vibration") => Some(vec![f32_ty.clone()]),
-            (CapabilityKind::FileSystem, "create_dir") => Some(vec![str_ty.clone()]),
+            (CapabilityKind::FileSystem, "create_dir" | "exists" | "file_size") => {
+                Some(vec![str_ty.clone()])
+            }
             (CapabilityKind::FileSystem, "write_text") => {
                 Some(vec![str_ty.clone(), str_ty.clone()])
             }
+            (CapabilityKind::FileSystem, "read_text" | "read_raw_slice" | "list_dir") => {
+                Some(vec![str_ty.clone(), mut_slice_u8_ty.clone()])
+            }
+            (CapabilityKind::FileSystem, "write_raw_slice") => {
+                Some(vec![str_ty.clone(), slice_u8_ty.clone()])
+            }
+            (CapabilityKind::FileSystem, "load_image_rgba") => Some(vec![
+                str_ty.clone(),
+                mut_slice_u32_ty.clone(),
+                mut_slice_u32_ty,
+            ]),
             (CapabilityKind::FileSystem, "write_raw" | "read_raw") => {
                 let u64_ty = TypeExpr::Primitive(PrimitiveType::U64);
                 Some(vec![str_ty.clone(), u64_ty.clone(), u64_ty])
@@ -3262,7 +3504,41 @@ impl SemanticAnalyzer {
                 u32_ty.clone(),
                 i32_ty.clone(),
             ]),
-            (CapabilityKind::AudioDevice, "play_wav_async") => Some(vec![str_ty]),
+            (CapabilityKind::AudioDevice, "play_wav_async") => Some(vec![str_ty.clone()]),
+            (CapabilityKind::AudioDevice, "mixer_init") => Some(vec![u32_ty.clone()]),
+            (CapabilityKind::AudioDevice, "mixer_load_wav") => {
+                Some(vec![u32_ty.clone(), str_ty.clone()])
+            }
+            (CapabilityKind::AudioDevice, "mixer_play") => Some(vec![
+                u32_ty.clone(),
+                f32_ty.clone(),
+                f32_ty.clone(),
+                f32_ty.clone(),
+                bool_ty.clone(),
+            ]),
+            (CapabilityKind::AudioDevice, "mixer_set_channel") => Some(vec![
+                i32_ty.clone(),
+                f32_ty.clone(),
+                f32_ty.clone(),
+                f32_ty.clone(),
+            ]),
+            (CapabilityKind::AudioDevice, "mixer_stop_channel") => Some(vec![i32_ty.clone()]),
+            (CapabilityKind::AudioDevice, "mixer_mix_frame") => Some(vec![mut_slice_i16_ty.clone()]),
+            (CapabilityKind::AudioInput, "open") => Some(vec![u32_ty.clone()]),
+            (CapabilityKind::AudioInput, "set_muted") => Some(vec![bool_ty]),
+            (CapabilityKind::AudioInput, "is_muted" | "close") => Some(vec![]),
+            (CapabilityKind::AudioInput, "read_pcm") => Some(vec![mut_slice_i16_ty]),
+            (CapabilityKind::Network, "udp_bind" | "tcp_listen") => Some(vec![u16_ty.clone()]),
+            (CapabilityKind::Network, "udp_send_to") => {
+                Some(vec![i32_ty.clone(), str_ty.clone(), u16_ty.clone(), slice_u8_ty.clone()])
+            }
+            (CapabilityKind::Network, "udp_recv_from") => {
+                Some(vec![i32_ty.clone(), mut_slice_u8_ty.clone(), mut_slice_u8_ty.clone()])
+            }
+            (CapabilityKind::Network, "tcp_connect") => Some(vec![str_ty, u16_ty]),
+            (CapabilityKind::Network, "tcp_accept" | "close_socket") => Some(vec![i32_ty.clone()]),
+            (CapabilityKind::Network, "tcp_send") => Some(vec![i32_ty.clone(), slice_u8_ty]),
+            (CapabilityKind::Network, "tcp_recv") => Some(vec![i32_ty, mut_slice_u8_ty]),
             (CapabilityKind::Clock, "tick_frame_fps") => Some(vec![u32_ty]),
             (CapabilityKind::Clock, "last_frame_ms") => Some(vec![]),
             _ => None,

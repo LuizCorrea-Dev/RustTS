@@ -1,7 +1,7 @@
 use crate::lexer::Span;
 use serde::{Deserialize, Serialize};
 
-pub const COMPILER_VERSION: &str = "2.2.0-rts";
+pub const COMPILER_VERSION: &str = "2.3.0-rts";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DiagnosticCategory {

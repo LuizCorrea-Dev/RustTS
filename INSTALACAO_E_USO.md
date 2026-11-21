@@ -2,7 +2,7 @@
   <img src="./rustts_language_logo.png" alt="RustTS Logo" width="220">
 </p>
 
-# Guia Oficial de Instalação e Uso — RustTS (`rtsc v2.2.0-rts`)
+# Guia Oficial de Instalação e Uso — RustTS (`rtsc v2.3.0-rts`)
 
 Bem-vindo ao **RustTS (`.rts`)**, o compilador determinístico de sistemas, motores em tempo real e controle físico de hardware baseado em **Capacidades (`cap`)**, **Arenas Escopadas ($O(1)$)** e geração nativa **SoA/AVX2**.
 
@@ -28,7 +28,7 @@ curl -fsSL https://raw.githubusercontent.com/LuizCorrea-Dev/RustTS/main/scripts/
 export PATH="$HOME/.rtsc/bin:$PATH"
 ```
 
-### B. Compilando a Partir do Código-Fonte (`v2.2.0-rts`)
+### B. Compilando a Partir do Código-Fonte (`v2.3.0-rts`)
 
 Com o toolchain **Rust (`cargo` / `rustc`)** instalado (via [rustup.rs](https://rustup.rs) ou `winget install Rustlang.Rustup` no Windows):
 
@@ -36,7 +36,7 @@ Com o toolchain **Rust (`cargo` / `rustc`)** instalado (via [rustup.rs](https://
 git clone https://github.com/LuizCorrea-Dev/RustTS.git
 cd RustTS
 
-# Executa os 36 testes unitários do compilador
+# Executa os 80 testes automatizados do compilador
 cargo test
 
 # Compila o executável otimizado (LTO fat, opt-level 3)
@@ -49,7 +49,7 @@ cargo install --path .
 ### Validar a Instalação
 ```bash
 rtsc --version
-# Saída esperada: rtsc 2.2.0-rts
+# Saída esperada: rtsc 2.3.0-rts
 ```
 
 ### Requisito Opcional para Execução Nativa (`rtsc run` e `--bin`)
@@ -61,7 +61,7 @@ rtsc --version
 
 ---
 
-## 2. Manual de Comandos do Compilador (`rtsc 2.2.0-rts`)
+## 2. Manual de Comandos do Compilador (`rtsc 2.3.0-rts`)
 
 ### 2.1. Criar Novo Projeto (`rtsc init`)
 Gera `rts.toml`, `.gitignore`, `src/main.rts` (com `pub fn main() -> i32`) e `build/`:
@@ -69,15 +69,16 @@ Gera `rts.toml`, `.gitignore`, `src/main.rts` (com `pub fn main() -> i32`) e `bu
 rtsc init meu_projeto
 ```
 
-### 2.2. Validar Contratos, Tipos, Arenas e Múltiplos Módulos (`rtsc check`)
-Executa verificação estática completa (`RTS-E0101` a `RTS-E0900`), incluindo resolução recursiva de `import` em disco (`RTS-E0102`):
+### 2.2. Validar Contratos, Tipos, Arenas, Paridade e Múltiplos Módulos (`rtsc check`)
+Executa verificação estática completa (`RTS-E0101` a `RTS-E0900`), resolução recursiva de `import` em disco (`RTS-E0102`) e verificação opcional de paridade C99 / `--llvm` (`--verify-parity`):
 ```bash
 rtsc check examples/thermal_control.rts
+rtsc check src/main.rts --verify-parity
 rtsc check examples/kanori_zone_sim/src/main.rts --json-diagnostics
 ```
 Saída esperada:
 ```text
-[rtsc 2.2.0-rts] OK: 0 capability violations, 0 transitive leaks, 0 capability forgeries, 0 arena escapes.
+[rtsc 2.3.0-rts] OK: 0 capability violations, 0 transitive leaks, 0 capability forgeries, 0 arena escapes.
 ```
 
 ### 2.3. Compilar e Executar Imediatamente (`rtsc run`)
@@ -143,9 +144,19 @@ Emite `<modulo>_unity_plugin.rs` (ex.: `engine_physics_unity_plugin.rs`) e `Rtsc
 rtsc build examples/engine_physics.rts --target=unity --out-dir build/unity
 ```
 
-### 2.9. Gerar Cliente TypeScript Tipado (`--emit-ts-sdk`) e Gramática Formal GBNF (`--export-gbnf`)
+### 2.9. Gerar GDExtension C++17 (`--target=godot`) ou Módulo Customizado SCons (`--target=godot-module`) para Godot 4
+- `--target=godot`: emite `src/<classe>.h`, `src/<classe>.cpp`, `src/register_types.{h,cpp}`, `SConstruct` e `bin/<modulo>.gdextension` (`godot-cpp`, `GDREGISTER_CLASS`, `GDExtensionBinding::InitObject`), compiláveis com `scons platform=windows|linux|macos`. Para extrair a API JSON de um binário Godot local, utilize `godot --dump-extension-api`.
+- `--target=godot-module`: emite `<classe>.h`, `<classe>.cpp`, `register_types.{h,cpp}`, `SCsub` e `config.py` para compilação direta na fonte da Godot 4 via `scons custom_modules=...`.
+```bash
+rtsc build examples/combat_godot.rts --target=godot --out-dir build/godot
+rtsc build examples/combat_godot.rts --target=godot-module --out-dir build/godot_module
+```
+
+### 2.10. Gerar Cliente TypeScript Tipado (`--emit-ts-sdk`), Assets Nativos (`bake-mesh` / `bake-textures`) e GBNF (`--export-gbnf`)
 ```bash
 rtsc build examples/telemetry_server.rts --emit-ts-sdk -o build/telemetry_client_sdk.ts
+rtsc bake-mesh assets/model.fbx -o assets/model.zpmesh
+rtsc bake-textures assets/textures -o build/baked_textures.rts
 rtsc --export-gbnf > rustts.gbnf
 ```
 
@@ -155,16 +166,17 @@ rtsc --export-gbnf > rustts.gbnf
 
 | Arquivo `.rts` | Domínio / Recurso Demonstrado |
 | :--- | :--- |
-| `examples/demo_2d.rts` | Motor 2D Vulkan (`v2.2.0-rts`): câmera ortográfica `MODE_ORTHO_2D`, `SpriteBatch2D`, texturas RGBA e animação (`sprite_anim`) |
-| `examples/demo_3d.rts` | Motor 3D Vulkan (`v2.2.0-rts`): câmera orbital, `Renderer3D` (`r3d_add_box`, `r3d_flush`) e delta-time `rtsc_time_now_sec()` |
+| `examples/demo_2d.rts` | Motor 2D Vulkan (`v2.3.0-rts`): câmera ortográfica `MODE_ORTHO_2D`, `SpriteBatch2D`, texturas RGBA e animação (`sprite_anim`) |
+| `examples/demo_3d.rts` | Motor 3D Vulkan (`v2.3.0-rts`): câmera orbital, `Renderer3D` (`r3d_add_box`, `r3d_flush`) e delta-time `rtsc_time_now_sec()` |
 | `examples/demo_shader.rts` | Shaders gráficos em `.rts` (`@vertex_shader`/`@fragment_shader` -> `.spv`) carregados via `rhi_create_graphics_pipeline` |
 | `examples/village_editor.rts` | Editor visual 3D completo com instancing, loader `.OBJ` e persistência binária `.pak` |
-| `examples/kanori_gpu_wasi_sim/src/main.rts` | Showcase Heterogêneo `v2.2.0-rts`: CPU (`--target llvm-ir`) + GPU Compute (`@gpu_kernel` $\rightarrow$ `wgsl`/`spirv`) + Sandbox WASI (`--target wasi --fuel-limit 75000`) |
+| `examples/kanori_gpu_wasi_sim/src/main.rts` | Showcase Heterogêneo `v2.3.0-rts`: CPU (`--target llvm-ir`) + GPU Compute (`@gpu_kernel` $\rightarrow$ `wgsl`/`spirv`) + Sandbox WASI (`--target wasi --fuel-limit 75000`) |
 | `examples/kanori_zone_sim/src/main.rts` | Showcase multi-arquivo (`import`, `impl Struct`, `core.math`, `Option<f32>`, `extern "C" fn`, `[f32; 4]`, `while` + `continue`/`break`, `#line -g`) |
 | `examples/thermal_control.rts` | Hardware embarcado (`I2CBus`, `PWMPin`, `TryOp ?`, `match` exaustivo, `while`) |
 | `examples/ballistics_10k_benchmark.rts` | Simulação ECS de 10.000 projéteis com `FrameArena`, `ReadFrameArena` e Strip-Mining L1d |
 | `examples/engine_physics.rts` | Desdobramento vetorial `vec3` em colunas SoA + detecção de colisão |
 | `examples/combat_unreal.rts` | Gameplay / replicação direcionada ao backend Unreal Engine 5 |
+| `examples/combat_godot.rts` | Nó `CharacterBody3D`, `@gdexport` e `ClassDB` para Godot 4 (`--target=godot` / `--target=godot-module`) |
 | `examples/telemetry_server.rts` | API de servidor com `SqlRead<T>`, `RequestArena` e geração `--emit-ts-sdk` |
 
 Execução dos showcases KANORI e checagem de exemplos:
@@ -175,6 +187,7 @@ rtsc check examples/thermal_control.rts
 rtsc check examples/ballistics_10k_benchmark.rts
 rtsc check examples/engine_physics.rts
 rtsc check examples/combat_unreal.rts
+rtsc check examples/combat_godot.rts
 rtsc check examples/telemetry_server.rts
 ```
 

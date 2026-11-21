@@ -1,0 +1,46 @@
+module engine.diagnostics;
+
+pub const ERR_NONE: i32 = 0;
+pub const ERR_INIT: i32 = 1;
+pub const ERR_RUNTIME: i32 = 2;
+pub const ERR_NETWORK: i32 = 3;
+pub const ERR_ASSET: i32 = 4;
+
+@repr_c
+pub struct DiagErrorInfo {
+    pub code: i32,
+    pub stage: str64,
+    pub message: str128,
+    pub detail: str128,
+}
+
+pub fn error_none() -> DiagErrorInfo {
+    return DiagErrorInfo {
+        code: ERR_NONE,
+        stage: str64::from("ok"),
+        message: str128::from(""),
+        detail: str128::from(""),
+    };
+}
+
+pub fn error_registrar_se_houver(
+    fs: cap FileSystem,
+    err: DiagErrorInfo,
+    log_path: str
+) -> bool {
+    if err.code == ERR_NONE {
+        return false;
+    }
+    let _created: bool = fs.create_dir("logs");
+    let mut json: str256 = str256::new();
+    json.push_str("{\"code\":");
+    json.push_i32(err.code);
+    json.push_str(",\"stage\":\"");
+    json.push_str(err.stage.as_str());
+    json.push_str("\",\"message\":\"");
+    json.push_str(err.message.as_str());
+    json.push_str("\",\"detail\":\"");
+    json.push_str(err.detail.as_str());
+    json.push_str("\"}\n");
+    return fs.write_text(log_path, json.as_str());
+}

@@ -76,8 +76,42 @@ impl Parser {
         })
     }
 
+    fn is_attr_token(kind: &TokenKind) -> bool {
+        matches!(
+            kind,
+            TokenKind::AttrComponent
+                | TokenKind::AttrGpuKernel
+                | TokenKind::AttrVertexShader
+                | TokenKind::AttrFragmentShader
+                | TokenKind::AttrShaderShared
+                | TokenKind::AttrReprC
+                | TokenKind::AttrView
+                | TokenKind::AttrSealedSig
+                | TokenKind::AttrOpenSig
+                | TokenKind::AttrSystem
+                | TokenKind::AttrParallelSystem
+                | TokenKind::AttrUnrealActor
+                | TokenKind::AttrUnrealImpl
+                | TokenKind::AttrUProperty
+                | TokenKind::AttrRoute
+        )
+    }
+
     fn parse_item(&mut self) -> Result<Item, ParseError> {
-        let attributes = self.parse_attributes()?;
+        let mut attributes = self.parse_attributes()?;
+        let had_leading_pub = if attributes.is_empty()
+            && self.check(&TokenKind::KwPub)
+            && self
+                .tokens
+                .get(self.pos + 1)
+                .map_or(false, |t| Self::is_attr_token(&t.kind))
+        {
+            self.advance();
+            attributes = self.parse_attributes()?;
+            true
+        } else {
+            false
+        };
 
         if self.check(&TokenKind::KwStruct)
             || (self.check(&TokenKind::KwPub) && self.peek_next_is(&TokenKind::KwStruct))
@@ -90,13 +124,19 @@ impl Parser {
         } else if self.check(&TokenKind::KwConst)
             || (self.check(&TokenKind::KwPub) && self.peek_next_is(&TokenKind::KwConst))
         {
-            Ok(Item::Const(self.parse_const()?))
+            let mut c = self.parse_const()?;
+            c.is_pub |= had_leading_pub;
+            Ok(Item::Const(c))
         } else if self.check(&TokenKind::KwExtern)
             || (self.check(&TokenKind::KwPub) && self.peek_next_is_extern())
         {
-            Ok(Item::ExternFn(self.parse_extern_fn(attributes)?))
-        } else if self.check(&TokenKind::KwPub) || self.check(&TokenKind::KwFn) {
-            Ok(Item::Function(self.parse_fn(attributes)?))
+            let mut e = self.parse_extern_fn(attributes)?;
+            e.is_pub |= had_leading_pub;
+            Ok(Item::ExternFn(e))
+        } else if self.check(&TokenKind::KwPub) || self.check(&TokenKind::KwFn) || had_leading_pub {
+            let mut f = self.parse_fn(attributes)?;
+            f.is_pub |= had_leading_pub;
+            Ok(Item::Function(f))
         } else {
             Err(ParseError {
                 message: format!(
@@ -228,6 +268,10 @@ impl Parser {
                     self.advance();
                     attrs.push(Attribute::ReprC);
                 }
+                Some(TokenKind::AttrView) => {
+                    self.advance();
+                    attrs.push(Attribute::View);
+                }
                 Some(TokenKind::AttrSealedSig) => {
                     self.advance();
                     attrs.push(Attribute::SealedSig);
@@ -304,6 +348,56 @@ impl Parser {
                         self.expect(&TokenKind::RParen)?;
                     }
                     attrs.push(Attribute::UProperty { flags });
+                }
+                Some(TokenKind::AttrGodotNode) => {
+                    self.advance();
+                    let mut base_class = "Node".to_string();
+                    let mut category = "Default".to_string();
+                    if self.match_token(&TokenKind::LParen) {
+                        while !self.check(&TokenKind::RParen) && !self.is_at_end() {
+                            let key = self.expect_ident()?;
+                            self.expect(&TokenKind::Assign)?;
+                            let val = self.expect_string_lit()?;
+                            if key == "base" {
+                                base_class = val;
+                            } else if key == "category" {
+                                category = val;
+                            }
+                            let _ = self.match_token(&TokenKind::Comma);
+                        }
+                        self.expect(&TokenKind::RParen)?;
+                    }
+                    attrs.push(Attribute::GodotNode {
+                        base_class,
+                        category,
+                    });
+                }
+                Some(TokenKind::AttrGodotImpl) => {
+                    self.advance();
+                    self.expect(&TokenKind::LParen)?;
+                    let target_struct = self.expect_ident()?;
+                    self.expect(&TokenKind::RParen)?;
+                    attrs.push(Attribute::GodotImpl { target_struct });
+                }
+                Some(TokenKind::AttrGdExport) => {
+                    self.advance();
+                    let mut hint = None;
+                    let mut hint_string = None;
+                    if self.match_token(&TokenKind::LParen) {
+                        while !self.check(&TokenKind::RParen) && !self.is_at_end() {
+                            let key = self.expect_ident()?;
+                            self.expect(&TokenKind::Assign)?;
+                            let val = self.expect_string_lit()?;
+                            if key == "hint" {
+                                hint = Some(val);
+                            } else if key == "hint_string" {
+                                hint_string = Some(val);
+                            }
+                            let _ = self.match_token(&TokenKind::Comma);
+                        }
+                        self.expect(&TokenKind::RParen)?;
+                    }
+                    attrs.push(Attribute::GdExport { hint, hint_string });
                 }
                 Some(TokenKind::AttrRoute) => {
                     self.advance();
@@ -424,6 +518,7 @@ impl Parser {
             return_type,
             body,
             span: start.merge(end),
+            source_file: None,
         })
     }
 
@@ -1291,7 +1386,7 @@ impl Parser {
                             args,
                             span: tok.span.merge(end),
                         })
-                    } else if !self.disallow_struct_lit && self.check(&TokenKind::LBrace) {
+                    } else if !self.disallow_struct_lit && self.looks_like_struct_init() {
                         self.advance();
                         let mut fields = Vec::new();
                         while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
@@ -1371,7 +1466,7 @@ impl Parser {
                         args,
                         span: tok.span.merge(end),
                     })
-                } else if !self.disallow_struct_lit && self.check(&TokenKind::LBrace) {
+                } else if !self.disallow_struct_lit && self.looks_like_struct_init() {
                     self.advance();
                     let mut fields = Vec::new();
                     while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
@@ -1410,7 +1505,7 @@ impl Parser {
                             args,
                             span: tok.span.merge(end),
                         })
-                    } else if !self.disallow_struct_lit && self.check(&TokenKind::LBrace) {
+                    } else if !self.disallow_struct_lit && self.looks_like_struct_init() {
                         self.advance();
                         let mut fields = Vec::new();
                         while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
@@ -1435,7 +1530,7 @@ impl Parser {
                         })
                     }
                 } else if !self.disallow_struct_lit
-                    && self.check(&TokenKind::LBrace)
+                    && self.looks_like_struct_init()
                     && name
                         .chars()
                         .next()
@@ -1544,6 +1639,23 @@ impl Parser {
             true
         } else {
             false
+        }
+    }
+
+    fn looks_like_struct_init(&self) -> bool {
+        if !matches!(
+            self.tokens.get(self.pos).map(|t| &t.kind),
+            Some(TokenKind::LBrace)
+        ) {
+            return false;
+        }
+        match self.tokens.get(self.pos + 1).map(|t| &t.kind) {
+            Some(TokenKind::RBrace) => true,
+            Some(TokenKind::Ident(_)) => matches!(
+                self.tokens.get(self.pos + 2).map(|t| &t.kind),
+                Some(TokenKind::Colon)
+            ),
+            _ => false,
         }
     }
 

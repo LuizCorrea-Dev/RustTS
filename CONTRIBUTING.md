@@ -2,7 +2,7 @@
   <img src="./rustts_language_logo.png" alt="RustTS Logo" width="220">
 </p>
 
-# Guia de Contribuição — RustTS (`rtsc v2.2.0-rts`)
+# Guia de Contribuição — RustTS (`rtsc v2.3.0-rts`)
 
 Obrigado pelo interesse em contribuir com o **RustTS (`rtsc`)**! Este repositório reúne o compilador de sistemas determinístico em Rust e seus backends para **C99 SIMD/SoA**, **MLIR SSA**, **LLVM IR Direto**, **GPU Compute (SPIR-V 1.5 / WGSL)**, **Sandbox WASI (Fuel Metering)**, **Unreal Engine 5**, **Unity** e **TypeScript SDK**.
 
@@ -37,9 +37,10 @@ Antes de propor alterações na linguagem ou no compilador, tenha em mente os pi
 | [`src/codegen_wasi.rs`](./src/codegen_wasi.rs) | Backend Sandbox WASI determinístico (`.wat` e binário WebAssembly 1.0 `.wasm` com lowering real da AST) e *Fuel Metering* (`--fuel-limit`) |
 | [`src/codegen_unreal.rs`](./src/codegen_unreal.rs) | Emissor C++ UHT (`.h` / `.cpp`) para Unreal Engine 5 |
 | [`src/codegen_unity.rs`](./src/codegen_unity.rs) | Emissor FFI Rust (`extern "C"`) + wrapper C# `NativeArray<T>` para Unity |
+| [`src/codegen_godot.rs`](./src/codegen_godot.rs) | Emissor C++17 GDExtension (`godot-cpp`, `SConstruct`, `.gdextension`) e módulo customizado SCons para Godot 4 |
 | [`src/codegen_ts_sdk.rs`](./src/codegen_ts_sdk.rs) | Emissor TypeScript SDK (`RtsResult<T, ApiError>`, `u64`/`i64` → `string`) |
-| [`src/main.rs`](./src/main.rs) | CLI `rtsc` (`init`, `check`, `build`, `run`, `--llvm`, `--fuel-limit`, `--export-gbnf`) |
-| [`src/lib.rs`](./src/lib.rs) | Pipeline integrado `compile_and_check_project` e suíte de 36 testes unitários |
+| [`src/main.rs`](./src/main.rs) | CLI `rtsc` (`init`, `check`, `build`, `run`, `bake-mesh`, `bake-textures`, `--llvm`, `--fuel-limit`, `--export-gbnf`) |
+| [`src/lib.rs`](./src/lib.rs) | Pipeline integrado `compile_and_check_project` e suíte de 80 testes unitários |
 
 ---
 
@@ -90,6 +91,7 @@ Execute os comandos abaixo após sua edição final e garanta 100% de aprovaçã
    cargo run -- check examples/ballistics_10k_benchmark.rts
    cargo run -- check examples/engine_physics.rts
    cargo run -- check examples/combat_unreal.rts
+   cargo run -- check examples/combat_godot.rts
    cargo run -- check examples/telemetry_server.rts
    ```
 3. **Exportação dos backends auxiliares:**
@@ -97,10 +99,12 @@ Execute os comandos abaixo após sua edição final e garanta 100% de aprovaçã
    cargo run -- --export-gbnf > /dev/null
    cargo run -- build examples/combat_unreal.rts --target=unreal > /dev/null
    cargo run -- build examples/engine_physics.rts --target=unity > /dev/null
+   cargo run -- build examples/combat_godot.rts --target=godot > /dev/null
+   cargo run -- build examples/combat_godot.rts --target=godot-module > /dev/null
    cargo run -- build examples/telemetry_server.rts --emit-ts-sdk > /dev/null
    ```
    *(No Windows PowerShell, use `| Out-Null` em vez de `> /dev/null`.)*
-4. **Execução completa do compilador e validação dos demos (`cargo test` — 73/73 PASS):**
+4. **Execução completa do compilador e validação dos demos (`cargo test` — 80/80 PASS):**
    ```bash
    cargo test
    RTSC_HEADLESS=1 cargo run -- run src/main.rts

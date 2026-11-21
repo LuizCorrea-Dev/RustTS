@@ -77,6 +77,31 @@ pub extern "C" fn rtsc_vk_create_texture_rgba_ptr(device_h: u64, width: u32, hei
 pub extern "C" fn rtsc_vk_cmd_bind_texture(cmd_h: u64, tex_h: u64);
 
 @sealed_sig
+pub extern "C" fn rtsc_vk_cmd_draw_indexed_instanced(
+    cmd_h: u64,
+    index_count: u32,
+    instance_count: u32,
+    first_index: u32,
+    vertex_offset: i32,
+    first_instance: u32
+);
+
+@sealed_sig
+pub extern "C" fn rtsc_vk_cmd_bind_pbr_textures(
+    cmd_h: u64,
+    albedo_tex_h: u64,
+    normal_tex_h: u64,
+    ao_tex_h: u64,
+    metal_tex_h: u64
+);
+
+@sealed_sig
+pub extern "C" fn rtsc_vk_cmd_bind_lights(cmd_h: u64, lights_ubo_offset: u64);
+
+@sealed_sig
+pub extern "C" fn rtsc_vk_cmd_bind_bones(cmd_h: u64, bones_ubo_offset: u64);
+
+@sealed_sig
 pub extern "C" fn rtsc_vk_create_pipeline_from_spirv(
     device_h: u64,
     vs_ptr: u64,
@@ -85,6 +110,3 @@ pub extern "C" fn rtsc_vk_create_pipeline_from_spirv(
     fs_bytes: u64,
     stride_bytes: u32
 ) -> u64;
-
-@sealed_sig
-pub extern "C" fn rtsc_vk_cmd_bind_texture(cmd_h: u64, tex_h: u64);

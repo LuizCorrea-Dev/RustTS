@@ -219,6 +219,12 @@ pub enum TokenKind {
     AttrUnrealImpl,
     #[token("@uproperty")]
     AttrUProperty,
+    #[token("@godot_node")]
+    AttrGodotNode,
+    #[token("@godot_impl")]
+    AttrGodotImpl,
+    #[token("@gdexport")]
+    AttrGdExport,
     #[token("@gpu_kernel")]
     AttrGpuKernel,
     #[token("@vertex_shader")]
@@ -229,6 +235,8 @@ pub enum TokenKind {
     AttrShaderShared,
     #[token("@repr_c")]
     AttrReprC,
+    #[token("@view")]
+    AttrView,
     #[token("@route")]
     AttrRoute,
     #[token("@sealed_sig")]

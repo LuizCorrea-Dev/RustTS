@@ -1,4 +1,4 @@
-# RustTS (`.rts`) — Matriz de Regras, Especificação Arquitetural e Guia Mestre (`v2.2.0-rts`)
+# RustTS (`.rts`) — Matriz de Regras, Especificação Arquitetural e Guia Mestre (`v2.3.0-rts`)
 
 ## 1. Visão Geral e Filosofia Central
 

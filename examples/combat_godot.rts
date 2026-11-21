@@ -1,0 +1,27 @@
+module game.godot_movement;
+
+@godot_node(base = "CharacterBody3D", category = "Movement")
+struct KinematicMover {
+    @gdexport(hint = "range", hint_string = "1.0,20.0,0.5")
+    base_speed: f32,
+
+    @gdexport
+    current_speed: f32,
+}
+
+@godot_impl(KinematicMover)
+pub fn compute_effective_speed(
+    self: cap Read<KinematicMover>,
+    friction: f32
+) -> f32 {
+    let scale: f32 = math::clamp(1.0 - (friction * 0.1), 0.1, 1.0);
+    return self.base_speed * scale;
+}
+
+@godot_impl(KinematicMover)
+pub fn apply_impulse(
+    self: cap Mut<KinematicMover>,
+    boost: f32
+) {
+    self.current_speed = math::clamp(self.current_speed + boost, 0.0, self.base_speed);
+}

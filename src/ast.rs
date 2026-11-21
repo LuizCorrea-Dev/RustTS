@@ -47,6 +47,15 @@ pub enum Attribute {
     UnrealImpl { target_struct: String },
     /// `@uproperty(edit_anywhere, blueprint_read_only, replicated)`
     UProperty { flags: Vec<String> },
+    /// `@godot_node(base = "CharacterBody3D", category = "Movement")`: Gera classe GDExtension / Módulo C++17 Godot 4
+    GodotNode { base_class: String, category: String },
+    /// `@godot_impl(PlayerController)`: Associa métodos vinculados via `ClassDB` a um nó Godot
+    GodotImpl { target_struct: String },
+    /// `@gdexport` / `@gdexport(hint = "range", hint_string = "0,100,1")`: Expõe propriedade no Inspector da Godot
+    GdExport {
+        hint: Option<String>,
+        hint_string: Option<String>,
+    },
     /// `@gpu_kernel`: Unificação CPU-GPU (SPIR-V / DXIL / WGSL)
     GpuKernel,
     /// `@vertex_shader`: Shader de vértice compilado para SPIR-V / WGSL
@@ -57,6 +66,8 @@ pub enum Attribute {
     ShaderShared,
     /// `@repr_c`: Struct com layout binário ABI C estrito (sem ponteiros/caps)
     ReprC,
+    /// `@view`: Struct escopada que pode agregar `MutSlice<T>`/`ReadSlice<T>` sem escape
+    View,
     /// `@route("GET", "/api/v1/users/:id")`: Endpoint de servidor com `RequestArena`
     Route { method: String, path: String },
     /// `@sealed_sig`: Contrato de assinatura imutável (padrão de segurança: IA proibida de escalar privilégios)
@@ -78,6 +89,10 @@ impl StructDecl {
         self.attributes
             .iter()
             .any(|a| matches!(a, Attribute::ReprC))
+    }
+
+    pub fn is_view(&self) -> bool {
+        self.attributes.iter().any(|a| matches!(a, Attribute::View))
     }
 }
 
@@ -112,6 +127,8 @@ pub struct FnDecl {
     pub return_type: Option<TypeExpr>,
     pub body: Vec<Stmt>,
     pub span: Span,
+    #[serde(default)]
+    pub source_file: Option<String>,
 }
 
 /// Declaração FFI C-ABI (`extern "C" fn nome(args..., cap_fantasma: cap Dominio) -> Ret;`)
@@ -242,6 +259,8 @@ pub enum CapabilityKind {
     FileSystem,
     /// Síntese e reprodução de áudio nativo (`AudioDevice`)
     AudioDevice,
+    /// Captura de microfone PCM com mute determinístico (`AudioInput`)
+    AudioInput,
     /// Capacidade customizada definida pelo domínio
     Custom,
 }
@@ -321,7 +340,9 @@ impl CapabilitySpec {
             "ReadFrameArena" | "ReadRequestArena" | "ReadTaskArena" => {
                 CapabilityKind::ReadScopedArena(ArenaScope::FrameOrRequest)
             }
-            "NetSocket" | "TcpSocket" | "UdpTick" | "HttpRoute" => CapabilityKind::Network,
+            "NetSocket" | "NetworkSocket" | "TcpSocket" | "UdpTick" | "HttpRoute" => {
+                CapabilityKind::Network
+            }
             "SqlRead" => CapabilityKind::SqlRead,
             "SqlWrite" => CapabilityKind::SqlWrite,
             "GpuQueue" | "WebGpuDevice" | "CanvasContext" | "AudioBuffer" => {
@@ -331,6 +352,7 @@ impl CapabilitySpec {
             "InputDevice" => CapabilityKind::InputDevice,
             "FileSystem" => CapabilityKind::FileSystem,
             "AudioDevice" => CapabilityKind::AudioDevice,
+            "AudioInput" => CapabilityKind::AudioInput,
             _ => CapabilityKind::Custom,
         };
         Self {

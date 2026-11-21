@@ -2,9 +2,9 @@
   <img src="./rustts_language_logo.png" alt="RustTS Logo" width="220">
 </p>
 
-# Manual Oficial de Tipos e Referência da Linguagem — RustTS (`rtsc v2.2.0-rts`)
+# Manual Oficial de Tipos e Referência da Linguagem — RustTS (`rtsc v2.3.0-rts`)
 
-Este manual documenta todas as categorias de tipos, aliases ergonômicos (TypeScript / C / C# / Unreal Engine 5), estruturas de memória, tokens de capacidade (`cap`), atributos declarativos e intrínsecos da linguagem **RustTS (`.rts`)** na versão **`v2.2.0-rts`**.
+Este manual documenta todas as categorias de tipos, aliases ergonômicos (TypeScript / C / C# / Unreal Engine 5), estruturas de memória, tokens de capacidade (`cap`), atributos declarativos e intrínsecos da linguagem **RustTS (`.rts`)** na versão **`v2.3.0-rts`**.
 
 ---
 
